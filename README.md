@@ -4,6 +4,12 @@ Orbit is a clean-room Rust experiment for durable local terminal sessions in
 Yazelix Nova. It is intended to become the session runtime beneath the Mars
 graphical client if the experiment succeeds.
 
+## Status
+
+The repository contains a one-line executable skeleton and a dependency-ordered
+experiment plan. It does not yet spawn a PTY, retain a session, or render a
+terminal.
+
 ## Contract
 
 Orbit keeps a real terminal process alive independently of its graphical
@@ -32,6 +38,10 @@ br ready
 ```
 
 Beads contain the dependency-ordered experiment plan.
+
+The [design rationale](docs/RATIONALE.md) records where the idea came from, the
+ownership hypothesis, relevant prior art, tradeoffs, and explicit graduation
+and stop criteria.
 
 ## LOC scorecard
 
