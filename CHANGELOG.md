@@ -13,3 +13,6 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   encoding.
 - The private Unix socket and child process have explicit stale-path,
   permission, child-exit, foreground-process, and signal-shutdown behavior.
+- Attachment begins with a bounded, versioned, complete structured
+  presentation frame followed by ordered revisions. Frames carry rich terminal
+  presentation state and explicitly declare Kitty graphics unsupported.

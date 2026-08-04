@@ -12,8 +12,8 @@ The completed `orb-bi4.1` proof rejects the released libghostty formatter as an
 exact terminal checkpoint. The `orb-bi4.2` implementation runs one real PTY
 shell and one authoritative libghostty terminal in a foreground Orbit process;
 a diagnostic client can disconnect and later reach the same live shell. The
-`orb-bi4.3` candidate adds complete structured presentation frames and ordered
-revisions for review; Orbit does not render a terminal.
+completed `orb-bi4.3` proof adds complete structured presentation frames and
+ordered revisions; Orbit does not render a terminal.
 
 ## Attachment-model proof
 
@@ -57,7 +57,7 @@ replay fallback, PTY, socket, or protocol implementation in this slice.
 Orbit keeps the sole authoritative terminal state and supplies clients with
 host-authored structured presentation frames. It does not export a checkpoint,
 replicate raw PTY tails, or run another terminal emulator in the client. The
-`orb-bi4.3` candidate uses `RenderState::update` and its public row and cell
+`orb-bi4.3` proof uses `RenderState::update` and its public row and cell
 iterators to encode a complete versioned frame containing geometry, styled
 graphemes, colors and palette, cursor state, active screen, title, working
 directory, and hyperlinks. Version 1 explicitly advertises hyperlink support
@@ -70,7 +70,7 @@ real-PTY proof in [`src/presentation.rs`](src/presentation.rs) covers output bef
 ordered revisions, alternate-screen rich state, restoration of an inactive
 primary screen with pending wrap, split CSI, UTF-8, and APC input, a slow client,
 background-only erased cells, and final-state convergence after reattach. The
-candidate adds no dependency.
+proof adds no dependency.
 
 ## PTY-lifetime proof
 
@@ -145,8 +145,10 @@ Bead is accepted and the exact proof-bearing commit is recorded.
 - one terminal session and one active client
 - one Rust package and binary through the `orb-bi4.3` headless convergence
   proof
-- if that gate passes, create the private `luccahuguet/venus` repository before
-  `orb-bi4.4`; graphical Venus code does not live in Orbit
+- the `orb-bi4.3` gate passed at
+  `e4fde443e625180d7332eff4dff366f64bee30a8`; create the private
+  `luccahuguet/venus` repository before `orb-bi4.4`; graphical Venus code does
+  not live in Orbit
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
 - Mars and Mars Next may inform behavior, but their code and architecture are
