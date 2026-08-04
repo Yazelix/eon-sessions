@@ -105,10 +105,11 @@ contract ID only after the user authorizes that product scope.
 `orb-pmp` is the platform-seam gate. It must close after the Linux PTY candidate
 and before `orb-bi4.3` begins the structured-presentation implementation.
 
-`orb-bi4.3` is the repository boundary gate. If it passes, create the private
-`luccahuguet/venus` repository before `orb-bi4.4` and keep graphical Venus code
-out of Orbit. The proven structured presentation contract is the
-cross-repository boundary.
+`orb-bi4.3` was the repository boundary gate and passed. The private
+`luccahuguet/venus` repository owns graphical implementation; `orb-bi4.4` is
+the Orbit-side cross-repository acceptance gate. Keep graphical Venus code out
+of Orbit. The proven structured presentation contract is the cross-repository
+boundary.
 
 ## Clean-room rule
 

@@ -50,6 +50,15 @@ Mars, Mars Next, or another project by default.
 
 ## Attachment and terminal state
 
+- [FrankenTUI](https://github.com/Dicklesworthstone/frankentui) is required
+  evidence for Orbit slices that change structured presentation generation,
+  revision or damage semantics, or their proof architecture. Study its
+  deterministic buffer-to-diff-to-present pipeline, headless backends, golden
+  and property checks, and explicit one-writer ownership. Its
+  [presenter-emission ADR](https://github.com/Dicklesworthstone/frankentui/blob/main/docs/adr/ADR-002-presenter-emission.md)
+  is the closest patch-stream decision record. Orbit extracts lessons about
+  deterministic state transitions and tests without adopting a terminal UI,
+  widget framework, ANSI presenter, or FrankenTUI dependency.
 - [libghostty-vt](https://docs.rs/libghostty-vt/latest/libghostty_vt/) is the
   terminal-semantics owner under test. Study `Terminal`, `RenderState`, effects,
   input encoding, thread ownership, and the
@@ -78,6 +87,13 @@ Mars, Mars Next, or another project by default.
 
 ## PTY and session lifetime
 
+- [FrankenTerm](https://github.com/Dicklesworthstone/frankenterm) is required
+  evidence before changing Orbit session lifetime, recovery, transport, or
+  failure semantics. Study its explicit lifecycle states, protocol recovery,
+  bounded failure handling, crash and reconnect checks, and separation between
+  session authority and transient presentation. Reject its WezTerm, agent-swarm,
+  storage, orchestration, multiple-pane, and remote-control surface unless the
+  user separately chooses one of those product directions.
 - [zmx](https://zmx.sh/) demonstrates the closest end-to-end lifecycle and
   explicitly separates session persistence from window management.
 - [shpool](https://github.com/shell-pool/shpool) and
@@ -93,6 +109,34 @@ Mars, Mars Next, or another project by default.
   slice joining PTY I/O, a background parser, and optional Ratatui rendering.
   Study its API boundaries and tests without inheriting its terminal engine,
   Tokio requirement, or drop-based session lifetime.
+- [Process Triage](https://github.com/Dicklesworthstone/process_triage) is a
+  required process-lifecycle reference before changing child discovery,
+  liveness classification, signal escalation, reaping, or cleanup policy.
+  Study its observe-plan-apply separation, protected-process boundaries,
+  explainable classification, staged actions, and verification. Orbit owns a
+  much narrower known child tree, so it must not import Bayesian classification,
+  general host cleanup, fleet management, or automatic killing by default.
+
+## Execution runtime gate
+
+Orbit's current one-session proof uses an owned synchronous poll/event loop.
+Do not replace or generalize it without a measured contract pressure and a
+crate gate that compares all four credible shapes:
+
+- [Asupersync](https://github.com/Dicklesworthstone/asupersync) for
+  region-owned tasks, explicit cancellation and quiescence, bounded cleanup,
+  and deterministic schedule or replay tests.
+- [Tokio](https://tokio.rs/) for ecosystem maturity, I/O coverage, diagnostics,
+  and operational familiarity.
+- [smol](https://github.com/smol-rs/smol) for a smaller composable async stack.
+- the owned synchronous/event-loop design for minimum dependencies, explicit
+  ordering, and the smallest authority surface.
+
+The gate measures contract fit, cancellation and shutdown semantics,
+deterministic-test quality, project-owned LOC, dependency and build cost,
+macOS feasibility, and integration pressure from required crates. A runtime is
+not selected because another reference uses it, and an async runtime is not a
+prerequisite for the current single-session architecture.
 
 ## Native client and rendering
 

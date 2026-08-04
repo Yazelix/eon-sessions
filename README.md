@@ -146,9 +146,9 @@ Bead is accepted and the exact proof-bearing commit is recorded.
 - one Rust package and binary through the `orb-bi4.3` headless convergence
   proof
 - the `orb-bi4.3` gate passed at
-  `e4fde443e625180d7332eff4dff366f64bee30a8`; create the private
-  `luccahuguet/venus` repository before `orb-bi4.4`; graphical Venus code does
-  not live in Orbit
+  `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
+  [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
+  graphical implementation, while `orb-bi4.4` tracks Orbit-side acceptance
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
 - Mars and Mars Next may inform behavior, but their code and architecture are
