@@ -45,9 +45,10 @@ policy.
 
 Orbit owns the wire schema and its state-transition rules. The accepted
 `orbit-protocol` package owns canonical ORBF v1 values, bounded decoding, and
-complete-frame reduction. Venus must pin accepted contract IDs and their exact
-proof revision rather than mirror the schema. Attach outcomes, frame envelopes,
-semantic input, paste, and resize still need a user-approved reusable codec.
+complete-frame reduction. Venus must record each consumed contract's proof
+revision and pin the exact package revision instead of mirroring the schema.
+Attach outcomes, frame envelopes, semantic input, paste, and resize still need a
+user-approved reusable codec.
 
 ## Two distinct WebAssembly roles
 

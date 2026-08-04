@@ -49,8 +49,8 @@ system must preserve.
 
 ## Consumer compatibility
 
-A repository consuming an Orbit contract pins the exact accepted proof
-revision and contract IDs. Boundary changes are classified as compatible or
+A repository consuming Orbit contracts records each contract ID and its exact
+accepted proof revision. Boundary changes are classified as compatible or
 breaking and name affected consumers and update order. A client does not hide a
 server-contract gap behind an adapter or second source of authority without an
 explicit user decision.
