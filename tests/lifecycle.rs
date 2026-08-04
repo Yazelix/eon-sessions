@@ -2,7 +2,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufReader, Read, Write},
     net::Shutdown,
     os::unix::{
         fs::PermissionsExt,
@@ -13,6 +13,14 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
+};
+
+use orbit_protocol::{
+    Frame,
+    session::{
+        self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, PhysicalKey,
+        ServerMessage, SurfaceSize, decode_server_message, encode_client_message,
+    },
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -60,6 +68,7 @@ impl Drop for Server {
 
 struct Client {
     reader: BufReader<UnixStream>,
+    frame: Frame,
 }
 
 impl Client {
@@ -70,90 +79,122 @@ impl Client {
             stream.set_read_timeout(Some(Duration::from_secs(2)))?;
             stream.set_write_timeout(Some(Duration::from_secs(2)))?;
             let mut reader = BufReader::new(stream);
-            let mut response = String::new();
-            match reader.read_line(&mut response) {
-                Ok(read) if read > 0 && response.starts_with("FRAME ") => {
-                    read_frame_payload(&mut reader, &response)?;
-                    return Ok(Self { reader });
+            write_message(
+                reader.get_mut(),
+                &ClientMessage::Hello {
+                    minimum_version: session::VERSION,
+                    maximum_version: session::VERSION,
+                },
+            )?;
+            let mut attached = false;
+            loop {
+                match read_message(&mut reader) {
+                    Ok(ServerMessage::Attached { version }) => {
+                        assert_eq!(version, session::VERSION);
+                        attached = true;
+                    }
+                    Ok(ServerMessage::Frame(frame)) if attached => {
+                        return Ok(Self {
+                            reader,
+                            frame: *frame,
+                        });
+                    }
+                    Ok(ServerMessage::Busy) if Instant::now() < deadline => break,
+                    Ok(message) => {
+                        return Err(format!("unexpected attach response: {message:?}").into());
+                    }
+                    Err(error) if Instant::now() < deadline => {
+                        let _ = error;
+                        break;
+                    }
+                    Err(error) => return Err(error),
                 }
-                Ok(read)
-                    if Instant::now() < deadline && (read == 0 || response.trim() == "BUSY") => {}
-                Err(error)
-                    if Instant::now() < deadline
-                        && matches!(
-                            error.kind(),
-                            std::io::ErrorKind::ConnectionReset
-                                | std::io::ErrorKind::ConnectionAborted
-                                | std::io::ErrorKind::BrokenPipe
-                                | std::io::ErrorKind::TimedOut
-                        ) => {}
-                Ok(_) => return Err(format!("unexpected attach response: {response:?}").into()),
-                Err(error) => return Err(error.into()),
             }
             thread::yield_now();
         }
     }
 
-    fn request(&mut self, request: &str) -> TestResult<String> {
-        writeln!(self.reader.get_mut(), "{request}")?;
-        self.read_line()
-    }
-
-    fn read_line(&mut self) -> TestResult<String> {
+    fn request(&mut self, request: &ClientMessage) -> TestResult {
+        write_message(self.reader.get_mut(), request)?;
         loop {
-            let mut line = String::new();
-            let read = self.reader.read_line(&mut line)?;
-            if read == 0 {
-                return Err("diagnostic connection closed".into());
+            match read_message(&mut self.reader)? {
+                ServerMessage::Accepted => return Ok(()),
+                ServerMessage::Frame(frame) => self.frame = *frame,
+                ServerMessage::Failure(failure) => {
+                    return Err(format!("request failed: {failure:?}").into());
+                }
+                message => return Err(format!("unexpected response: {message:?}").into()),
             }
-            if line.starts_with("FRAME ") {
-                read_frame_payload(&mut self.reader, &line)?;
-                continue;
-            }
-            return Ok(line.trim_end_matches(['\r', '\n']).to_owned());
         }
     }
 
-    fn pid(&mut self) -> TestResult<u32> {
-        Ok(self
-            .request("PID")?
-            .strip_prefix("PID ")
-            .ok_or("missing PID response")?
-            .parse()?)
+    fn paste(&mut self, bytes: impl Into<Vec<u8>>) -> TestResult {
+        self.request(&ClientMessage::Paste(bytes.into()))
+    }
+
+    fn enter(&mut self) -> TestResult {
+        self.request(&ClientMessage::Key(KeyEvent {
+            action: KeyAction::Press,
+            key: PhysicalKey::ENTER,
+            modifiers: Modifiers::empty(),
+            consumed_modifiers: Modifiers::empty(),
+            composing: false,
+            text: None,
+            unshifted_codepoint: None,
+        }))
+    }
+
+    fn text(&mut self, text: impl Into<String>) -> TestResult {
+        self.request(&ClientMessage::Key(KeyEvent {
+            action: KeyAction::Press,
+            key: PhysicalKey::A,
+            modifiers: Modifiers::empty(),
+            consumed_modifiers: Modifiers::empty(),
+            composing: false,
+            text: Some(text.into()),
+            unshifted_codepoint: Some('a'),
+        }))
     }
 
     fn wait_title(&mut self, expected: &str) -> TestResult {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let response = self.request("TITLE")?;
-            let encoded = response
-                .strip_prefix("TITLE ")
-                .ok_or("missing TITLE response")?;
-            if decode_hex(encoded)? == expected.as_bytes() {
+            if self.frame.title == expected {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                return Err(
-                    format!("title never became {expected:?}; last response: {response}").into(),
-                );
+                return Err(format!(
+                    "title never became {expected:?}; last title: {:?}",
+                    self.frame.title
+                )
+                .into());
             }
-            thread::yield_now();
+            match read_message(&mut self.reader)? {
+                ServerMessage::Frame(frame) => self.frame = *frame,
+                ServerMessage::Exited { code } => {
+                    return Err(format!("shell exited with {code}").into());
+                }
+                _ => {}
+            }
         }
     }
 }
 
-fn read_frame_payload(reader: &mut BufReader<UnixStream>, header: &str) -> TestResult<Vec<u8>> {
-    let length: usize = header
-        .trim_end_matches(['\r', '\n'])
-        .strip_prefix("FRAME ")
-        .ok_or("missing frame header")?
-        .parse()?;
-    let mut payload = vec![0; length];
-    reader.read_exact(&mut payload)?;
-    if !payload.starts_with(b"ORBF") {
-        return Err("invalid presentation frame magic".into());
-    }
-    Ok(payload)
+fn write_message(writer: &mut impl Write, message: &ClientMessage) -> TestResult {
+    writer.write_all(&encode_client_message(message)?)?;
+    Ok(())
+}
+
+fn read_message(reader: &mut impl Read) -> TestResult<ServerMessage> {
+    let mut header = [0; session::HEADER_BYTES];
+    reader.read_exact(&mut header)?;
+    let length = session::server_message_len(&header)?
+        .expect("complete header declares its server-message length");
+    let mut framed = Vec::with_capacity(length);
+    framed.extend_from_slice(&header);
+    framed.resize(length, 0);
+    reader.read_exact(&mut framed[session::HEADER_BYTES..])?;
+    Ok(decode_server_message(&framed)?)
 }
 
 fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
@@ -174,18 +215,23 @@ fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
     }
 }
 
-fn decode_hex(encoded: &str) -> TestResult<Vec<u8>> {
-    if !encoded.len().is_multiple_of(2) {
-        return Err("odd hexadecimal response".into());
+fn wait_file_text(path: &Path) -> TestResult<String> {
+    wait_file_text_matching(path, |text| !text.trim().is_empty())
+}
+
+fn wait_file_text_matching(path: &Path, ready: impl Fn(&str) -> bool) -> TestResult<String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(text) = fs::read_to_string(path)
+            && ready(&text)
+        {
+            return Ok(text);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for content in {}", path.display()).into());
+        }
+        thread::yield_now();
     }
-    encoded
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let pair = std::str::from_utf8(pair)?;
-            Ok(u8::from_str_radix(pair, 16)?)
-        })
-        .collect()
 }
 
 fn server_command() -> Command {
@@ -259,50 +305,166 @@ fn terminate(server: &Server) -> std::io::Result<()> {
 }
 
 #[test]
+fn attachment_negotiation_rejects_incompatible_and_unordered_clients() -> TestResult {
+    let dir = TestDir::new("negotiation")?;
+    let socket = dir.0.join("orbit.sock");
+    let server = spawn_server(&socket)?;
+
+    let mut incompatible = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
+    incompatible.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write_message(
+        &mut incompatible,
+        &ClientMessage::Hello {
+            minimum_version: session::VERSION + 1,
+            maximum_version: session::VERSION + 1,
+        },
+    )?;
+    assert_eq!(
+        read_message(&mut incompatible)?,
+        ServerMessage::Incompatible {
+            minimum_version: session::VERSION,
+            maximum_version: session::VERSION,
+        }
+    );
+    drop(incompatible);
+
+    let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
+    unordered.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write_message(&mut unordered, &ClientMessage::Focus(FocusEvent::Gained))?;
+    match read_message(&mut unordered)? {
+        ServerMessage::Failure(failure) => assert_eq!(failure.code, FailureCode::Protocol),
+        message => return Err(format!("unexpected unordered response: {message:?}").into()),
+    }
+    drop(unordered);
+
+    drop(Client::attach(&socket)?);
+    assert!(server.shutdown()?.success());
+    Ok(())
+}
+
+#[test]
+fn closed_pty_rejects_input_while_child_remains_alive() -> TestResult {
+    let dir = TestDir::new("closed-pty")?;
+    let socket = dir.0.join("orbit.sock");
+    let marker = dir.0.join("closed");
+    let mut server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg("exec 3>\"$ORBIT_MARKER\"; exec 0<&- 1>&- 2>&-; printf ready >&3; sleep 60")
+            .env("ORBIT_MARKER", &marker)
+            .spawn()?,
+    );
+
+    assert_eq!(wait_file_text(&marker)?, "ready");
+    let mut client = Client::attach(&socket)?;
+    assert!(server.0.try_wait()?.is_none());
+
+    write_message(
+        client.reader.get_mut(),
+        &ClientMessage::Paste(b"undeliverable".to_vec()),
+    )?;
+    match read_message(&mut client.reader)? {
+        ServerMessage::Failure(failure) => {
+            assert_eq!(failure.code, FailureCode::Terminal);
+            assert_eq!(failure.detail, "PTY is closed");
+        }
+        message => return Err(format!("unexpected closed-PTY response: {message:?}").into()),
+    }
+    assert!(server.0.try_wait()?.is_none());
+    assert!(server.shutdown()?.success());
+    Ok(())
+}
+
+#[test]
 fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     let dir = TestDir::new("lifecycle")?;
     let socket = dir.0.join("orbit.sock");
     let fifo = dir.0.join("release.fifo");
+    let first_pid_file = dir.0.join("first-shell.pid");
+    let second_pid_file = dir.0.join("second-shell.pid");
+    let key_file = dir.0.join("key-input");
+    let multiline_file = dir.0.join("multiline-paste");
     let status = Command::new("mkfifo").arg(&fifo).status()?;
     assert!(status.success());
 
     let mut server = spawn_server(&socket)?;
     let mut first = Client::attach(&socket)?;
-    let shell_pid = first.pid()?;
+    first.paste(format!(
+        "printf '%s\\n' \"$$\" > {}",
+        first_pid_file.display()
+    ))?;
+    first.enter()?;
+    let shell_pid = wait_file_text(&first_pid_file)?.trim().parse()?;
 
-    assert_eq!(first.request("RESIZE 100 40 9 18")?, "OK");
-    assert_eq!(
-        first.request("PASTE printf '\\033]2;size-%s\\033\\\\' \"$(stty size)\"")?,
-        "OK"
-    );
-    assert_eq!(first.request("KEY ENTER")?, "OK");
+    first.text(format!("printf key > {}", key_file.display()))?;
+    first.enter()?;
+    wait_file_text_matching(&key_file, |text| text == "key")?;
+    first.paste(format!(
+        "printf first > {}\nprintf second >> {}",
+        multiline_file.display(),
+        multiline_file.display()
+    ))?;
+    first.enter()?;
+    wait_file_text_matching(&multiline_file, |text| text == "firstsecond")?;
+    first.request(&ClientMessage::Mouse(session::MouseEvent {
+        action: session::MouseAction::Motion,
+        button: Some(session::MouseButton::Left),
+        modifiers: Modifiers::empty(),
+        x: 1.0,
+        y: 1.0,
+    }))?;
+
+    first.request(&ClientMessage::Resize(SurfaceSize {
+        cols: 100,
+        rows: 40,
+        screen_width: 920,
+        screen_height: 740,
+        cell_width: 9,
+        cell_height: 18,
+        padding_top: 10,
+        padding_bottom: 10,
+        padding_left: 10,
+        padding_right: 10,
+    }))?;
+    first.paste("printf '\\033]2;size-%s\\033\\\\' \"$(stty size)\"")?;
+    first.enter()?;
     first.wait_title("size-40 100")?;
+    assert_eq!(
+        (first.frame.dimensions.cols, first.frame.dimensions.rows),
+        (100, 40)
+    );
 
     let mut rejected = UnixStream::connect(&socket)?;
     rejected.set_read_timeout(Some(Duration::from_secs(2)))?;
-    let mut rejection = String::new();
-    BufReader::new(&mut rejected).read_line(&mut rejection)?;
-    assert_eq!(rejection.trim(), "BUSY");
-    assert_eq!(first.request("PING")?, "PONG");
+    assert_eq!(read_message(&mut rejected)?, ServerMessage::Busy);
+    first.request(&ClientMessage::Focus(FocusEvent::Gained))?;
 
-    assert_eq!(
-        first.request(&format!(
-            "PASTE printf '\\033]2;ready\\033\\\\'; read orbit_release < {}; printf '\\033]2;detached\\033\\\\'",
-            fifo.display()
-        ))?,
-        "OK"
-    );
-    assert_eq!(first.request("KEY ENTER")?, "OK");
+    first.paste(format!(
+        "printf '\\033]2;ready\\033\\\\'; read orbit_release < {}; printf '\\033]2;detached\\033\\\\'",
+        fifo.display()
+    ))?;
+    first.enter()?;
     first.wait_title("ready")?;
     drop(first);
 
     writeln!(OpenOptions::new().write(true).open(&fifo)?, "go")?;
 
     let mut second = Client::attach(&socket)?;
-    assert_eq!(second.pid()?, shell_pid);
+    second.paste(format!(
+        "printf '%s\\n' \"$$\" > {}",
+        second_pid_file.display()
+    ))?;
+    second.enter()?;
+    assert_eq!(
+        wait_file_text(&second_pid_file)?.trim().parse::<u32>()?,
+        shell_pid
+    );
     second.wait_title("detached")?;
-    assert_eq!(second.request("PASTE exit")?, "OK");
-    assert_eq!(second.request("KEY ENTER")?, "OK");
+    second.paste("exit")?;
+    second.enter()?;
     drop(second);
 
     assert!(wait_bounded(&mut server)?.success());
@@ -325,16 +487,19 @@ fn stale_socket_and_signal_shutdown_are_clean() -> TestResult {
     aborted.shutdown(Shutdown::Read)?;
     drop(aborted);
     let mut client = Client::attach(&socket)?;
-    let shell_pid = client.pid()?;
+    let shell_pid_file = dir.0.join("shell.pid");
+    client.paste(format!(
+        "printf '%s\\n' \"$$\" > {}",
+        shell_pid_file.display()
+    ))?;
+    client.enter()?;
+    let shell_pid = wait_file_text(&shell_pid_file)?.trim().parse()?;
     let foreground_pid_file = dir.0.join("foreground.pid");
-    assert_eq!(
-        client.request(&format!(
-            "PASTE sh -c 'trap \"\" HUP; echo $$ > {}; printf \"\\033]2;foreground-ready\\033\\\\\"; exec sleep 60'",
-            foreground_pid_file.display()
-        ))?,
-        "OK"
-    );
-    assert_eq!(client.request("KEY ENTER")?, "OK");
+    client.paste(format!(
+        "sh -c 'trap \"\" HUP; echo $$ > {}; printf \"\\033]2;foreground-ready\\033\\\\\"; exec sleep 60'",
+        foreground_pid_file.display()
+    ))?;
+    client.enter()?;
     client.wait_title("foreground-ready")?;
     let foreground_pid = fs::read_to_string(&foreground_pid_file)?.trim().parse()?;
     let mode = fs::metadata(&socket)?.permissions().mode() & 0o777;

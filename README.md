@@ -19,6 +19,22 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `6e53fedb97f764f3683c83edcd9a5227b8f56e56`.
+The same package owns the ORBS v1 local-session envelope and typed attachment,
+frame, lifecycle, key, mouse, focus, paste, and resize messages consumed by
+Orbit's server and diagnostic client. Its canonical key validation rejects C0,
+DEL, and macOS function-key PUA values as associated text before they reach the
+terminal encoder; clients represent those inputs with semantic key identity.
+Positional modifier bits are accepted only with their corresponding logical
+modifier, so encoding and decoding enforce the same canonical key and mouse
+values. Mouse press and release require a button, wheel directions are
+momentary press events, and buttonless motion means that no button is pressed.
+Orbit passes held-button semantics to the terminal-aware mapper so active-button
+motion remains reportable outside the viewport without treating a wheel tick as
+held. Once a fatal negotiation or protocol response is queued, that client
+cannot send later terminal input or receive later presentation frames or
+session-exit messages while the bounded response drains. Once PTY closure is
+observed, semantic requests fail instead of being acknowledged or retained as
+undeliverable input while Orbit continues to wait for the known child.
 
 ## Attachment-model proof
 
@@ -69,8 +85,8 @@ directory, and hyperlinks. Version 1 explicitly advertises hyperlink support
 and declares Kitty graphics unsupported.
 
 Each frame has a 4 MiB and 100,000-cell bound. Nonblocking client output retains
-the initial frame and at most one coalesced latest frame when no diagnostic
-response separates them; total queued output is bounded. The co-located
+the initial frame and at most one coalesced latest frame when no non-frame
+session message separates them; total queued output is bounded. The co-located
 real-PTY proof in [`src/presentation.rs`](src/presentation.rs) covers output before attach,
 ordered revisions, alternate-screen rich state, restoration of an inactive
 primary screen with pending wrap, split CSI, UTF-8, and APC input, a slow client,
@@ -88,6 +104,18 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
+The package also owns ORBS v1: a 12-byte explicit little-endian header with
+`ORBS` magic, one exact revision, a typed message kind, zero reserved flags, and
+a bounded payload length. Decoding is incremental and rejects unsupported
+revisions, wrong-role or unknown kinds, and message-specific invalid
+declarations—including a frame shorter than any canonical ORBF value—from the
+header before payload-sized buffering. Complete-message decoding then rejects
+malformed typed values, truncation, and trailing bytes.
+Arbitrary paste bytes remain opaque; key events retain physical identity,
+action, active and consumed modifiers, composition, multi-codepoint text, and
+an optional unshifted codepoint. The session layer embeds canonical ORBF frames
+without interpreting them again and adds no dependency.
+
 ## PTY-lifetime proof
 
 The Linux-only proof uses one foreground binary for both roles:
@@ -99,9 +127,11 @@ cargo run -- client
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client sends a bounded diagnostic message set containing semantic key, mouse,
-focus, paste, and resize events. It receives structured presentation frames,
-acknowledgements, and limited lifecycle diagnostics, never raw PTY output.
+client and server use only the bounded ORBS v1 codec. A version-negotiated
+attachment receives typed outcomes, canonical presentation frames,
+acknowledgements, bounded failures, and session exit. Client messages carry
+semantic key, mouse, focus, arbitrary paste, and full surface-resize events,
+never raw PTY output.
 
 The default socket is `$XDG_RUNTIME_DIR/yazelix-orbit/orbit.sock`, falling back
 to `/tmp/yazelix-orbit-$UID/orbit.sock`. Its directory is user-owned and private,
@@ -128,13 +158,16 @@ sees platform-neutral PTY I/O and readiness outcomes; terminal authority,
 semantic input, and the attachment protocol do not contain `libc` values. This
 is an isolation boundary, not a macOS backend or support claim.
 
-The subprocess checks in [`tests/lifecycle.rs`](tests/lifecycle.rs) use protocol
-responses and PTY state as synchronization. They prove resize through `stty`,
+The subprocess checks in [`tests/lifecycle.rs`](tests/lifecycle.rs) use typed
+protocol responses, presentation frames, and PTY state as synchronization. They
+prove negotiation failure, handshake ordering, ordinary and special-key input,
+multiline paste, mouse and focus acceptance, resize through `stty`,
 observe output produced by a blocked foreground command after the client has
 disconnected, reconnect to the same shell PID, exercise second-client
 rejection, and check aborted attachment, stale-socket identity, permissions,
 child exit, startup and established SIGTERM cleanup, foreground-process reaping,
-and replacement-socket ownership with bounded timeouts.
+replacement-socket ownership, and terminal request failure after a live child
+closes every PTY descriptor, all with bounded timeouts.
 
 ## Contract
 
@@ -147,11 +180,12 @@ terminal state. The initial contract covers surviving client exits and
 disconnections while Orbit continues running; it does not cover daemon or
 machine restarts.
 
-ORBF v1 remains the accepted protocol for the first Venus slice. Its complete
-frames prove convergence and define the attach boundary. Any later patch
-protocol keeps a complete frame as its resync fallback. The preferred later
-replication shape uses revisioned row patches during steady operation, bounded
-history pages, and a separate ordered stream for terminal effects. That
+ORBS v1 carrying canonical ORBF v1 frames is the accepted protocol shape for
+the first Venus slice. Complete frames prove convergence and define the attach
+boundary. Any later patch protocol keeps a complete frame as its resync
+fallback. The preferred later replication shape uses revisioned row patches
+during steady operation, bounded history pages, and a separate ordered stream
+for terminal effects. That
 direction changes no current contract and requires a user-approved protocol
 decision plus measured evidence before implementation. The
 [design rationale](docs/RATIONALE.md#replication-boundary) records the model and
@@ -273,6 +307,6 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 3,429 |
+| Product Rust source and tests | 5,559 |
 | Governance Rust tool and tests | 765 |
-| **Total owned Rust** | **4,194** |
+| **Total owned Rust** | **6,324** |

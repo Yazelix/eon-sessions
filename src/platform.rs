@@ -1,4 +1,5 @@
-use crate::{Result, Size};
+use crate::Result;
+use orbit_protocol::session::SurfaceSize;
 use std::{
     env,
     fs::{self, File},
@@ -30,7 +31,7 @@ pub(crate) struct Pty {
 }
 
 impl Pty {
-    pub(crate) fn spawn(command: &[String], size: Size) -> Result<Self> {
+    pub(crate) fn spawn(command: &[String], size: SurfaceSize) -> Result<Self> {
         if command.is_empty() {
             return Err("PTY command cannot be empty".into());
         }
@@ -81,17 +82,13 @@ impl Pty {
         Ok(Self { master, child })
     }
 
-    pub(crate) fn resize(&self, size: Size) -> Result {
+    pub(crate) fn resize(&self, size: SurfaceSize) -> Result {
         let winsize = winsize(size);
         let result = unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &winsize) };
         if result == -1 {
             return Err(io::Error::last_os_error().into());
         }
         Ok(())
-    }
-
-    pub(crate) fn id(&self) -> u32 {
-        self.child.id()
     }
 
     pub(crate) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
@@ -255,12 +252,12 @@ pub(crate) fn termination_requested() -> bool {
     TERMINATE.load(Ordering::Relaxed)
 }
 
-fn winsize(size: Size) -> libc::winsize {
+fn winsize(size: SurfaceSize) -> libc::winsize {
     libc::winsize {
         ws_row: size.rows,
         ws_col: size.cols,
-        ws_xpixel: u16::try_from(u32::from(size.cols) * size.cell_width).unwrap_or(u16::MAX),
-        ws_ypixel: u16::try_from(u32::from(size.rows) * size.cell_height).unwrap_or(u16::MAX),
+        ws_xpixel: u16::try_from(size.screen_width).unwrap_or(u16::MAX),
+        ws_ypixel: u16::try_from(size.screen_height).unwrap_or(u16::MAX),
     }
 }
 
@@ -333,4 +330,30 @@ fn set_signal_handler(signals: &[libc::c_int], handler: usize) -> Result {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn winsize_preserves_surface_pixels_beyond_the_cell_grid() {
+        let size = SurfaceSize {
+            cols: 100,
+            rows: 40,
+            cell_width: 9,
+            cell_height: 18,
+            screen_width: 920,
+            screen_height: 740,
+            padding_top: 10,
+            padding_bottom: 10,
+            padding_left: 10,
+            padding_right: 10,
+        };
+
+        let size = winsize(size);
+
+        assert_eq!((size.ws_col, size.ws_row), (100, 40));
+        assert_eq!((size.ws_xpixel, size.ws_ypixel), (920, 740));
+    }
 }

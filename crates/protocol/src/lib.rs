@@ -9,6 +9,8 @@
 
 use std::{fmt, str};
 
+pub mod session;
+
 /// Maximum decoded cell count accepted by ORBF v1.
 pub const MAX_CELLS: usize = 100_000;
 /// Maximum encoded ORBF v1 payload size.
@@ -22,9 +24,12 @@ pub const PALETTE_LEN: usize = 256;
 
 const ROW_FLAG_MASK: u8 = 0b0000_0111;
 const STYLE_FLAG_MASK: u16 = 0b0000_0011_1111_1111;
+const STRING_LENGTH_BYTES: usize = std::mem::size_of::<u32>();
 const FRAME_FIXED_BYTES: usize = 801;
 const ROW_FIXED_BYTES: usize = 1;
 const CELL_FIXED_BYTES: usize = 16;
+const MIN_FRAME_BYTES: usize =
+    FRAME_FIXED_BYTES + ROW_FIXED_BYTES + CELL_FIXED_BYTES + 4 * STRING_LENGTH_BYTES;
 
 /// A protocol validation or revision-ordering failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -577,7 +582,7 @@ fn encoded_string_size(field: &'static str, value: &str) -> Result<usize> {
         field,
         length: value.len(),
     })?;
-    4_usize
+    STRING_LENGTH_BYTES
         .checked_add(value.len())
         .ok_or(Error::FrameTooLarge { size: usize::MAX })
 }

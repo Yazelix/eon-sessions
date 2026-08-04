@@ -5,15 +5,21 @@ mod presentation;
 
 use libghostty_vt::{
     Terminal, TerminalOptions, focus,
-    key::{Action as KeyAction, Encoder as KeyEncoder, Event as KeyEvent, Key},
+    key::{
+        Action as GhosttyKeyAction, Encoder as KeyEncoder, Event as GhosttyKeyEvent, Key,
+        Mods as GhosttyModifiers,
+    },
     mouse::{
-        Action as MouseAction, Button as MouseButton, Encoder as MouseEncoder,
-        EncoderSize as MouseEncoderSize, Event as MouseEvent, Position as MousePosition,
+        Action as GhosttyMouseAction, Button as GhosttyMouseButton, Encoder as MouseEncoder,
+        EncoderSize as MouseEncoderSize, Event as GhosttyMouseEvent, Position as MousePosition,
     },
     paste,
     terminal::Mode,
 };
-use orbit_protocol::{MAX_CELLS, MAX_FRAME_BYTES, decode_frame};
+use orbit_protocol::session::{
+    self, ClientMessage, Failure, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers,
+    MouseAction, MouseButton, PhysicalKey, ServerMessage, SurfaceSize,
+};
 use std::{
     cell::RefCell,
     collections::VecDeque,
@@ -30,59 +36,37 @@ use presentation::{Extractor, OutputQueue, is_disconnect};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
-const MAX_MESSAGE: usize = 4096;
-const MAX_DIAGNOSTIC_TITLE: usize = 1024;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Size {
-    cols: u16,
-    rows: u16,
-    cell_width: u32,
-    cell_height: u32,
-}
-
-impl Default for Size {
-    fn default() -> Self {
-        Self {
-            cols: 80,
-            rows: 24,
-            cell_width: 8,
-            cell_height: 16,
-        }
-    }
-}
-
-impl Size {
-    fn mouse(self) -> MouseEncoderSize {
-        MouseEncoderSize {
-            screen_width: u32::from(self.cols) * self.cell_width,
-            screen_height: u32::from(self.rows) * self.cell_height,
-            cell_width: self.cell_width,
-            cell_height: self.cell_height,
-            padding_top: 0,
-            padding_bottom: 0,
-            padding_right: 0,
-            padding_left: 0,
-        }
-    }
-}
+const INITIAL_SIZE: SurfaceSize = SurfaceSize {
+    cols: 80,
+    rows: 24,
+    cell_width: 8,
+    cell_height: 16,
+    screen_width: 640,
+    screen_height: 384,
+    padding_top: 0,
+    padding_bottom: 0,
+    padding_left: 0,
+    padding_right: 0,
+};
 
 struct Client {
     stream: UnixStream,
     input: Vec<u8>,
     output: OutputQueue,
+    attached: bool,
+    close_after_flush: bool,
 }
 
-enum SemanticInput {
-    Key(Key),
-    Mouse {
-        action: MouseAction,
-        button: MouseButton,
-        x: f32,
-        y: f32,
-    },
-    Focus(focus::Event),
-    Paste(Vec<u8>),
+impl Client {
+    fn finish_session(&mut self, code: i32) -> Result {
+        if self.attached {
+            if !self.close_after_flush {
+                let _ = self.output.push_message(&ServerMessage::Exited { code })?;
+            }
+            let _ = self.output.flush(&mut self.stream);
+        }
+        Ok(())
+    }
 }
 
 fn main() {
@@ -127,7 +111,7 @@ fn run() -> Result<i32> {
 fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
     platform::install_shutdown_signals()?;
     let (listener, _socket_guard) = platform::create_listener(socket)?;
-    let mut size = Size::default();
+    let mut size = INITIAL_SIZE;
     let mut pty = Pty::spawn(command, size)?;
     platform::ignore_broken_pipe()?;
 
@@ -155,12 +139,11 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             let (_, changed) = read_pty(&mut pty, &mut terminal)?;
             if changed {
                 revision = next_revision(revision)?;
-                publish_frame(&mut client, &mut extractor, revision, &terminal);
+                publish_frame(&mut client, &mut extractor, revision, &terminal)?;
             }
             let code = status.code().unwrap_or(1);
             if let Some(client) = &mut client {
-                client.output.push_line(&format!("EXIT {code}"));
-                let _ = client.output.flush(&mut client.stream);
+                client.finish_session(code)?;
             }
             return Ok(code);
         }
@@ -168,28 +151,35 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
         let readiness = platform::poll(
             &listener,
             pty_open.then(|| (&pty, !writes.borrow().is_empty())),
-            client.as_ref().map(|client| &client.stream),
+            client
+                .as_ref()
+                .filter(|client| !client.close_after_flush)
+                .map(|client| &client.stream),
         )?;
+        let pty_was_open = pty_open;
 
         if readiness.listener {
-            accept_clients(&listener, &mut client, &mut extractor, revision, &terminal)?;
+            accept_clients(&listener, &mut client)?;
         }
         if readiness.pty_read {
             let (open, changed) = read_pty(&mut pty, &mut terminal)?;
             pty_open = open;
             if changed {
                 revision = next_revision(revision)?;
-                publish_frame(&mut client, &mut extractor, revision, &terminal);
+                publish_frame(&mut client, &mut extractor, revision, &terminal)?;
             }
         }
-        if readiness.pty_write {
-            pty_open &= flush_pty(&mut pty, &mut writes.borrow_mut())?;
+        if readiness.pty_write && pty_open {
+            pty_open = flush_pty(&mut pty, &mut writes.borrow_mut())?;
+        }
+        if pty_was_open && !pty_open {
+            writes.borrow_mut().clear();
         }
         if readiness.client
             && !read_client(
                 client.as_mut().expect("client existed when poll began"),
                 &mut terminal,
-                &pty,
+                pty_open.then_some(&pty),
                 &mut size,
                 &writes,
                 &mut extractor,
@@ -200,6 +190,7 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
         }
         if let Some(active) = &mut client {
             match active.output.flush(&mut active.stream) {
+                Ok(true) if active.close_after_flush && active.output.is_empty() => client = None,
                 Ok(true) => {}
                 Ok(false) => client = None,
                 Err(error) => return Err(error.into()),
@@ -212,52 +203,98 @@ fn run_client(socket: &Path) -> Result<i32> {
     let stream = UnixStream::connect(socket)?;
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
-    let response = read_server_message(&mut reader)?.ok_or("server closed during attachment")?;
-    println!("{response}");
-    if response == "BUSY" {
-        return Ok(2);
+    write_client_message(
+        &mut writer,
+        &ClientMessage::Hello {
+            minimum_version: session::VERSION,
+            maximum_version: session::VERSION,
+        },
+    )?;
+    loop {
+        let message = read_server_message(&mut reader)?.ok_or("server closed during attachment")?;
+        print_server_message(&message);
+        match message {
+            ServerMessage::Attached { .. } => break,
+            ServerMessage::Busy => return Ok(2),
+            ServerMessage::Incompatible { .. } => return Ok(3),
+            ServerMessage::Failure(_) => return Ok(4),
+            _ => {}
+        }
     }
 
     for line in io::stdin().lock().lines() {
-        writeln!(writer, "{}", line?)?;
-        while let Some(response) = read_server_message(&mut reader)? {
-            let is_frame = response.starts_with("FRAME ");
-            println!("{response}");
-            if !is_frame {
-                break;
+        write_client_message(&mut writer, &ClientMessage::Paste(line?.into_bytes()))?;
+        write_client_message(
+            &mut writer,
+            &ClientMessage::Key(KeyEvent {
+                action: KeyAction::Press,
+                key: PhysicalKey::ENTER,
+                modifiers: Modifiers::empty(),
+                consumed_modifiers: Modifiers::empty(),
+                composing: false,
+                text: None,
+                unshifted_codepoint: None,
+            }),
+        )?;
+        let mut accepted = 0;
+        while accepted < 2 {
+            let Some(message) = read_server_message(&mut reader)? else {
+                return Ok(0);
+            };
+            print_server_message(&message);
+            match message {
+                ServerMessage::Accepted => accepted += 1,
+                ServerMessage::Failure(_) => return Ok(4),
+                ServerMessage::Exited { code } => return Ok(code),
+                _ => {}
             }
         }
     }
     Ok(0)
 }
 
-fn read_server_message(reader: &mut BufReader<UnixStream>) -> Result<Option<String>> {
-    let mut line = String::new();
-    if reader.read_line(&mut line)? == 0 {
+fn write_client_message(writer: &mut impl Write, message: &ClientMessage) -> Result {
+    writer.write_all(&session::encode_client_message(message)?)?;
+    Ok(())
+}
+
+fn read_server_message(reader: &mut impl Read) -> Result<Option<ServerMessage>> {
+    let mut header = [0; session::HEADER_BYTES];
+    if reader.read(&mut header[..1])? == 0 {
         return Ok(None);
     }
-    let line = line.trim_end_matches(['\r', '\n']).to_owned();
-    if let Some(length) = line.strip_prefix("FRAME ") {
-        let length: usize = length.parse()?;
-        if length > MAX_FRAME_BYTES {
-            return Err("server frame exceeds the byte bound".into());
-        }
-        let mut frame = vec![0; length];
-        reader.read_exact(&mut frame)?;
-        decode_frame(&frame)?;
+    reader.read_exact(&mut header[1..])?;
+    let length =
+        session::server_message_len(&header)?.expect("complete header has a server-message length");
+    let mut message = Vec::with_capacity(length);
+    message.extend_from_slice(&header);
+    message.resize(length, 0);
+    reader.read_exact(&mut message[session::HEADER_BYTES..])?;
+    Ok(Some(session::decode_server_message(&message)?))
+}
+
+fn print_server_message(message: &ServerMessage) {
+    match message {
+        ServerMessage::Frame(frame) => println!(
+            "FRAME revision={} size={}x{} title={:?}",
+            frame.revision, frame.dimensions.cols, frame.dimensions.rows, frame.title
+        ),
+        message => println!("{message:?}"),
     }
-    Ok(Some(line))
 }
 
 fn read_client(
     client: &mut Client,
     terminal: &mut Terminal<'static, '_>,
-    pty: &Pty,
-    size: &mut Size,
+    pty: Option<&Pty>,
+    size: &mut SurfaceSize,
     writes: &RefCell<VecDeque<u8>>,
     extractor: &mut Extractor,
     revision: &mut u64,
 ) -> Result<bool> {
+    if client.close_after_flush {
+        return Ok(true);
+    }
     let mut bytes = [0; 1024];
     let read = match client.stream.read(&mut bytes) {
         Ok(0) => return Ok(false),
@@ -267,193 +304,250 @@ fn read_client(
         Err(error) => return Err(error.into()),
     };
     client.input.extend_from_slice(&bytes[..read]);
-    if client.input.len() > MAX_MESSAGE {
-        client.output.push_line("ERROR message too large");
-        return Ok(false);
-    }
-
-    while let Some(end) = client.input.iter().position(|byte| *byte == b'\n') {
-        let mut message: Vec<u8> = client.input.drain(..=end).collect();
-        message.pop();
-        if message.last() == Some(&b'\r') {
-            message.pop();
-        }
-        let (response, changed) = match std::str::from_utf8(&message) {
-            Ok(message) => handle_message(message, terminal, pty, size, writes)
-                .unwrap_or_else(|error| (format!("ERROR {error}"), false)),
-            Err(_) => ("ERROR message is not UTF-8".into(), false),
+    loop {
+        let length = match session::client_message_len(&client.input) {
+            Ok(Some(length)) if client.input.len() >= length => length,
+            Ok(_) => return Ok(true),
+            Err(error) => {
+                if !queue_failure(client, FailureCode::Protocol, error.to_string())? {
+                    return Ok(false);
+                }
+                client.input.clear();
+                client.close_after_flush = true;
+                return Ok(true);
+            }
         };
-        if !client.output.push_line(&response) {
+        let message = match session::decode_client_message(&client.input[..length]) {
+            Ok(message) => message,
+            Err(error) => {
+                if !queue_failure(client, FailureCode::Protocol, error.to_string())? {
+                    return Ok(false);
+                }
+                client.close_after_flush = true;
+                return Ok(true);
+            }
+        };
+        drop(client.input.drain(..length));
+        let keep = handle_client_message(
+            client, message, terminal, pty, size, writes, extractor, revision,
+        )?;
+        if !keep {
             return Ok(false);
         }
-        if changed {
-            *revision = next_revision(*revision)?;
-            if !queue_frame(client, extractor, *revision, terminal, false) {
+        if client.close_after_flush {
+            return Ok(true);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_client_message(
+    client: &mut Client,
+    message: ClientMessage,
+    terminal: &mut Terminal<'static, '_>,
+    pty: Option<&Pty>,
+    size: &mut SurfaceSize,
+    writes: &RefCell<VecDeque<u8>>,
+    extractor: &mut Extractor,
+    revision: &mut u64,
+) -> Result<bool> {
+    if !client.attached {
+        return match message {
+            ClientMessage::Hello {
+                minimum_version,
+                maximum_version,
+            } if minimum_version <= session::VERSION && maximum_version >= session::VERSION => {
+                client.attached = true;
+                if !client.output.push_message(&ServerMessage::Attached {
+                    version: session::VERSION,
+                })? {
+                    return Ok(false);
+                }
+                queue_frame(client, extractor, *revision, terminal, true)
+            }
+            ClientMessage::Hello { .. } => {
+                let queued = client.output.push_message(&ServerMessage::Incompatible {
+                    minimum_version: session::VERSION,
+                    maximum_version: session::VERSION,
+                })?;
+                client.close_after_flush = true;
+                Ok(queued)
+            }
+            _ => {
+                let queued = queue_failure(
+                    client,
+                    FailureCode::Protocol,
+                    "first client message must be Hello".into(),
+                )?;
+                client.close_after_flush = true;
+                Ok(queued)
+            }
+        };
+    }
+
+    if matches!(&message, ClientMessage::Hello { .. }) {
+        let queued = queue_failure(
+            client,
+            FailureCode::Protocol,
+            "Hello may only be sent once".into(),
+        )?;
+        client.close_after_flush = true;
+        return Ok(queued);
+    }
+    let Some(pty) = pty else {
+        return queue_failure(client, FailureCode::Terminal, "PTY is closed".into());
+    };
+    match message {
+        ClientMessage::Resize(surface) => {
+            pty.resize(surface)?;
+            terminal.resize(
+                surface.cols,
+                surface.rows,
+                surface.cell_width,
+                surface.cell_height,
+            )?;
+            *size = surface;
+            if !client.output.push_message(&ServerMessage::Accepted)? {
                 return Ok(false);
             }
+            *revision = next_revision(*revision)?;
+            queue_frame(client, extractor, *revision, terminal, false)
         }
-    }
-    Ok(true)
-}
-
-fn handle_message(
-    message: &str,
-    terminal: &mut Terminal<'_, '_>,
-    pty: &Pty,
-    size: &mut Size,
-    writes: &RefCell<VecDeque<u8>>,
-) -> Result<(String, bool)> {
-    if message == "PING" {
-        return Ok(("PONG".into(), false));
-    }
-    if message == "PID" {
-        return Ok((format!("PID {}", pty.id()), false));
-    }
-    if message == "TITLE" {
-        let title = terminal.title()?.as_bytes();
-        if title.len() > MAX_DIAGNOSTIC_TITLE {
-            return Err("title exceeds the diagnostic bound".into());
-        }
-        return Ok((format!("TITLE {}", hex(title)), false));
-    }
-    if message == "SIZE" {
-        return Ok((
-            format!(
-                "SIZE {} {} {} {}",
-                size.cols, size.rows, size.cell_width, size.cell_height
-            ),
-            false,
-        ));
-    }
-    if let Some(arguments) = message.strip_prefix("RESIZE ") {
-        let values: Vec<_> = arguments.split_whitespace().collect();
-        if values.len() != 4 {
-            return Err("RESIZE requires cols rows cell-width cell-height".into());
-        }
-        let next = Size {
-            cols: values[0].parse()?,
-            rows: values[1].parse()?,
-            cell_width: values[2].parse()?,
-            cell_height: values[3].parse()?,
-        };
-        if next.cols == 0
-            || next.rows == 0
-            || next.cell_width == 0
-            || next.cell_height == 0
-            || next.cols > 1_000
-            || next.rows > 1_000
-            || next.cell_width > 1_000
-            || next.cell_height > 1_000
-            || usize::from(next.cols) * usize::from(next.rows) > MAX_CELLS
-        {
-            return Err("RESIZE values are outside the diagnostic bounds".into());
-        }
-        pty.resize(next)?;
-        terminal.resize(next.cols, next.rows, next.cell_width, next.cell_height)?;
-        *size = next;
-        return Ok(("OK".into(), true));
-    }
-
-    let input = parse_input(message)?;
-    let encoded = encode_input(terminal, *size, input)?;
-    writes.borrow_mut().extend(encoded);
-    Ok(("OK".into(), false))
-}
-
-fn parse_input(message: &str) -> Result<SemanticInput> {
-    if let Some(text) = message.strip_prefix("PASTE ") {
-        return Ok(SemanticInput::Paste(text.as_bytes().to_vec()));
-    }
-    match message {
-        "PASTE" => Ok(SemanticInput::Paste(Vec::new())),
-        "KEY UP" => Ok(SemanticInput::Key(Key::ArrowUp)),
-        "KEY ENTER" => Ok(SemanticInput::Key(Key::Enter)),
-        "FOCUS IN" => Ok(SemanticInput::Focus(focus::Event::Gained)),
-        "FOCUS OUT" => Ok(SemanticInput::Focus(focus::Event::Lost)),
-        _ if message.starts_with("MOUSE ") => parse_mouse(message),
-        _ => Err("unknown diagnostic message".into()),
+        message => match encode_input(terminal, *size, message) {
+            Ok(encoded) => {
+                writes.borrow_mut().extend(encoded);
+                client.output.push_message(&ServerMessage::Accepted)
+            }
+            Err(error) => queue_failure(client, FailureCode::Terminal, error.to_string()),
+        },
     }
 }
 
-fn parse_mouse(message: &str) -> Result<SemanticInput> {
-    let values: Vec<_> = message.split_whitespace().collect();
-    if values.len() != 5 {
-        return Err("MOUSE requires action button x y".into());
+fn queue_failure(client: &mut Client, code: FailureCode, mut detail: String) -> Result<bool> {
+    while detail.len() > session::MAX_FAILURE_BYTES {
+        detail.pop();
     }
-    let action = match values[1] {
-        "PRESS" => MouseAction::Press,
-        "RELEASE" => MouseAction::Release,
-        "MOTION" => MouseAction::Motion,
-        _ => return Err("unknown mouse action".into()),
-    };
-    let button = match values[2] {
-        "LEFT" => MouseButton::Left,
-        "RIGHT" => MouseButton::Right,
-        "MIDDLE" => MouseButton::Middle,
-        _ => return Err("unknown mouse button".into()),
-    };
-    let x = values[3].parse::<f32>()?;
-    let y = values[4].parse::<f32>()?;
-    if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
-        return Err("mouse coordinates must be finite and non-negative".into());
-    }
-    Ok(SemanticInput::Mouse {
-        action,
-        button,
-        x,
-        y,
-    })
+    client
+        .output
+        .push_message(&ServerMessage::Failure(Failure { code, detail }))
 }
 
-fn encode_input(terminal: &Terminal<'_, '_>, size: Size, input: SemanticInput) -> Result<Vec<u8>> {
+fn encode_input(
+    terminal: &Terminal<'_, '_>,
+    size: SurfaceSize,
+    input: ClientMessage,
+) -> Result<Vec<u8>> {
     match input {
-        SemanticInput::Key(key) => {
-            let mut event = KeyEvent::new()?;
+        ClientMessage::Key(input) => {
+            let key = Key::try_from(u32::from(input.key.raw()))
+                .map_err(|value| format!("unsupported physical key {value}"))?;
+            let mut event = GhosttyKeyEvent::new()?;
             event
-                .set_action(KeyAction::Press)
+                .set_action(match input.action {
+                    KeyAction::Press => GhosttyKeyAction::Press,
+                    KeyAction::Release => GhosttyKeyAction::Release,
+                    KeyAction::Repeat => GhosttyKeyAction::Repeat,
+                })
                 .set_key(key)
-                .set_utf8::<String>(None);
+                .set_mods(ghostty_modifiers(input.modifiers)?)
+                .set_consumed_mods(ghostty_modifiers(input.consumed_modifiers)?)
+                .set_composing(input.composing)
+                .set_utf8(input.text);
+            if let Some(codepoint) = input.unshifted_codepoint {
+                event.set_unshifted_codepoint(codepoint);
+            }
             let mut encoder = KeyEncoder::new()?;
             encoder.set_options_from_terminal(terminal);
             let mut output = Vec::new();
             encoder.encode_to_vec(&event, &mut output)?;
             Ok(output)
         }
-        SemanticInput::Mouse {
-            action,
-            button,
-            x,
-            y,
-        } => {
-            let mut event = MouseEvent::new()?;
+        ClientMessage::Mouse(input) => {
+            let is_wheel = matches!(
+                input.button,
+                Some(MouseButton::Four | MouseButton::Five | MouseButton::Six | MouseButton::Seven)
+            );
+            let mut event = GhosttyMouseEvent::new()?;
             event
-                .set_action(action)
-                .set_button(Some(button))
-                .set_position(MousePosition { x, y });
+                .set_action(match input.action {
+                    MouseAction::Press => GhosttyMouseAction::Press,
+                    MouseAction::Release => GhosttyMouseAction::Release,
+                    MouseAction::Motion => GhosttyMouseAction::Motion,
+                })
+                .set_button(input.button.map(ghostty_mouse_button))
+                .set_mods(ghostty_modifiers(input.modifiers)?)
+                .set_position(MousePosition {
+                    x: input.x,
+                    y: input.y,
+                });
             let mut encoder = MouseEncoder::new()?;
             encoder
                 .set_options_from_terminal(terminal)
-                .set_size(size.mouse());
+                .set_size(mouse_size(size))
+                .set_any_button_pressed(
+                    input.button.is_some() && input.action != MouseAction::Release && !is_wheel,
+                );
             let mut output = Vec::new();
             encoder.encode_to_vec(&event, &mut output)?;
             Ok(output)
         }
-        SemanticInput::Focus(event) => {
+        ClientMessage::Focus(event) => {
             if !terminal.mode(Mode::FOCUS_EVENT)? {
                 return Ok(Vec::new());
             }
+            let event = match event {
+                FocusEvent::Gained => focus::Event::Gained,
+                FocusEvent::Lost => focus::Event::Lost,
+            };
             let mut output = vec![0; 8];
             let written = event.encode(&mut output)?;
             output.truncate(written);
             Ok(output)
         }
-        SemanticInput::Paste(mut data) => {
+        ClientMessage::Paste(mut data) => {
             let bracketed = terminal.mode(Mode::BRACKETED_PASTE)?;
             let mut output = vec![0; data.len() + 16];
             let written = paste::encode(&mut data, bracketed, &mut output)?;
             output.truncate(written);
             Ok(output)
         }
+        ClientMessage::Hello { .. } | ClientMessage::Resize(_) => {
+            Err("message is not terminal input".into())
+        }
+    }
+}
+
+fn mouse_size(size: SurfaceSize) -> MouseEncoderSize {
+    MouseEncoderSize {
+        screen_width: size.screen_width,
+        screen_height: size.screen_height,
+        cell_width: size.cell_width,
+        cell_height: size.cell_height,
+        padding_top: size.padding_top,
+        padding_bottom: size.padding_bottom,
+        padding_right: size.padding_right,
+        padding_left: size.padding_left,
+    }
+}
+
+fn ghostty_modifiers(modifiers: Modifiers) -> Result<GhosttyModifiers> {
+    GhosttyModifiers::from_bits(modifiers.bits()).ok_or_else(|| "invalid key modifiers".into())
+}
+
+fn ghostty_mouse_button(button: MouseButton) -> GhosttyMouseButton {
+    match button {
+        MouseButton::Unknown => GhosttyMouseButton::Unknown,
+        MouseButton::Left => GhosttyMouseButton::Left,
+        MouseButton::Middle => GhosttyMouseButton::Middle,
+        MouseButton::Right => GhosttyMouseButton::Right,
+        MouseButton::Four => GhosttyMouseButton::Four,
+        MouseButton::Five => GhosttyMouseButton::Five,
+        MouseButton::Six => GhosttyMouseButton::Six,
+        MouseButton::Seven => GhosttyMouseButton::Seven,
+        MouseButton::Eight => GhosttyMouseButton::Eight,
+        MouseButton::Nine => GhosttyMouseButton::Nine,
+        MouseButton::Ten => GhosttyMouseButton::Ten,
+        MouseButton::Eleven => GhosttyMouseButton::Eleven,
     }
 }
 
@@ -489,28 +583,22 @@ fn flush_pty(pty: &mut Pty, writes: &mut VecDeque<u8>) -> Result<bool> {
     Ok(true)
 }
 
-fn accept_clients(
-    listener: &UnixListener,
-    active: &mut Option<Client>,
-    extractor: &mut Extractor,
-    revision: u64,
-    terminal: &Terminal<'static, '_>,
-) -> Result {
+fn accept_clients(listener: &UnixListener, active: &mut Option<Client>) -> Result {
     loop {
         match listener.accept() {
             Ok((mut stream, _)) if active.is_some() => {
-                let _ = stream.write_all(b"BUSY\n");
+                let busy = session::encode_server_message(&ServerMessage::Busy)?;
+                let _ = stream.write_all(&busy);
             }
             Ok((stream, _)) => {
                 stream.set_nonblocking(true)?;
-                let mut client = Client {
+                *active = Some(Client {
                     stream,
                     input: Vec::new(),
                     output: OutputQueue::default(),
-                };
-                if queue_frame(&mut client, extractor, revision, terminal, true) {
-                    *active = Some(client);
-                }
+                    attached: false,
+                    close_after_flush: false,
+                });
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -530,13 +618,15 @@ fn publish_frame(
     extractor: &mut Extractor,
     revision: u64,
     terminal: &Terminal<'static, '_>,
-) {
-    if active
+) -> Result {
+    if let Some(client) = active
         .as_mut()
-        .is_some_and(|client| !queue_frame(client, extractor, revision, terminal, false))
+        .filter(|client| client.attached && !client.close_after_flush)
+        && !queue_frame(client, extractor, revision, terminal, false)?
     {
         *active = None;
     }
+    Ok(())
 }
 
 fn queue_frame(
@@ -545,12 +635,12 @@ fn queue_frame(
     revision: u64,
     terminal: &Terminal<'static, '_>,
     initial: bool,
-) -> bool {
+) -> Result<bool> {
     let frame = match extractor.frame(revision, terminal) {
         Ok(frame) => frame,
         Err(error) => {
             eprintln!("orbit: presentation client disconnected: {error}");
-            return false;
+            return Ok(false);
         }
     };
     if initial {
@@ -560,23 +650,13 @@ fn queue_frame(
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[(byte >> 4) as usize] as char);
-        output.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{thread, time::Instant};
 
     fn terminal() -> Result<Terminal<'static, 'static>> {
-        let size = Size::default();
+        let size = INITIAL_SIZE;
         let mut terminal = Terminal::new(TerminalOptions {
             cols: size.cols,
             rows: size.rows,
@@ -586,68 +666,220 @@ mod tests {
         Ok(terminal)
     }
 
+    fn key(key: PhysicalKey) -> ClientMessage {
+        ClientMessage::Key(KeyEvent {
+            action: KeyAction::Press,
+            key,
+            modifiers: Modifiers::empty(),
+            consumed_modifiers: Modifiers::empty(),
+            composing: false,
+            text: None,
+            unshifted_codepoint: None,
+        })
+    }
+
+    fn mouse() -> ClientMessage {
+        ClientMessage::Mouse(session::MouseEvent {
+            action: MouseAction::Press,
+            button: Some(MouseButton::Left),
+            modifiers: Modifiers::empty(),
+            x: 1.0,
+            y: 1.0,
+        })
+    }
+
+    fn attached_client() -> Result<(Client, UnixStream)> {
+        let (stream, peer) = UnixStream::pair()?;
+        stream.set_nonblocking(true)?;
+        Ok((
+            Client {
+                stream,
+                input: Vec::new(),
+                output: OutputQueue::default(),
+                attached: true,
+                close_after_flush: false,
+            },
+            peer,
+        ))
+    }
+
+    fn closing_client() -> Result<(Client, UnixStream, Vec<u8>)> {
+        let (mut client, peer) = attached_client()?;
+        let failure = ServerMessage::Failure(Failure {
+            code: FailureCode::Protocol,
+            detail: "terminal".into(),
+        });
+        let expected = session::encode_server_message(&failure)?;
+        assert!(client.output.push_message(&failure)?);
+        client.close_after_flush = true;
+        Ok((client, peer, expected))
+    }
+
     #[test]
     fn authoritative_state_controls_all_semantic_input_encoding() -> Result {
-        let size = Size::default();
+        let size = INITIAL_SIZE;
         let normal = terminal()?;
         assert_eq!(
-            encode_input(&normal, size, SemanticInput::Key(Key::ArrowUp))?,
+            encode_input(&normal, size, key(PhysicalKey::ARROW_UP))?,
             b"\x1b[A"
         );
-        assert!(
-            encode_input(
-                &normal,
-                size,
-                SemanticInput::Mouse {
-                    action: MouseAction::Press,
-                    button: MouseButton::Left,
-                    x: 1.0,
-                    y: 1.0,
-                }
-            )?
-            .is_empty()
-        );
-        assert!(
-            encode_input(&normal, size, SemanticInput::Focus(focus::Event::Gained))?.is_empty()
-        );
+        assert!(encode_input(&normal, size, mouse())?.is_empty());
+        assert!(encode_input(&normal, size, ClientMessage::Focus(FocusEvent::Gained))?.is_empty());
         assert_eq!(
-            encode_input(&normal, size, SemanticInput::Paste(b"a\nb".to_vec()))?,
+            encode_input(&normal, size, ClientMessage::Paste(b"a\nb".to_vec()))?,
             b"a\rb"
         );
 
         let mut modes = terminal()?;
         modes.vt_write(b"\x1b[?1h\x1b[?1000h\x1b[?1006h\x1b[?1004h\x1b[?2004h");
         assert_eq!(
-            encode_input(&modes, size, SemanticInput::Key(Key::ArrowUp))?,
+            encode_input(&modes, size, key(PhysicalKey::ARROW_UP))?,
             b"\x1bOA"
         );
+        assert_eq!(encode_input(&modes, size, mouse())?, b"\x1b[<0;1;1M");
         assert_eq!(
-            encode_input(
-                &modes,
-                size,
-                SemanticInput::Mouse {
-                    action: MouseAction::Press,
-                    button: MouseButton::Left,
-                    x: 1.0,
-                    y: 1.0,
-                }
-            )?,
-            b"\x1b[<0;1;1M"
-        );
-        assert_eq!(
-            encode_input(&modes, size, SemanticInput::Focus(focus::Event::Gained))?,
+            encode_input(&modes, size, ClientMessage::Focus(FocusEvent::Gained))?,
             b"\x1b[I"
         );
         assert_eq!(
-            encode_input(&modes, size, SemanticInput::Paste(b"a\nb".to_vec()))?,
+            encode_input(&modes, size, ClientMessage::Paste(b"a\nb".to_vec()))?,
             b"\x1b[200~a\nb\x1b[201~"
         );
         Ok(())
     }
 
     #[test]
+    fn outside_mouse_reporting_uses_held_button_semantics() -> Result {
+        let mut terminal = terminal()?;
+        terminal.vt_write(b"\x1b[?1003h\x1b[?1016h");
+        let wheel = ClientMessage::Mouse(session::MouseEvent {
+            action: MouseAction::Press,
+            button: Some(MouseButton::Four),
+            modifiers: Modifiers::empty(),
+            x: 641.0,
+            y: 1.0,
+        });
+        assert!(encode_input(&terminal, INITIAL_SIZE, wheel)?.is_empty());
+
+        let motion = ClientMessage::Mouse(session::MouseEvent {
+            action: MouseAction::Motion,
+            button: Some(MouseButton::Left),
+            modifiers: Modifiers::empty(),
+            x: 641.0,
+            y: 1.0,
+        });
+
+        assert_eq!(
+            encode_input(&terminal, INITIAL_SIZE, motion)?,
+            b"\x1b[<32;641;1M"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn every_protocol_physical_key_reaches_the_terminal_mapper() {
+        for raw in 0..=PhysicalKey::MAX_RAW {
+            assert!(
+                Key::try_from(u32::from(raw)).is_ok(),
+                "protocol physical key {raw} has no terminal mapping"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_closing_client_cannot_apply_later_input() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        write_client_message(&mut peer, &ClientMessage::Paste(b"ignored".to_vec()))?;
+        client.close_after_flush = true;
+        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let mut terminal = terminal()?;
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut extractor = Extractor::new()?;
+        let mut revision = 0;
+
+        assert!(read_client(
+            &mut client,
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+        )?);
+        assert!(writes.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn closed_pty_rejects_input_without_queueing() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let mut terminal = terminal()?;
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut extractor = Extractor::new()?;
+        let mut revision = 0;
+
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Paste(b"undeliverable".to_vec()),
+            &mut terminal,
+            None,
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+        )?);
+        assert!(writes.borrow().is_empty());
+        assert!(client.output.flush(&mut client.stream)?);
+        assert_eq!(
+            read_server_message(&mut peer)?,
+            Some(ServerMessage::Failure(Failure {
+                code: FailureCode::Terminal,
+                detail: "PTY is closed".into(),
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_closing_client_cannot_receive_later_frames() -> Result {
+        let (client, mut peer, expected) = closing_client()?;
+        let mut active = Some(client);
+        let terminal = terminal()?;
+        let mut extractor = Extractor::new()?;
+
+        publish_frame(&mut active, &mut extractor, 1, &terminal)?;
+        let client = active
+            .as_mut()
+            .expect("closing client remains while draining");
+        assert!(client.output.flush(&mut client.stream)?);
+        assert!(client.output.is_empty());
+        drop(active);
+
+        let mut actual = Vec::new();
+        peer.read_to_end(&mut actual)?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn terminal_closing_client_finishes_with_queued_failure_only() -> Result {
+        let (mut client, mut peer, expected) = closing_client()?;
+
+        client.finish_session(17)?;
+        assert!(client.output.is_empty());
+        drop(client);
+
+        let mut actual = Vec::new();
+        peer.read_to_end(&mut actual)?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
     fn exited_child_output_is_drained_into_authoritative_state() -> Result {
-        let size = Size::default();
+        let size = INITIAL_SIZE;
         let command = [
             "/bin/sh".into(),
             "-c".into(),

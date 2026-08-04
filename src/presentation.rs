@@ -9,11 +9,12 @@ use libghostty_vt::{
 use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
     CursorViewport, Dimensions, Frame, FrameSize, MAX_CELLS, MAX_FRAME_BYTES, Rgb, Row,
-    Screen as ProtocolScreen, StyleColor, Underline, encode_frame,
+    Screen as ProtocolScreen, StyleColor, Underline,
+    session::{HEADER_BYTES, ServerMessage, encode_server_message},
 };
 use std::{collections::VecDeque, io, io::Write, os::unix::net::UnixStream};
 
-const MAX_OUTPUT_BYTES: usize = 2 * (MAX_FRAME_BYTES + 32) + 4096;
+const MAX_OUTPUT_BYTES: usize = 2 * (MAX_FRAME_BYTES + HEADER_BYTES) + 4096;
 
 pub(crate) fn is_disconnect(error: &io::Error) -> bool {
     matches!(
@@ -43,7 +44,7 @@ impl Extractor {
         &mut self,
         revision: u64,
         terminal: &Terminal<'static, '_>,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Frame> {
         let Self { state, rows, cells } = self;
         let snapshot = state.update(terminal)?;
         let cols = snapshot.cols()?;
@@ -130,7 +131,7 @@ impl Extractor {
         if row_iter.next().is_some() {
             return Err("render snapshot added an unexpected row".into());
         }
-        let frame = Frame {
+        Ok(Frame {
             revision,
             dimensions: Dimensions {
                 cols,
@@ -151,8 +152,7 @@ impl Extractor {
             },
             cursor,
             rows: frame_rows,
-        };
-        Ok(encode_frame(&frame)?)
+        })
     }
 }
 
@@ -252,12 +252,23 @@ pub(crate) struct OutputQueue {
 }
 
 impl OutputQueue {
-    pub(crate) fn push_initial_frame(&mut self, frame: Vec<u8>) -> bool {
-        self.push(frame_message(frame), false)
+    pub(crate) fn push_message(&mut self, message: &ServerMessage) -> Result<bool> {
+        Ok(self.push(encode_server_message(message)?, false))
     }
 
-    pub(crate) fn push_frame(&mut self, frame: Vec<u8>) -> bool {
-        let message = frame_message(frame);
+    pub(crate) fn push_initial_frame(&mut self, frame: Frame) -> Result<bool> {
+        Ok(self.push(
+            encode_server_message(&ServerMessage::Frame(Box::new(frame)))?,
+            false,
+        ))
+    }
+
+    pub(crate) fn push_frame(&mut self, frame: Frame) -> Result<bool> {
+        let message = encode_server_message(&ServerMessage::Frame(Box::new(frame)))?;
+        Ok(self.push_coalescible(message))
+    }
+
+    fn push_coalescible(&mut self, message: Vec<u8>) -> bool {
         if self.messages.back().is_some_and(|back| back.coalescible)
             && (self.messages.len() > 1 || self.offset == 0)
         {
@@ -267,13 +278,6 @@ impl OutputQueue {
         self.push(message, true)
     }
 
-    pub(crate) fn push_line(&mut self, line: &str) -> bool {
-        let mut message = Vec::with_capacity(line.len() + 1);
-        message.extend_from_slice(line.as_bytes());
-        message.push(b'\n');
-        self.push(message, false)
-    }
-
     fn push(&mut self, bytes: Vec<u8>, coalescible: bool) -> bool {
         if self.bytes.saturating_add(bytes.len()) > MAX_OUTPUT_BYTES {
             return false;
@@ -281,6 +285,10 @@ impl OutputQueue {
         self.bytes += bytes.len();
         self.messages.push_back(Message { bytes, coalescible });
         true
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.messages.is_empty()
     }
 
     pub(crate) fn flush(&mut self, stream: &mut UnixStream) -> io::Result<bool> {
@@ -305,18 +313,15 @@ impl OutputQueue {
     }
 }
 
-fn frame_message(frame: Vec<u8>) -> Vec<u8> {
-    let mut message = format!("FRAME {}\n", frame.len()).into_bytes();
-    message.extend(frame);
-    message
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbit_protocol::session::{
+        self, ClientMessage, ServerMessage, decode_server_message, encode_client_message,
+    };
     use std::{
         fs,
-        io::{BufRead, BufReader, Read},
+        io::{BufReader, Read, Write},
         os::unix::{fs::PermissionsExt, net::UnixStream},
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
@@ -389,24 +394,22 @@ mod tests {
     }
 
     fn read_frame(reader: &mut BufReader<UnixStream>) -> TestResult<Option<Frame>> {
-        let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 {
-            return Err("presentation connection closed".into());
+        loop {
+            let mut header = [0; session::HEADER_BYTES];
+            reader.read_exact(&mut header)?;
+            let length = session::server_message_len(&header)?
+                .expect("complete session header declares its length");
+            let mut framed = Vec::with_capacity(length);
+            framed.extend_from_slice(&header);
+            framed.resize(length, 0);
+            reader.read_exact(&mut framed[session::HEADER_BYTES..])?;
+            match decode_server_message(&framed)? {
+                ServerMessage::Attached { .. } | ServerMessage::Accepted => {}
+                ServerMessage::Frame(frame) => return Ok(Some(*frame)),
+                ServerMessage::Busy => return Ok(None),
+                message => return Err(format!("unexpected server message: {message:?}").into()),
+            }
         }
-        if header.trim() == "BUSY" {
-            return Ok(None);
-        }
-        let length: usize = header
-            .trim_end_matches(['\r', '\n'])
-            .strip_prefix("FRAME ")
-            .ok_or_else(|| format!("non-frame bytes crossed the boundary: {header:?}"))?
-            .parse()?;
-        if length > MAX_FRAME_BYTES {
-            return Err("frame exceeded its declared bound".into());
-        }
-        let mut payload = vec![0; length];
-        reader.read_exact(&mut payload)?;
-        Ok(Some(orbit_protocol::decode_frame(&payload)?))
     }
 
     fn cell(frame: &Frame, x: usize, y: usize) -> &ProtocolCell {
@@ -423,6 +426,11 @@ mod tests {
             match UnixStream::connect(socket) {
                 Ok(stream) => {
                     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+                    (&stream).write_all(&encode_client_message(&ClientMessage::Hello {
+                        minimum_version: session::VERSION,
+                        maximum_version: session::VERSION,
+                    })?)?;
                     let mut reader = BufReader::new(stream);
                     if let Some(frame) = read_frame(&mut reader)? {
                         return Ok((reader, frame));
@@ -457,9 +465,9 @@ mod tests {
     #[test]
     fn pending_frames_keep_the_initial_and_only_the_latest_revision() {
         let mut output = OutputQueue::default();
-        assert!(output.push_initial_frame(vec![0]));
-        assert!(output.push_frame(vec![1]));
-        assert!(output.push_frame(vec![2]));
+        assert!(output.push(vec![0], false));
+        assert!(output.push_coalescible(vec![1]));
+        assert!(output.push_coalescible(vec![2]));
 
         assert_eq!(output.messages.len(), 2);
         assert!(output.messages.front().unwrap().bytes.ends_with(&[0]));
