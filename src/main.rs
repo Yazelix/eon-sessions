@@ -1,5 +1,7 @@
 #![cfg(target_os = "linux")]
 
+mod platform;
+
 use libghostty_vt::{
     Terminal, TerminalOptions, focus,
     key::{Action as KeyAction, Encoder as KeyEncoder, Event as KeyEvent, Key},
@@ -15,27 +17,18 @@ use std::{
     collections::VecDeque,
     env,
     error::Error,
-    fs::{self, File},
     io::{self, BufRead, BufReader, Read, Write},
-    os::{
-        fd::{AsRawFd, FromRawFd, RawFd},
-        unix::{
-            fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
-            net::{UnixListener, UnixStream},
-            process::CommandExt,
-        },
-    },
+    os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
     rc::Rc,
-    sync::atomic::{AtomicBool, Ordering},
 };
+
+use platform::{Pty, PtyIo};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
 const MAX_MESSAGE: usize = 4096;
 const MAX_DIAGNOSTIC_TITLE: usize = 1024;
-static TERMINATE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Size {
@@ -57,15 +50,6 @@ impl Default for Size {
 }
 
 impl Size {
-    fn winsize(self) -> libc::winsize {
-        libc::winsize {
-            ws_row: self.rows,
-            ws_col: self.cols,
-            ws_xpixel: u16::try_from(u32::from(self.cols) * self.cell_width).unwrap_or(u16::MAX),
-            ws_ypixel: u16::try_from(u32::from(self.rows) * self.cell_height).unwrap_or(u16::MAX),
-        }
-    }
-
     fn mouse(self) -> MouseEncoderSize {
         MouseEncoderSize {
             screen_width: u32::from(self.cols) * self.cell_width,
@@ -76,123 +60,6 @@ impl Size {
             padding_bottom: 0,
             padding_right: 0,
             padding_left: 0,
-        }
-    }
-}
-
-struct Pty {
-    master: File,
-    child: Child,
-}
-
-impl Pty {
-    fn spawn(command: &[String], size: Size) -> Result<Self> {
-        if command.is_empty() {
-            return Err("PTY command cannot be empty".into());
-        }
-
-        let mut master_fd = -1;
-        let mut slave_fd = -1;
-        let winsize = size.winsize();
-        let result = unsafe {
-            libc::openpty(
-                &raw mut master_fd,
-                &raw mut slave_fd,
-                std::ptr::null_mut(),
-                std::ptr::null(),
-                &winsize,
-            )
-        };
-        if result == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        let master = unsafe { File::from_raw_fd(master_fd) };
-        let slave = unsafe { File::from_raw_fd(slave_fd) };
-        set_fd_flags(master.as_raw_fd(), libc::O_NONBLOCK)?;
-        set_fd_flags(slave.as_raw_fd(), 0)?;
-
-        let stdin = slave.try_clone()?;
-        let stdout = slave.try_clone()?;
-        let mut child_command = Command::new(&command[0]);
-        child_command
-            .args(&command[1..])
-            .stdin(Stdio::from(stdin))
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(slave))
-            .env("TERM", "xterm-ghostty")
-            .env("COLORTERM", "truecolor");
-        unsafe {
-            child_command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let child = child_command.spawn()?;
-        Ok(Self { master, child })
-    }
-
-    fn resize(&self, size: Size) -> Result {
-        let winsize = size.winsize();
-        let result = unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &winsize) };
-        if result == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-        Ok(())
-    }
-
-    fn try_wait_and_drain(
-        &mut self,
-        terminal: &mut Terminal<'_, '_>,
-    ) -> Result<Option<ExitStatus>> {
-        let Some(status) = self.child.try_wait()? else {
-            return Ok(None);
-        };
-        read_pty(&mut self.master, terminal)?;
-        Ok(Some(status))
-    }
-
-    fn stop_and_reap(&mut self) {
-        let child_running = !matches!(self.child.try_wait(), Ok(Some(_)));
-        let child_group = self.child.id() as libc::pid_t;
-        let foreground_group = unsafe { libc::tcgetpgrp(self.master.as_raw_fd()) };
-        unsafe {
-            for signal in [libc::SIGHUP, libc::SIGKILL] {
-                if child_running {
-                    libc::kill(-child_group, signal);
-                }
-                if foreground_group > 0 && (!child_running || foreground_group != child_group) {
-                    libc::kill(-foreground_group, signal);
-                }
-            }
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-impl Drop for Pty {
-    fn drop(&mut self) {
-        self.stop_and_reap();
-    }
-}
-
-struct SocketGuard(PathBuf, Option<(u64, u64)>);
-
-impl Drop for SocketGuard {
-    fn drop(&mut self) {
-        if fs::symlink_metadata(&self.0).is_ok_and(|metadata| {
-            metadata.file_type().is_socket()
-                && self.1.is_none_or(|(device, inode)| {
-                    metadata.dev() == device && metadata.ino() == inode
-                })
-        }) {
-            let _ = fs::remove_file(&self.0);
         }
     }
 }
@@ -232,7 +99,7 @@ fn run() -> Result<i32> {
             let socket = if arguments.first().is_some_and(|value| value != "--") {
                 PathBuf::from(arguments.remove(0))
             } else {
-                default_socket_path()?
+                platform::default_socket_path()?
             };
             if arguments.first().is_some_and(|value| value == "--") {
                 arguments.remove(0);
@@ -246,7 +113,7 @@ fn run() -> Result<i32> {
             let socket = arguments
                 .next()
                 .map(PathBuf::from)
-                .map_or_else(|| default_socket_path(), Ok)?;
+                .map_or_else(|| platform::default_socket_path(), Ok)?;
             run_client(&socket)
         }
         _ => Err("usage: yazelix-orbit serve [SOCKET] [-- COMMAND ...] | client [SOCKET]".into()),
@@ -254,14 +121,11 @@ fn run() -> Result<i32> {
 }
 
 fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
-    set_signal_handler(
-        &[libc::SIGINT, libc::SIGTERM, libc::SIGHUP],
-        terminate as *const () as usize,
-    )?;
-    let (listener, _socket_guard) = create_listener(socket)?;
+    platform::install_shutdown_signals()?;
+    let (listener, _socket_guard) = platform::create_listener(socket)?;
     let mut size = Size::default();
     let mut pty = Pty::spawn(command, size)?;
-    set_signal_handler(&[libc::SIGPIPE], libc::SIG_IGN)?;
+    platform::ignore_broken_pipe()?;
 
     let writes = Rc::new(RefCell::new(VecDeque::<u8>::new()));
     let response_sink = Rc::clone(&writes);
@@ -278,10 +142,11 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
     let mut client: Option<Client> = None;
     let mut pty_open = true;
     loop {
-        if TERMINATE.load(Ordering::Relaxed) {
+        if platform::termination_requested() {
             return Ok(0);
         }
-        if let Some(status) = pty.try_wait_and_drain(&mut terminal)? {
+        if let Some(status) = pty.try_wait()? {
+            read_pty(&mut pty, &mut terminal)?;
             let code = status.code().unwrap_or(1);
             if let Some(client) = &mut client {
                 let _ = send_line(&mut client.stream, &format!("EXIT {code}"));
@@ -289,39 +154,22 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             return Ok(code);
         }
 
-        let mut fds = vec![pollfd(listener.as_raw_fd(), libc::POLLIN)];
-        let master_index = pty_open.then(|| {
-            let index = fds.len();
-            let events = libc::POLLIN
-                | if writes.borrow().is_empty() {
-                    0
-                } else {
-                    libc::POLLOUT
-                };
-            fds.push(pollfd(pty.master.as_raw_fd(), events));
-            index
-        });
-        let client_index = client.as_ref().map(|client| {
-            let index = fds.len();
-            fds.push(pollfd(client.stream.as_raw_fd(), libc::POLLIN));
-            index
-        });
-        poll(&mut fds)?;
+        let readiness = platform::poll(
+            &listener,
+            pty_open.then(|| (&pty, !writes.borrow().is_empty())),
+            client.as_ref().map(|client| &client.stream),
+        )?;
 
-        if fds[0].revents & libc::POLLIN != 0 {
+        if readiness.listener {
             accept_clients(&listener, &mut client)?;
         }
-        if let Some(index) = master_index {
-            let events = fds[index].revents;
-            if events & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
-                pty_open = read_pty(&mut pty.master, &mut terminal)?;
-            }
-            if events & libc::POLLOUT != 0 {
-                pty_open &= flush_pty(&mut pty.master, &mut writes.borrow_mut())?;
-            }
+        if readiness.pty_read {
+            pty_open = read_pty(&mut pty, &mut terminal)?;
         }
-        if let Some(index) = client_index
-            && fds[index].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+        if readiness.pty_write {
+            pty_open &= flush_pty(&mut pty, &mut writes.borrow_mut())?;
+        }
+        if readiness.client
             && !read_client(
                 client.as_mut().expect("client existed when poll began"),
                 &mut terminal,
@@ -407,7 +255,7 @@ fn handle_message(
         return Ok("PONG".into());
     }
     if message == "PID" {
-        return Ok(format!("PID {}", pty.child.id()));
+        return Ok(format!("PID {}", pty.id()));
     }
     if message == "TITLE" {
         let title = terminal.title()?.as_bytes();
@@ -553,35 +401,29 @@ fn encode_input(terminal: &Terminal<'_, '_>, size: Size, input: SemanticInput) -
     }
 }
 
-fn read_pty(master: &mut File, terminal: &mut Terminal<'_, '_>) -> Result<bool> {
+fn read_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<bool> {
     let mut bytes = [0; 8192];
     loop {
-        match master.read(&mut bytes) {
-            Ok(0) => return Ok(false),
-            Ok(read) => terminal.vt_write(&bytes[..read]),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(true),
-            Err(error) if error.raw_os_error() == Some(libc::EIO) => return Ok(false),
-            Err(error) => return Err(error.into()),
+        match pty.read(&mut bytes)? {
+            PtyIo::Ready(read) => terminal.vt_write(&bytes[..read]),
+            PtyIo::Blocked => return Ok(true),
+            PtyIo::Closed => return Ok(false),
         }
     }
 }
 
-fn flush_pty(master: &mut File, writes: &mut VecDeque<u8>) -> Result<bool> {
+fn flush_pty(pty: &mut Pty, writes: &mut VecDeque<u8>) -> Result<bool> {
     while !writes.is_empty() {
-        let result = {
+        let bytes = {
             let (first, second) = writes.as_slices();
-            master.write(if first.is_empty() { second } else { first })
+            if first.is_empty() { second } else { first }
         };
-        match result {
-            Ok(0) => return Ok(false),
-            Ok(written) => {
+        match pty.write(bytes)? {
+            PtyIo::Ready(written) => {
                 drop(writes.drain(..written));
             }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(true),
-            Err(error) if error.raw_os_error() == Some(libc::EIO) => return Ok(false),
-            Err(error) => return Err(error.into()),
+            PtyIo::Blocked => return Ok(true),
+            PtyIo::Closed => return Ok(false),
         }
     }
     Ok(true)
@@ -611,117 +453,6 @@ fn accept_clients(listener: &UnixListener, active: &mut Option<Client>) -> Resul
 fn send_line(stream: &mut UnixStream, line: &str) -> io::Result<()> {
     stream.write_all(line.as_bytes())?;
     stream.write_all(b"\n")
-}
-
-fn create_listener(path: &Path) -> Result<(UnixListener, SocketGuard)> {
-    validate_private_parent(path)?;
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if !metadata.file_type().is_socket() {
-            return Err(format!("refusing to replace non-socket path {}", path.display()).into());
-        }
-        match UnixStream::connect(path) {
-            Ok(_) => return Err(format!("server already listening at {}", path.display()).into()),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
-                ) =>
-            {
-                fs::remove_file(path)?;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-    let listener = UnixListener::bind(path)?;
-    let mut guard = SocketGuard(path.to_owned(), None);
-    let metadata = fs::symlink_metadata(path)?;
-    guard.1 = Some((metadata.dev(), metadata.ino()));
-    listener.set_nonblocking(true)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    Ok((listener, guard))
-}
-
-fn validate_private_parent(path: &Path) -> Result {
-    let parent = path.parent().ok_or("socket path has no parent")?;
-    let metadata = fs::metadata(parent)?;
-    let euid = unsafe { libc::geteuid() };
-    if !metadata.is_dir() || metadata.uid() != euid || metadata.mode() & 0o077 != 0 {
-        return Err(format!(
-            "socket parent {} must be a user-owned 0700 directory",
-            parent.display()
-        )
-        .into());
-    }
-    Ok(())
-}
-
-fn default_socket_path() -> Result<PathBuf> {
-    let euid = unsafe { libc::geteuid() };
-    let directory = env::var_os("XDG_RUNTIME_DIR").map_or_else(
-        || PathBuf::from(format!("/tmp/yazelix-orbit-{euid}")),
-        |root| PathBuf::from(root).join("yazelix-orbit"),
-    );
-    if !directory.exists() {
-        fs::DirBuilder::new().mode(0o700).create(&directory)?;
-    }
-    let metadata = fs::metadata(&directory)?;
-    if metadata.uid() != euid || metadata.mode() & 0o077 != 0 {
-        return Err(format!("runtime directory {} is not private", directory.display()).into());
-    }
-    Ok(directory.join("orbit.sock"))
-}
-
-fn set_fd_flags(fd: RawFd, status: libc::c_int) -> Result {
-    let old_status = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if old_status == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, old_status | status) } == -1 {
-        return Err(io::Error::last_os_error().into());
-    }
-    let old_descriptor = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if old_descriptor == -1
-        || unsafe { libc::fcntl(fd, libc::F_SETFD, old_descriptor | libc::FD_CLOEXEC) } == -1
-    {
-        return Err(io::Error::last_os_error().into());
-    }
-    Ok(())
-}
-
-fn pollfd(fd: RawFd, events: libc::c_short) -> libc::pollfd {
-    libc::pollfd {
-        fd,
-        events,
-        revents: 0,
-    }
-}
-
-fn poll(fds: &mut [libc::pollfd]) -> Result {
-    loop {
-        let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, 100) };
-        if result >= 0 {
-            return Ok(());
-        }
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::Interrupted {
-            return Err(error.into());
-        }
-    }
-}
-
-extern "C" fn terminate(_: libc::c_int) {
-    TERMINATE.store(true, Ordering::Relaxed);
-}
-
-fn set_signal_handler(signals: &[libc::c_int], handler: usize) -> Result {
-    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-    action.sa_sigaction = handler;
-    unsafe {
-        libc::sigemptyset(&mut action.sa_mask);
-    }
-    for &signal in signals {
-        if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-    }
-    Ok(())
 }
 
 fn is_disconnect(error: &io::Error) -> bool {
@@ -831,7 +562,8 @@ mod tests {
         let deadline = Instant::now() + std::time::Duration::from_secs(2);
 
         let status = loop {
-            if let Some(status) = pty.try_wait_and_drain(&mut terminal)? {
+            if let Some(status) = pty.try_wait()? {
+                read_pty(&mut pty, &mut terminal)?;
                 break status;
             }
             if Instant::now() >= deadline {

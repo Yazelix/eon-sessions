@@ -88,7 +88,17 @@ cross-platform abstraction and dependency stack. `rustix` 1.1.4 exposes the
 lower-level PTY calls, but a complete open-PTY path also needs
 `rustix-openpty` 0.2.0. On Linux that alternative adds `rustix-openpty`,
 `rustix`, and `linux-raw-sys` beyond packages already present in Orbit. Orbit
-keeps the smaller direct Linux syscall surface for this experiment.
+keeps Cargo unchanged for this proof. `pty-process` 0.5.3 is the narrower
+credible alternative: a focused scratch build passed the canonical checks and
+reduced owned Rust by 44 lines while adding `pty-process`, `rustix`, and
+`linux-raw-sys` to the normal Linux graph. Adopting it remains a separate crate
+decision.
+
+Linux PTY, process-group, descriptor, polling, signal, socket-path, permission,
+and EOF mechanics live in one concrete `src/platform.rs` seam. The owner loop
+sees platform-neutral PTY I/O and readiness outcomes; terminal authority,
+semantic input, and the attachment protocol do not contain `libc` values. This
+is an isolation boundary, not a macOS backend or support claim.
 
 The subprocess checks in [`tests/lifecycle.rs`](tests/lifecycle.rs) use protocol
 responses and PTY state as synchronization. They prove resize through `stty`,
@@ -166,4 +176,4 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Rust source | 1,486 |
+| Rust source | 1,554 |
