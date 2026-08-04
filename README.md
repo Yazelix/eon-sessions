@@ -13,7 +13,10 @@ exact terminal checkpoint. The `orb-bi4.2` implementation runs one real PTY
 shell and one authoritative libghostty terminal in a foreground Orbit process;
 a diagnostic client can disconnect and later reach the same live shell. The
 completed `orb-bi4.3` proof adds complete structured presentation frames and
-ordered revisions; Orbit does not render a terminal.
+ordered revisions; Orbit does not render a terminal. The canonical ORBF v1
+values, bounded encoder and decoder, and strict complete-frame revision reducer
+live in the dependency-free `orbit-protocol` workspace library so Orbit and an
+exact-revision Venus consumer cannot drift into separate schemas.
 
 ## Attachment-model proof
 
@@ -71,6 +74,17 @@ ordered revisions, alternate-screen rich state, restoration of an inactive
 primary screen with pending wrap, split CSI, UTF-8, and APC input, a slow client,
 background-only erased cells, and final-state convergence after reattach. The
 proof adds no dependency.
+
+[`crates/protocol`](crates/protocol) is the sole ORBF v1 format owner. Its
+strict decoder validates magic, version, dimensions, tags, reserved flags,
+UTF-8, cursor bounds, truncation, trailing bytes, and the 4 MiB/100,000-cell
+limits before making payload-sized allocations. Canonical incremental size
+accounting prevents Orbit from retaining rows or cells beyond the same frame
+budget while it materializes authoritative state. Its rich owned-frame corpus
+round-trips byte-for-byte, every truncated prefix is rejected, and its reducer
+accepts only strictly newer complete revisions. The package is private,
+`std`-only, platform-neutral, and has no direct or transitive dependency;
+libghostty, PTYs, sockets, input, and rendering remain outside it.
 
 ## PTY-lifetime proof
 
@@ -153,8 +167,8 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   backend, build, CI, packaging, or support
 - local Unix socket transport
 - one terminal session and one active client
-- one Rust package and binary through the `orb-bi4.3` headless convergence
-  proof
+- one product binary, one private canonical protocol library, and one isolated
+  repository-governance tool; only the binary owns terminal and PTY authority
 - the `orb-bi4.3` gate passed at
   `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
   [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
@@ -255,6 +269,6 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 2,322 |
+| Product Rust source and tests | 3,429 |
 | Governance Rust tool and tests | 765 |
-| **Total owned Rust** | **3,087** |
+| **Total owned Rust** | **4,194** |

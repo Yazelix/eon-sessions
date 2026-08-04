@@ -1,18 +1,19 @@
 use crate::Result;
 use libghostty_vt::{
     Error as GhosttyError, RenderState, Terminal,
-    render::{CellIterator, RowIterator},
-    screen::Screen,
-    style::{RgbColor, Style, StyleColor},
+    render::{CellIterator, CursorVisualStyle as GhosttyCursorShape, RowIterator},
+    screen::{CellWide as GhosttyCellWidth, Screen},
+    style::{RgbColor, Style, StyleColor as GhosttyStyleColor, Underline as GhosttyUnderline},
     terminal::{Point, PointCoordinate},
+};
+use orbit_protocol::{
+    Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
+    CursorViewport, Dimensions, Frame, FrameSize, MAX_CELLS, MAX_FRAME_BYTES, Rgb, Row,
+    Screen as ProtocolScreen, StyleColor, Underline, encode_frame,
 };
 use std::{collections::VecDeque, io, io::Write, os::unix::net::UnixStream};
 
-pub(crate) const MAX_CELLS: usize = 100_000;
-pub(crate) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 2 * (MAX_FRAME_BYTES + 32) + 4096;
-pub(crate) const MAGIC: &[u8; 4] = b"ORBF";
-const VERSION: u16 = 1;
 
 pub(crate) fn is_disconnect(error: &io::Error) -> bool {
     matches!(
@@ -51,66 +52,48 @@ impl Extractor {
             return Err("presentation dimensions exceed the cell bound".into());
         }
 
-        let mut out = Encoder(Vec::with_capacity(32 * 1024));
-        out.bytes(MAGIC)?;
-        out.u16(VERSION)?;
-        out.u64(revision)?;
-        out.u16(cols)?;
-        out.u16(row_count)?;
-        out.u8(match terminal.active_screen()? {
-            Screen::Primary => 0,
-            Screen::Alternate => 1,
-        })?;
-        out.string(terminal.title()?.as_bytes())?;
-        out.string(terminal.pwd()?.as_bytes())?;
-
-        out.u8(1)?; // Hyperlinks are carried per cell.
-        out.u8(0)?; // Kitty graphics are explicitly unsupported by frame version 1.
-
         let colors = snapshot.colors()?;
-        out.rgb(colors.background)?;
-        out.rgb(colors.foreground)?;
-        out.u8(colors.cursor.is_some().into())?;
-        if let Some(cursor) = colors.cursor {
-            out.rgb(cursor)?;
-        }
-        for color in colors.palette {
-            out.rgb(color)?;
-        }
-
-        out.u8(snapshot.cursor_visible()?.into())?;
-        out.u8(snapshot.cursor_blinking()?.into())?;
-        out.u8(snapshot.cursor_password_input()?.into())?;
-        out.u8(u8::try_from(u32::from(snapshot.cursor_visual_style()?))?)?;
-        if let Some(cursor) = snapshot.cursor_viewport()? {
-            out.u8(1)?;
-            out.u16(cursor.x)?;
-            out.u16(cursor.y)?;
-            out.u8(cursor.at_wide_tail.into())?;
-        } else {
-            out.u8(0)?;
-        }
-
+        let screen = match terminal.active_screen()? {
+            Screen::Primary => ProtocolScreen::Primary,
+            Screen::Alternate => ProtocolScreen::Alternate,
+        };
+        let cursor = Cursor {
+            visible: snapshot.cursor_visible()?,
+            blinking: snapshot.cursor_blinking()?,
+            password_input: snapshot.cursor_password_input()?,
+            shape: cursor_shape(snapshot.cursor_visual_style()?)?,
+            viewport: snapshot.cursor_viewport()?.map(|cursor| CursorViewport {
+                x: cursor.x,
+                y: cursor.y,
+                at_wide_tail: cursor.at_wide_tail,
+            }),
+        };
+        let title = terminal.title()?;
+        let working_directory = terminal.pwd()?;
+        let mut frame_size = FrameSize::new(
+            title,
+            working_directory,
+            colors.cursor.is_some(),
+            cursor.viewport.is_some(),
+        )?;
+        let title = title.to_owned();
+        let working_directory = working_directory.to_owned();
         let mut row_iter = rows.update(&snapshot)?;
         let mut graphemes = String::new();
+        let mut frame_rows = Vec::with_capacity(usize::from(row_count));
         for y in 0..row_count {
+            frame_size.add_row()?;
             let row = row_iter.next().ok_or("render snapshot omitted a row")?;
             let raw_row = row.raw_row()?;
-            let row_flags = u8::from(raw_row.is_wrapped()?)
-                | (u8::from(raw_row.is_wrap_continuation()?) << 1)
-                | (u8::from(raw_row.has_kitty_virtual_placeholder()?) << 2);
-            out.u8(row_flags)?;
-
             let mut cell_iter = cells.update(row)?;
+            let mut frame_cells = Vec::with_capacity(usize::from(cols));
             for x in 0..cols {
                 let cell = cell_iter.next().ok_or("render snapshot omitted a cell")?;
                 let raw_cell = cell.raw_cell()?;
-                out.u8(u8::try_from(u32::from(raw_cell.wide()?))?)?;
                 let mut style = cell.style()?;
                 if let Some(background) = cell.bg_color()? {
-                    style.bg_color = StyleColor::Rgb(background);
+                    style.bg_color = GhosttyStyleColor::Rgb(background);
                 }
-                out.style(style, cell.is_selected()?, raw_cell.is_protected()?)?;
 
                 let grapheme_count = cell.graphemes_len()?;
                 if grapheme_count > MAX_FRAME_BYTES / size_of::<char>() {
@@ -118,28 +101,62 @@ impl Extractor {
                 }
                 graphemes.clear();
                 cell.graphemes_utf8(&mut graphemes)?;
-                out.string(graphemes.as_bytes())?;
 
-                if raw_cell.has_hyperlink()? {
+                let hyperlink = if raw_cell.has_hyperlink()? {
                     let reference = terminal
                         .grid_ref(Point::Viewport(PointCoordinate { x, y: u32::from(y) }))?;
-                    out.string(&hyperlink(&reference)?)?;
+                    hyperlink(&reference)?
                 } else {
-                    out.string(&[])?;
-                }
+                    String::new()
+                };
+                frame_size.add_cell(&graphemes, &hyperlink)?;
+                frame_cells.push(ProtocolCell {
+                    width: cell_width(raw_cell.wide()?)?,
+                    style: cell_style(style, cell.is_selected()?, raw_cell.is_protected()?)?,
+                    text: graphemes.clone(),
+                    hyperlink,
+                });
             }
             if cell_iter.next().is_some() {
                 return Err("render snapshot added an unexpected cell".into());
             }
+            frame_rows.push(Row {
+                wrapped: raw_row.is_wrapped()?,
+                wrap_continuation: raw_row.is_wrap_continuation()?,
+                kitty_virtual_placeholder: raw_row.has_kitty_virtual_placeholder()?,
+                cells: frame_cells,
+            });
         }
         if row_iter.next().is_some() {
             return Err("render snapshot added an unexpected row".into());
         }
-        Ok(out.0)
+        let frame = Frame {
+            revision,
+            dimensions: Dimensions {
+                cols,
+                rows: row_count,
+            },
+            screen,
+            title,
+            working_directory,
+            capabilities: Capabilities {
+                hyperlinks: true,
+                kitty_graphics: false,
+            },
+            colors: Colors {
+                background: rgb(colors.background),
+                foreground: rgb(colors.foreground),
+                cursor: colors.cursor.map(rgb),
+                palette: colors.palette.map(rgb),
+            },
+            cursor,
+            rows: frame_rows,
+        };
+        Ok(encode_frame(&frame)?)
     }
 }
 
-fn hyperlink(reference: &libghostty_vt::screen::GridRef<'_>) -> Result<Vec<u8>> {
+fn hyperlink(reference: &libghostty_vt::screen::GridRef<'_>) -> Result<String> {
     let mut bytes = vec![0; 256];
     let length = match reference.hyperlink_uri(&mut bytes) {
         Ok(length) => length,
@@ -153,68 +170,73 @@ fn hyperlink(reference: &libghostty_vt::screen::GridRef<'_>) -> Result<Vec<u8>> 
         Err(error) => return Err(error.into()),
     };
     bytes.truncate(length);
-    Ok(bytes)
+    Ok(String::from_utf8(bytes)?)
 }
 
-struct Encoder(Vec<u8>);
-
-impl Encoder {
-    fn bytes(&mut self, bytes: &[u8]) -> Result {
-        if self.0.len().saturating_add(bytes.len()) > MAX_FRAME_BYTES {
-            return Err("presentation frame exceeds the byte bound".into());
-        }
-        self.0.extend_from_slice(bytes);
-        Ok(())
+fn rgb(color: RgbColor) -> Rgb {
+    Rgb {
+        r: color.r,
+        g: color.g,
+        b: color.b,
     }
+}
 
-    fn u8(&mut self, value: u8) -> Result {
-        self.bytes(&[value])
+fn cursor_shape(shape: GhosttyCursorShape) -> Result<CursorShape> {
+    match shape {
+        GhosttyCursorShape::Bar => Ok(CursorShape::Bar),
+        GhosttyCursorShape::Block => Ok(CursorShape::Block),
+        GhosttyCursorShape::Underline => Ok(CursorShape::Underline),
+        GhosttyCursorShape::BlockHollow => Ok(CursorShape::BlockHollow),
+        _ => Err("libghostty returned an unsupported cursor shape".into()),
     }
+}
 
-    fn u16(&mut self, value: u16) -> Result {
-        self.bytes(&value.to_le_bytes())
+fn cell_width(width: GhosttyCellWidth) -> Result<CellWidth> {
+    match width {
+        GhosttyCellWidth::Narrow => Ok(CellWidth::Narrow),
+        GhosttyCellWidth::Wide => Ok(CellWidth::Wide),
+        GhosttyCellWidth::SpacerTail => Ok(CellWidth::SpacerTail),
+        GhosttyCellWidth::SpacerHead => Ok(CellWidth::SpacerHead),
     }
+}
 
-    fn u64(&mut self, value: u64) -> Result {
-        self.bytes(&value.to_le_bytes())
+fn style_color(color: GhosttyStyleColor) -> StyleColor {
+    match color {
+        GhosttyStyleColor::None => StyleColor::None,
+        GhosttyStyleColor::Palette(index) => StyleColor::Palette(index.0),
+        GhosttyStyleColor::Rgb(color) => StyleColor::Rgb(rgb(color)),
     }
+}
 
-    fn string(&mut self, value: &[u8]) -> Result {
-        self.bytes(&u32::try_from(value.len())?.to_le_bytes())?;
-        self.bytes(value)
+fn underline(underline: GhosttyUnderline) -> Result<Underline> {
+    match underline {
+        GhosttyUnderline::None => Ok(Underline::None),
+        GhosttyUnderline::Single => Ok(Underline::Single),
+        GhosttyUnderline::Double => Ok(Underline::Double),
+        GhosttyUnderline::Curly => Ok(Underline::Curly),
+        GhosttyUnderline::Dotted => Ok(Underline::Dotted),
+        GhosttyUnderline::Dashed => Ok(Underline::Dashed),
+        _ => Err("libghostty returned an unsupported underline style".into()),
     }
+}
 
-    fn rgb(&mut self, color: RgbColor) -> Result {
-        self.bytes(&[color.r, color.g, color.b])
-    }
-
-    fn style(&mut self, style: Style, selected: bool, protected: bool) -> Result {
-        self.style_color(style.fg_color)?;
-        self.style_color(style.bg_color)?;
-        self.style_color(style.underline_color)?;
-        let flags = u16::from(style.bold)
-            | (u16::from(style.italic) << 1)
-            | (u16::from(style.faint) << 2)
-            | (u16::from(style.blink) << 3)
-            | (u16::from(style.inverse) << 4)
-            | (u16::from(style.invisible) << 5)
-            | (u16::from(style.strikethrough) << 6)
-            | (u16::from(style.overline) << 7)
-            | (u16::from(selected) << 8)
-            | (u16::from(protected) << 9);
-        self.u16(flags)?;
-        self.u8(u8::try_from(u32::from(style.underline))?)
-    }
-
-    fn style_color(&mut self, color: StyleColor) -> Result {
-        let (tag, value) = match color {
-            StyleColor::None => (0, [0, 0, 0]),
-            StyleColor::Palette(index) => (1, [index.0, 0, 0]),
-            StyleColor::Rgb(color) => (2, [color.r, color.g, color.b]),
-        };
-        self.u8(tag)?;
-        self.bytes(&value)
-    }
+fn cell_style(style: Style, selected: bool, protected: bool) -> Result<CellStyle> {
+    Ok(CellStyle {
+        foreground: style_color(style.fg_color),
+        background: style_color(style.bg_color),
+        underline_color: style_color(style.underline_color),
+        bold: style.bold,
+        italic: style.italic,
+        faint: style.faint,
+        blink: style.blink,
+        inverse: style.inverse,
+        invisible: style.invisible,
+        strikethrough: style.strikethrough,
+        overline: style.overline,
+        selected,
+        protected,
+        underline: underline(style.underline)?,
+    })
 }
 
 struct Message {
@@ -366,137 +388,6 @@ mod tests {
         }
     }
 
-    struct Frame {
-        revision: u64,
-        cols: u16,
-        rows: u16,
-        screen: u8,
-        title: String,
-        pwd: String,
-        hyperlinks: u8,
-        graphics: u8,
-        cursor: Option<(u16, u16)>,
-        row_flags: Vec<u8>,
-        cells: Vec<Cell>,
-    }
-
-    struct Cell {
-        wide: u8,
-        foreground: (u8, [u8; 3]),
-        background: (u8, [u8; 3]),
-        flags: u16,
-        text: String,
-        hyperlink: String,
-    }
-
-    struct Decoder<'a> {
-        bytes: &'a [u8],
-        position: usize,
-    }
-
-    impl<'a> Decoder<'a> {
-        fn take(&mut self, length: usize) -> TestResult<&'a [u8]> {
-            let end = self.position.checked_add(length).ok_or("frame overflow")?;
-            let value = self
-                .bytes
-                .get(self.position..end)
-                .ok_or("truncated frame")?;
-            self.position = end;
-            Ok(value)
-        }
-
-        fn u8(&mut self) -> TestResult<u8> {
-            Ok(self.take(1)?[0])
-        }
-
-        fn u16(&mut self) -> TestResult<u16> {
-            Ok(u16::from_le_bytes(self.take(2)?.try_into()?))
-        }
-
-        fn u32(&mut self) -> TestResult<u32> {
-            Ok(u32::from_le_bytes(self.take(4)?.try_into()?))
-        }
-
-        fn u64(&mut self) -> TestResult<u64> {
-            Ok(u64::from_le_bytes(self.take(8)?.try_into()?))
-        }
-
-        fn string(&mut self) -> TestResult<String> {
-            let length = usize::try_from(self.u32()?)?;
-            Ok(std::str::from_utf8(self.take(length)?)?.to_owned())
-        }
-
-        fn color(&mut self) -> TestResult<(u8, [u8; 3])> {
-            Ok((self.u8()?, self.take(3)?.try_into()?))
-        }
-    }
-
-    fn decode_frame(bytes: &[u8]) -> TestResult<Frame> {
-        let mut decoder = Decoder { bytes, position: 0 };
-        if decoder.take(MAGIC.len())? != MAGIC || decoder.u16()? != VERSION {
-            return Err("unsupported presentation frame".into());
-        }
-        let revision = decoder.u64()?;
-        let cols = decoder.u16()?;
-        let rows = decoder.u16()?;
-        let screen = decoder.u8()?;
-        let title = decoder.string()?;
-        let pwd = decoder.string()?;
-        let hyperlinks = decoder.u8()?;
-        let graphics = decoder.u8()?;
-        decoder.take(6)?;
-        let cursor_color = decoder.u8()?;
-        decoder.take(usize::from(cursor_color) * 3 + 256 * 3)?;
-        decoder.take(4)?;
-        let cursor = if decoder.u8()? == 1 {
-            let cursor = (decoder.u16()?, decoder.u16()?);
-            decoder.u8()?;
-            Some(cursor)
-        } else {
-            None
-        };
-
-        let mut row_flags = Vec::with_capacity(usize::from(rows));
-        let mut cells = Vec::with_capacity(usize::from(cols) * usize::from(rows));
-        for _ in 0..rows {
-            row_flags.push(decoder.u8()?);
-            for _ in 0..cols {
-                let wide = decoder.u8()?;
-                let foreground = decoder.color()?;
-                let background = decoder.color()?;
-                decoder.color()?;
-                let flags = decoder.u16()?;
-                decoder.u8()?;
-                let text = decoder.string()?;
-                let hyperlink = decoder.string()?;
-                cells.push(Cell {
-                    wide,
-                    foreground,
-                    background,
-                    flags,
-                    text,
-                    hyperlink,
-                });
-            }
-        }
-        if decoder.position != bytes.len() {
-            return Err("presentation frame has trailing bytes".into());
-        }
-        Ok(Frame {
-            revision,
-            cols,
-            rows,
-            screen,
-            title,
-            pwd,
-            hyperlinks,
-            graphics,
-            cursor,
-            row_flags,
-            cells,
-        })
-    }
-
     fn read_frame(reader: &mut BufReader<UnixStream>) -> TestResult<Option<Frame>> {
         let mut header = String::new();
         if reader.read_line(&mut header)? == 0 {
@@ -515,7 +406,15 @@ mod tests {
         }
         let mut payload = vec![0; length];
         reader.read_exact(&mut payload)?;
-        Ok(Some(decode_frame(&payload)?))
+        Ok(Some(orbit_protocol::decode_frame(&payload)?))
+    }
+
+    fn cell(frame: &Frame, x: usize, y: usize) -> &ProtocolCell {
+        &frame.rows[y].cells[x]
+    }
+
+    fn cells(frame: &Frame) -> impl Iterator<Item = &ProtocolCell> {
+        frame.rows.iter().flat_map(|row| &row.cells)
     }
 
     fn attach(socket: &Path) -> TestResult<(BufReader<UnixStream>, Frame)> {
@@ -600,25 +499,34 @@ mod tests {
             assert!(next.revision > rich.revision);
             rich = next;
         }
-        assert_eq!((rich.cols, rich.rows, rich.screen), (80, 24, 1));
-        assert_eq!(rich.title, "rich");
-        assert_eq!(rich.pwd, "file:///tmp/orbit");
-        assert_eq!((rich.hyperlinks, rich.graphics), (1, 0));
-        assert_eq!(rich.cursor, Some((4, 2)));
-        let linked = rich.cells.iter().find(|cell| cell.text == "A").unwrap();
-        assert_eq!(linked.hyperlink, "https://example.test");
-        assert_eq!(linked.foreground, (2, [12, 34, 56]));
-        assert_ne!(linked.flags & 1, 0);
-        assert!(rich.cells.iter().any(|cell| cell.text == "e\u{301}"));
-        assert!(
-            rich.cells
-                .iter()
-                .any(|cell| cell.text == "界" && cell.wide == 1)
+        assert_eq!(
+            (rich.dimensions.cols, rich.dimensions.rows, rich.screen),
+            (80, 24, ProtocolScreen::Alternate)
         );
+        assert_eq!(rich.title, "rich");
+        assert_eq!(rich.working_directory, "file:///tmp/orbit");
+        assert!(rich.capabilities.hyperlinks);
+        assert!(!rich.capabilities.kitty_graphics);
+        assert_eq!(
+            rich.cursor.viewport.map(|cursor| (cursor.x, cursor.y)),
+            Some((4, 2))
+        );
+        let linked = cells(&rich).find(|cell| cell.text == "A").unwrap();
+        assert_eq!(linked.hyperlink, "https://example.test");
+        assert_eq!(
+            linked.style.foreground,
+            StyleColor::Rgb(Rgb {
+                r: 12,
+                g: 34,
+                b: 56
+            })
+        );
+        assert!(linked.style.bold);
+        assert!(cells(&rich).any(|cell| cell.text == "e\u{301}"));
+        assert!(cells(&rich).any(|cell| cell.text == "界" && cell.width == CellWidth::Wide));
         assert!(
-            rich.cells
-                .iter()
-                .any(|cell| cell.background == (2, [5, 6, 7]))
+            cells(&rich)
+                .any(|cell| { cell.style.background == StyleColor::Rgb(Rgb { r: 5, g: 6, b: 7 }) })
         );
         drop(first_reader);
 
@@ -635,15 +543,15 @@ mod tests {
             final_frame = next;
         }
         assert!(initial_revision >= rich.revision);
-        assert_eq!(final_frame.screen, 0);
+        assert_eq!(final_frame.screen, ProtocolScreen::Primary);
         assert_eq!(final_frame.title, "final");
-        assert_eq!(final_frame.pwd, "file:///tmp/orbit");
-        assert_eq!(final_frame.cells[0].text, "P");
-        assert_eq!(final_frame.cells[79].text, "P");
-        assert_eq!(final_frame.cells[80].text, "X");
-        assert_ne!(final_frame.row_flags[0] & 1, 0);
-        assert!(final_frame.cells.iter().any(|cell| cell.text == "S"));
-        assert!(final_frame.cells.iter().any(|cell| cell.text == "é"));
+        assert_eq!(final_frame.working_directory, "file:///tmp/orbit");
+        assert_eq!(cell(&final_frame, 0, 0).text, "P");
+        assert_eq!(cell(&final_frame, 79, 0).text, "P");
+        assert_eq!(cell(&final_frame, 0, 1).text, "X");
+        assert!(final_frame.rows[0].wrapped);
+        assert!(cells(&final_frame).any(|cell| cell.text == "S"));
+        assert!(cells(&final_frame).any(|cell| cell.text == "é"));
 
         server.finish()
     }

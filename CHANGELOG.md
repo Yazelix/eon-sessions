@@ -16,3 +16,6 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 - Attachment begins with a bounded, versioned, complete structured
   presentation frame followed by ordered revisions. Frames carry rich terminal
   presentation state and explicitly declare Kitty graphics unsupported.
+- ORBF v1 has one dependency-free canonical Rust package for Orbit and pinned
+  consumers, with owned frame values, strict bounded decoding and encoding,
+  and rejection of stale or duplicate complete-frame revisions.

@@ -5,10 +5,11 @@ edition = "2024"
 publish = false
 
 [workspace]
-members = ["tools/governance"]
+members = ["crates/protocol", "tools/governance"]
 default-members = ["."]
 resolver = "3"
 
 [dependencies]
 libc = "=0.2.189"
 libghostty-vt = "=0.2.1"
+orbit-protocol = { path = "crates/protocol" }

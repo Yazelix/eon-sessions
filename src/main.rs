@@ -13,6 +13,7 @@ use libghostty_vt::{
     paste,
     terminal::Mode,
 };
+use orbit_protocol::{MAX_CELLS, MAX_FRAME_BYTES, decode_frame};
 use std::{
     cell::RefCell,
     collections::VecDeque,
@@ -25,7 +26,7 @@ use std::{
 };
 
 use platform::{Pty, PtyIo};
-use presentation::{Extractor, MAGIC, MAX_CELLS, MAX_FRAME_BYTES, OutputQueue, is_disconnect};
+use presentation::{Extractor, OutputQueue, is_disconnect};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
@@ -243,9 +244,7 @@ fn read_server_message(reader: &mut BufReader<UnixStream>) -> Result<Option<Stri
         }
         let mut frame = vec![0; length];
         reader.read_exact(&mut frame)?;
-        if !frame.starts_with(MAGIC) {
-            return Err("invalid presentation frame magic".into());
-        }
+        decode_frame(&frame)?;
     }
     Ok(Some(line))
 }
