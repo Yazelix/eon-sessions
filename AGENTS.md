@@ -8,7 +8,7 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 ## Protocol import record
 
 - Source: `https://github.com/luccahuguet/starcompass`
-- Source commit: `9cab501f8f1a780fd3db296c610b658b3bf2d188`
+- Source commit: `f41e799db9d78277f18409985287e96a6fc80f51`
 - Profiles: `greenfield`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
 
@@ -16,16 +16,16 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 | --- | ---: | --- |
 | `AP-SCOPE-001` | 1 | `b3f7e012df0708d4baf8957e3c315878a9eb8cd7fddf637dfde1506609d08444` |
 | `AP-CONTRACT-001` | 1 | `0aa692f4c52542111149b691b7d0c015a0c16523cd620a67b0cf335f3284da82` |
-| `AP-REFERENCE-001` | 1 | `3d72ac864b050af7783493245be59450c39db940d736ea6fb60269cd21f7927b` |
+| `AP-REFERENCE-001` | 2 | `ecb28af3796a9964dd98c037463a33b7444d9c39a0365783fb0e9ae9fc007b9c` |
 | `AP-MINIMAL-001` | 1 | `256c158cc8b226e4baf96d5590531ea180edc9717338dac0fe51a34dd037791f` |
 | `AP-DEPENDENCY-001` | 1 | `a389ff9054708574c52ec5e5dd7fc3e2d13b125d2218c70062f50a86761981ca` |
 | `AP-OWNERSHIP-001` | 1 | `bdc09117f79b0d8dbe78e2dd8673a2463398aa31880fe27209fd6cc47f58bbf7` |
 | `AP-TEST-001` | 1 | `363da7c542521be22233a4cc3373c0d3c3c5a9a0cf37f633cd5029545f4a3bee` |
 | `AP-PROOF-001` | 1 | `1af235a56e9711d55362d869fa4057f1658d0aa7fe766030be0897ee5fd7c02b` |
-| `AP-PLAN-001` | 1 | `d1edf160323fe69e814c3055461c054a5def761000c27874df75e04c1dd195e3` |
+| `AP-PLAN-001` | 4 | `5bc0426788693717e8af011277d9358c65899e839d7c0c71299003ec0d8acc4b` |
 | `AP-CI-001` | 1 | `78f1662259cd83f33d22ff4ddd0859ab0d4f704ba4f38756eef40a8b9b787bec` |
 | `AP-EXCEPTION-001` | 1 | `f66749229dbbc005e1c3103bfed86cf95169d7b32466c72fd8442e841cadb268` |
-| `AP-GIT-001` | 1 | `624740f796eddd5adcaf657e8f1aa3ba229c146e4b34c816940a5543d74ba46f` |
+| `AP-GIT-001` | 3 | `16d27b0df7ccc94880bb31020e822e32b37503f43c2cf7a69de333300cbfdacf` |
 | `AP-PORTABILITY-001` | 1 | `d2800376013bbe1ade3449f835daf8780e60d4c08a79a7f733d4a651c4d6d887` |
 | `AP-TERMINAL-001` | 1 | `a8632561b2ff959b1e0ee2abc07f4bce13af289e0a23574cc51aef740e3d9605` |
 | `AP-FAILURE-001` | 1 | `38df47dd773c7a85161309a1947dd97afcce93a5bdefc82f1c971475d228482e` |
@@ -83,6 +83,20 @@ Required practice:
 - Record the concrete mechanism adopted, rejected, or left unresolved.
 - Distinguish direct source evidence from inference.
 - Revisit the evidence when the proposed shape changes materially.
+- Apply source-license wording to the actors, uses, and conditions it actually
+  names. Do not infer that an independent user or project acts on behalf of,
+  for the benefit of, or under the direction of an agent or tool provider
+  merely because the user selected that provider's service. Examples
+  introduced by words such as “including” remain scoped by the condition they
+  illustrate.
+- Distinguish inspecting public source for ideas from copying, adapting,
+  redistributing, selecting a dependency, or incorporating the source. A
+  restriction on one of those actions does not silently erase required source
+  inspection when the requested research itself remains permitted.
+- If license interpretation would exclude required evidence, identify the
+  exact clause, actor, beneficiary, direction, and requested use. Resolve a
+  material ambiguity with the user instead of broadening the restriction by
+  association or substituting reputation and secondary summaries for source.
 
 Reference review is a decision gate, not a requirement to copy the reference.
 
@@ -177,17 +191,32 @@ Required practice:
 
 ### AP-PLAN-001 — Durable planning state
 
-Decisions needed by later work must live in the project's durable planning
-system or canonical documentation, not only in chat history.
+Keep the outcomes and constraints that later work needs in the project's
+durable planning system or canonical documentation. An issue represents a
+chosen goal, decision, material defect, or schedulable follow-up. Review and
+implementation methods belong to that issue.
 
 Required practice:
 
-- Record the contract, decision boundary, dependencies, acceptance evidence, and
-  important rejected alternatives.
+- After review, fresh-eyes, simplification, or verification, update the owning
+  issue's editable fields to describe the accepted state instead of pass
+  chronology.
+- Create a separate issue only for a material finding outside the owning scope
+  or one worth scheduling on its own. Name it after the outcome or finding.
+- Record the contract, decision boundary, dependencies, acceptance evidence,
+  material negative results, and rejected alternatives that constrain later
+  work.
+- Reserve append-only comments and audit records for chronology needed as
+  evidence. Keep raw command logs and build transcripts with their proof. Omit
+  baseline hashes, failed attempts, and candidate scoring unless they constrain
+  later work.
 - Keep issue status honest: planned, active, blocked, and complete are distinct.
 - Model real prerequisites as dependencies; do not create decorative graphs.
 - Reconcile planning state with the repository before handoff.
 - Use the repository-designated issue tool and never edit its storage directly.
+
+Do not erase approvals, contract changes, material failures, or evidence needed
+to understand the accepted result.
 
 ### AP-CI-001 — Bounded continuous integration
 
@@ -232,6 +261,12 @@ Required practice:
 
 - Inspect status and repository instructions before editing.
 - Treat existing and concurrent changes as user-owned unless proven otherwise.
+- Fold a correction into the current task's unpublished commit when it belongs
+  to the same unit of work. Refresh and reverify dependent local commits and
+  generated artifacts.
+- Use a follow-up commit after a push, promotion, release, external pin, or any
+  other point where someone outside the current local work can rely on the
+  revision.
 - Do not reset, discard, force-push, rewrite published history, or create a
   branch without authority from the user or repository policy.
 - Verify the intended diff before committing and the remote state after pushing.
