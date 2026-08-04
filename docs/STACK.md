@@ -43,11 +43,11 @@ does not interpret terminal presentation. Future multiple-session work must
 keep generic Orbit session identity separate from Astra's product workspace
 policy.
 
-Orbit owns the wire schema and its state-transition rules. Venus pins accepted
-contract IDs and an exact Orbit proof revision. Prefer a shared first-party
-Rust codec or reducer over a mirror schema, but a separate package and its
-private-repository distribution method require a user decision. The current
-repository does not select that package boundary.
+Orbit owns the wire schema and its state-transition rules. The accepted
+`orbit-protocol` package owns canonical ORBF v1 values, bounded decoding, and
+complete-frame reduction. Venus must pin accepted contract IDs and their exact
+proof revision rather than mirror the schema. Attach outcomes, frame envelopes,
+semantic input, paste, and resize still need a user-approved reusable codec.
 
 ## Two distinct WebAssembly roles
 
