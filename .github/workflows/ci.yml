@@ -10,8 +10,16 @@ on:
       - Cargo.lock
       - "src/**"
       - "tests/**"
+      - "tools/governance/**"
       - build.rs
       - "rust-toolchain*"
+      - docs/CONTRACTS.md
+      - docs/CRATES.md
+      - .beads/issues.jsonl
+      - .agent-protocols.json
+      - .agent-protocols.local.md
+      - .agent-protocols.exceptions.json
+      - AGENTS.md
       - .github/workflows/ci.yml
 
 permissions:
@@ -51,9 +59,22 @@ jobs:
           cargo --version --verbose
           zig version
 
+      - name: Install Starcompass
+        run: |
+          cargo install --locked \
+            --git https://github.com/luccahuguet/starcompass.git \
+            --rev 9d119c235cd3d9f5a2b996e54f37a96a9640f679 \
+            --root "$RUNNER_TEMP/starcompass"
+
       - name: Verify
         run: |
-          cargo fmt --check
-          cargo check --locked
-          cargo test --locked
-          cargo clippy --locked --all-targets -- -D warnings
+          cargo fmt --all --check
+          cargo check --locked --workspace
+          cargo test --locked --workspace
+          cargo run --locked --quiet -p orbit-governance -- .
+          "$RUNNER_TEMP/starcompass/bin/starcompass" check-consumer \
+            --overlay .agent-protocols.local.md \
+            --exceptions .agent-protocols.exceptions.json \
+            --manifest .agent-protocols.json \
+            --agents AGENTS.md
+          cargo clippy --locked --workspace --all-targets -- -D warnings

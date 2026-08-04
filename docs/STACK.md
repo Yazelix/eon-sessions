@@ -27,6 +27,28 @@ where they have a concrete native advantage.
 Upstream implementation languages stay encapsulated. In particular,
 libghostty's use of Zig does not make Zig a directly owned Orbit language.
 
+## Runtime ownership
+
+Astra owns product composition: manifests, policy, component selection,
+launching, updates, distribution, and the mapping among repositories, agents,
+services, and terminal sessions. Orbit owns generic terminal-session lifetime,
+PTYs, authoritative libghostty state, bounded terminal history, and the
+versioned client protocol. Venus owns native rendering, input collection, and
+ephemeral view state over Orbit-authored presentation.
+
+Raw PTY bytes and terminal-generated replies stay inside Orbit. Venus
+materializes ORBF v1 complete frames and does not run a terminal parser. A later
+user-approved patch protocol would update the same presentation state. Astra
+does not interpret terminal presentation. Future multiple-session work must
+keep generic Orbit session identity separate from Astra's product workspace
+policy.
+
+Orbit owns the wire schema and its state-transition rules. Venus pins accepted
+contract IDs and an exact Orbit proof revision. Prefer a shared first-party
+Rust codec or reducer over a mirror schema, but a separate package and its
+private-repository distribution method require a user decision. The current
+repository does not select that package boundary.
+
 ## Two distinct WebAssembly roles
 
 ### Browser code sharing

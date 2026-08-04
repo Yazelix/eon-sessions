@@ -27,17 +27,24 @@ We arrived at the Orbit hypothesis after examining three projects:
   close prior art for the use case. Herdr also covers agent state, layouts,
   remote access, and multiplayer concerns that Orbit excludes.
 - Mitchell Hashimoto's public [Superlogical](https://www.superlogical.com/)
-  discussion, [multiplexer video](https://www.youtube.com/watch?v=o-qtso47ECk),
+  discussion,
+  [architecture explanation](https://x.com/mitchellh/status/2082936029426892960),
   and
   [libghostty roadmap](https://mitchellh.com/writing/libghostty-is-coming)
   led us to the ownership inversion: terminal multiplexers already need
   terminal-emulation state, and that state can come from the same reusable core
   as a graphical terminal.
 
-We combine those observations for Yazelix. Superlogical's unpublished design
-may differ from Orbit. `Logimux` is this repository's shorthand for
-Superlogical's currently unnamed terminal multiplexer, not an official product
-name.
+We combine those observations for Yazelix. Superlogical has disclosed a
+checkpoint-plus-tail design: its server keeps authoritative libghostty state,
+sends connecting clients a binary reconstruction snapshot, then streams raw PTY
+bytes to a terminal emulator in each client. It can declare a client ready
+before transferring older scrollback. Orbit shares the durable PTY,
+server-authority, and attachment-barrier principles while using a different
+replication boundary. Venus receives complete host-authored
+presentation frames and does not parse PTY output or reconstruct libghostty
+state. `Logimux` is this repository's shorthand for Superlogical's currently
+unnamed terminal multiplexer, not an official product name.
 
 ## The hypothesis
 
@@ -65,13 +72,83 @@ client owns presentation and user interaction. On attachment, Orbit establishes
 one atomic boundary: the client receives a coherent complete structured frame
 at one revision followed by later frame revisions in order. Hidden terminal
 state stays in Orbit, and semantic client input is encoded against that state.
-The client does not parse a replicated PTY stream or run another authoritative
-terminal emulator.
+The client does not parse a replicated PTY stream or run another terminal
+emulator.
 
 We start with one local session and one active client, giving input and resize
 one unambiguous owner and isolating presentation transfer from workspace policy.
 The boundary must account explicitly for rich presentation state instead of
 assuming that a plain-text cell grid is the final product contract.
+
+## Replication boundary
+
+ORBF v1 serializes the complete visible presentation after each productive PTY
+read. This format proves attachment convergence. Any future incremental
+protocol keeps a complete frame as its resync fallback. Orbit has made no
+permanent decision to use full frames for every steady-state update.
+
+The preferred later shape, subject to a separate user-approved protocol slice,
+divides the connection into six planes:
+
+| Plane | Owner and semantics |
+| --- | --- |
+| Snapshot | Orbit sends one coherent current presentation at attach, resync, or a discontinuity |
+| Patch | Orbit sends absolute row replacements and changed global fields with `epoch`, `base_revision`, and `revision` |
+| History | Orbit serves bounded pages by stable anchors; the attach snapshot does not carry the full scrollback |
+| Effects | Orbit preserves ordered bells, clipboard requests, and notifications outside coalescible screen state |
+| Resources | Orbit transfers capability-negotiated, content-addressed images and other rich payloads independently of effect ordering |
+| Actions and control | Venus sends semantic input, resize, lifecycle, and bounded history requests; Orbit applies them against authoritative state |
+
+Absolute row replacements keep patch composition independent of terminal
+operations. Orbit may merge changed rows into one queued successor when the
+base revision remains known. A revision gap, resize discontinuity, capability
+change, or ambiguous merge causes a complete snapshot instead. Presentation
+state can be coalesced; Orbit preserves effect identity and delivery order.
+
+`libghostty-vt` 0.2.1 exposes global and per-row dirty state through
+`RenderState`. That API supplies the incremental extraction primitive without a
+new dependency. Orbit should activate it when measurements show that
+full-frame extraction or transfer limits the first Venus client. The decision
+must measure extraction time, encoded bytes, queue replacement, and client apply
+time under shells, Neovim, Yazi, resize storms, and high-volume output.
+
+Venus should decode ORBF v1 into persistent presentation state before drawing.
+A later patch decoder can update the same state model. Orbit remains the schema
+owner; Venus must not handwrite a second interpretation. An Orbit-owned protocol
+package and reducer is the preferred cross-repository shape, but creating and
+distributing another package requires its own user decision.
+
+Orbit owns history because the authoritative terminal supplies wrap metadata,
+row contents, and stable anchors. A future Venus may own ephemeral viewport
+position and selection gestures over materialized rows. Orbit retains copy
+extraction and content semantics. Agent observation or durable session history
+needs a separate Astra or Orbit observer contract; the presentation stream is
+not a durable event log.
+
+## Conditional client-side terminal replicas
+
+Superlogical's checkpoint-plus-tail design reduces steady-state protocol work
+and lets each native client use libghostty features as they appear. Orbit cannot
+build that design from `libghostty-vt` 0.2.1: its Formatter loses hidden
+continuation state, and the release exposes no exact terminal checkpoint import
+and export contract.
+
+Orbit should reconsider a raw-byte client replica when public libghostty
+supplies all of these capabilities and a user chooses the change:
+
+- versioned exact export and import for parser partials, both screens, modes,
+  scrollback, graphics, and other continuation state;
+- client-side suppression of PTY replies and duplicate terminal effects;
+- deterministic drift detection and complete resynchronization;
+- a counterexample corpus that covers the formatter failures already recorded
+  in Orbit;
+- lower measured total owned code and maintenance cost than the structured
+  protocol; and
+- a supported public API with no libghostty fork or private binding extension.
+
+Until those conditions hold, a client-side terminal creates a second
+interpretation of state and side effects. Orbit keeps raw PTY bytes inside the
+authoritative process and sends materialized presentation to Venus.
 
 ## Why it may be better
 
@@ -217,10 +294,10 @@ Venus consumes Orbit's structured presentation boundary, while the current Mars
 application owns its terminal state directly. The experiment includes the
 smallest Venus client needed to prove the one-authority design. Venus keeps its
 product name if the experiment succeeds; it does not inherit Mars. Orbit owns
-the headless proof through `orb-bi4.3`. Passing that convergence gate authorizes
-creation of the private `luccahuguet/venus` repository before `orb-bi4.4`.
-Graphical Venus code does not live in Orbit; the proven presentation contract
-is the repository boundary.
+the headless proof through `orb-bi4.3`. That convergence gate passed, and the
+private `luccahuguet/venus` repository now owns graphical implementation;
+`orb-bi4.4` tracks Orbit-side acceptance. Graphical Venus code does not live in
+Orbit; the proven presentation contract is the repository boundary.
 
 ## Naming and eventual ownership
 
@@ -228,10 +305,9 @@ The greenfield line is named **Yazelix Astra**. `Saturn` and `Eon` remain
 reserved names for possible future use; that reservation creates no product,
 repository, feature, or planning scope.
 
-During the first three experiment beads, Orbit contains the headless runtime
-and diagnostic client required to prove it. The minimum graphical client begins
-in the separate Venus repository after the convergence gate passes. If Venus
-and Orbit graduate, the product boundary becomes:
+Orbit retains the headless runtime and diagnostic client used by its proof. The
+private Venus repository will own the minimum graphical client after the user
+activates it. If Venus and Orbit graduate, the product boundary becomes:
 
 ```text
 Yazelix Astra
@@ -256,11 +332,12 @@ Beads order the work:
 4. Prove race-free structured presentation convergence on reattach.
 5. Complete `orb-9o6` to automate the machine-checkable governance invariants
    after the protocol has two implementation slices of evidence.
-6. Create the private Venus repository and add one minimum native client.
+6. Activate the existing private Venus repository, choose its protocol-code and
+   rendering boundaries, and add one minimum native client.
 7. Harden the one-client boundary.
 8. Dogfood Venus and Orbit through a minimum Astra-owned integration path.
 9. Decide whether Venus and Orbit earn graduation into Yazelix Astra.
-10. Choose later Venus and Orbit ownership expansions from evidence.
+10. Choose later Astra, Venus, and Orbit ownership expansions from evidence.
 
 A failed contract returns the project to planning before the next step.
 

@@ -131,6 +131,16 @@ terminal state. The initial contract covers surviving client exits and
 disconnections while Orbit continues running; it does not cover daemon or
 machine restarts.
 
+ORBF v1 remains the accepted protocol for the first Venus slice. Its complete
+frames prove convergence and define the attach boundary. Any later patch
+protocol keeps a complete frame as its resync fallback. The preferred later
+replication shape uses revisioned row patches during steady operation, bounded
+history pages, and a separate ordered stream for terminal effects. That
+direction changes no current contract and requires a user-approved protocol
+decision plus measured evidence before implementation. The
+[design rationale](docs/RATIONALE.md#replication-boundary) records the model and
+its recovery rules.
+
 The [contract index](docs/CONTRACTS.md) assigns stable `ORB-C*` identities to
 accepted behavior and records its owner, proof status, checks, and remaining
 gap. Candidate implementation evidence does not become proved until its owning
@@ -157,10 +167,20 @@ Bead is accepted and the exact proof-bearing commit is recorded.
 ## Development
 
 ```sh
-cargo fmt --check
-cargo check --locked
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --all --check
+cargo check --locked --workspace
+cargo test --locked --workspace
+cargo run --locked --quiet -p orbit-governance -- .
+cargo install --locked \
+  --git https://github.com/luccahuguet/starcompass.git \
+  --rev 9d119c235cd3d9f5a2b996e54f37a96a9640f679 \
+  --root target/starcompass
+target/starcompass/bin/starcompass check-consumer \
+  --overlay .agent-protocols.local.md \
+  --exceptions .agent-protocols.exceptions.json \
+  --manifest .agent-protocols.json \
+  --agents AGENTS.md
+cargo clippy --locked --workspace --all-targets -- -D warnings
 git diff --check
 br ready
 ```
@@ -169,17 +189,45 @@ Beads contain the dependency-ordered experiment plan.
 
 The [CI workflow](.github/workflows/ci.yml) runs on pushes to `edge` that
 change Cargo metadata, Rust source or tests, `build.rs`, Rust toolchain files,
-or the workflow itself. It can also be run deliberately with
-`gh workflow run ci.yml --ref edge`. One standard Ubuntu job installs a
-checksum-verified Zig 0.15.2 toolchain, logs the toolchain versions, and runs
-the four Cargo checks above in order. Superseded runs are cancelled, and each
-job is limited to ten minutes.
+the governance tool or its governed metadata, or the workflow itself. It can
+also be run deliberately with `gh workflow run ci.yml --ref edge`. One standard
+Ubuntu job installs a checksum-verified Zig 0.15.2 toolchain, logs the toolchain
+versions, installs Starcompass from its immutable public Git revision, and runs
+the workspace and consumer-import checks above. Superseded runs are cancelled,
+and each job is limited to ten minutes.
 
 The repository or its owning account must retain a $0 Actions product budget
 with **Stop usage when budget limit is reached**, budget threshold alerts, and
 included-usage alerts enabled. CI can consume the private repository's
 included runner minutes, but this budget prevents paid overage. The workflow
-does not run for documentation-only or Beads-only pushes.
+does not run for unrelated documentation.
+
+The governance command checks only deterministic repository facts:
+
+- Contract rows use unique `ORB-C*` IDs and a known status. Proved rows name a
+  full Git commit and a check or evidence, and governed metadata cannot refer
+  to an unknown contract.
+- `bug`, `chore`, `feature`, and `task` Beads are implementation work unless
+  labeled `spike`. They require contract routing or an explicit non-product
+  declaration. Once closed, they also require a reference gate and closure
+  evidence after the latest execution baseline, with current contract and crate
+  decision markers and a portability disposition for product work.
+- Selected crate-index rows name an exact version or commit, alternatives, and
+  an existing evidence Bead. Selected, planned, candidate, and deferred rows
+  remain distinct.
+- Protocol exceptions recorded in Beads remain visible notices and never count
+  as successful gates.
+
+The check cannot establish that an agent read a reference, that an approval or
+evidence comment is truthful, that a crate gate was required, or that a runtime
+contract actually passes. It deliberately does not parse `.agent-protocols.*`
+or generated `AGENTS.md`: Starcompass owns that interpretation. CI installs
+Starcompass from exact public Git revision
+`9d119c235cd3d9f5a2b996e54f37a96a9640f679` and runs its source-independent
+`check-consumer` command against the four local import files. That proves their
+structure, hashes, framing, and local suffix agree; it treats the canonical
+protocol section as opaque. Complete canonical-protocol authentication still
+uses a source checkout at the exact commit in `.agent-protocols.json`.
 
 The [contract index](docs/CONTRACTS.md) is the durable behavioral source of
 truth. The [design rationale](docs/RATIONALE.md) records where the idea came
@@ -207,4 +255,6 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Rust source | 2,322 |
+| Product Rust source and tests | 2,322 |
+| Governance Rust tool and tests | 765 |
+| **Total owned Rust** | **3,087** |

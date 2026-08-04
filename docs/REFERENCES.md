@@ -59,15 +59,39 @@ Mars, Mars Next, or another project by default.
   is the closest patch-stream decision record. Orbit extracts lessons about
   deterministic state transitions and tests without adopting a terminal UI,
   widget framework, ANSI presenter, or FrankenTUI dependency.
-- [libghostty-vt](https://docs.rs/libghostty-vt/latest/libghostty_vt/) is the
+- [libghostty-vt 0.2.1](https://docs.rs/libghostty-vt/0.2.1/libghostty_vt/) is the
   terminal-semantics owner under test. Study `Terminal`, `RenderState`, effects,
   input encoding, thread ownership, and the
-  [VT formatter options](https://docs.rs/libghostty-vt/latest/libghostty_vt/fmt/struct.FormatterOptions.html).
+  [VT formatter options](https://docs.rs/libghostty-vt/0.2.1/libghostty_vt/fmt/struct.FormatterOptions.html).
   The Formatter proof records why hidden terminal state cannot form an exact
   checkpoint. Study the public read-only surface for dimensions, styled cells
   and graphemes, cursor, title, working directory, hyperlinks, images, and
   explicit capability handling while inactive screens, parser continuation,
   scrollback semantics, and PTY effects remain authoritative in Orbit.
+  The safe wrapper's
+  [render module](https://docs.rs/libghostty-vt/0.2.1/libghostty_vt/render/index.html)
+  and Ghostty's public
+  [render header](https://github.com/ghostty-org/ghostty/blob/45db2c2551ecc016f9746e8e2855f4f8a3871e7b/include/ghostty/vt/render.h)
+  expose global and per-row dirty state. This makes incremental presentation a
+  future existing-dependency path rather than a reason to add a diff crate.
+- [WezTerm at `577474d89ee6`](https://github.com/wezterm/wezterm/tree/577474d89ee61aef4a48145cdec82a638d874751)
+  is the closest public structured-state replication comparison. Its
+  [protocol types](https://github.com/wezterm/wezterm/blob/577474d89ee61aef4a48145cdec82a638d874751/codec/src/lib.rs),
+  [server change calculation](https://github.com/wezterm/wezterm/blob/577474d89ee61aef4a48145cdec82a638d874751/wezterm-mux-server-impl/src/sessionhandler.rs),
+  and
+  [client row cache](https://github.com/wezterm/wezterm/blob/577474d89ee61aef4a48145cdec82a638d874751/wezterm-client/src/pane/renderable.rs)
+  combine dirty line ranges, stable row indices, viewport-adjacent rows, lazy
+  history fetches, and separate image-cell hydration. Orbit may borrow those
+  protocol ideas without adopting WezTerm code, its terminal engine, or its
+  coupled multiplexer surface.
+- [Mosh](https://mosh.org/) and its
+  [state-synchronization paper](https://mosh.org/mosh-paper-draft.pdf) show how
+  a receiver can converge on recent state while the sender skips obsolete
+  intermediate states. Mosh's [FAQ](https://mosh.org/#faq) also demonstrates
+  the cost of synchronizing the visible screen: server-side scrollback does not
+  reach the client as normal terminal history. Orbit may borrow state
+  coalescing and resync semantics while retaining structured rich state,
+  ordered effects, and a separate host-owned history plane.
 - [zmx](https://github.com/neurosnap/zmx) is the closest implementation
   reference for Orbit's headless half. It owns persistent PTYs, communicates
   over Unix sockets, feeds output into libghostty, and emits a VT bootstrap when
@@ -84,6 +108,11 @@ Mars, Mars Next, or another project by default.
   terminal capabilities. Study its change representation only if Orbit needs a
   comparison for state-diff testing; adopting its broader terminal stack is not
   part of the initial plan.
+- Microsoft's
+  [RDP Graphics Frame Acknowledgement](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpegfx/d64cfae6-f30a-47e7-9655-d019d3d8fb0f)
+  is conditional evidence for client feedback, queue depth, and frame
+  throttling. Consult it if local slow-client measurements require receiver
+  feedback or the user authorizes remote transport.
 
 ## PTY and session lifetime
 
@@ -96,6 +125,12 @@ Mars, Mars Next, or another project by default.
   user separately chooses one of those product directions.
 - [zmx](https://zmx.sh/) demonstrates the closest end-to-end lifecycle and
   explicitly separates session persistence from window management.
+- [Foot 1.27.0 at `de998602dbc0`](https://codeberg.org/dnkl/foot/src/commit/de998602dbc00c8862a6823d553cbb1df91c676d)
+  is comparison evidence for a terminal server process, local Unix-socket
+  clients, and distinct client/server failure handling. Its
+  [footclient manual](https://man.archlinux.org/man/footclient.1.en) describes
+  the public connection contract. Orbit does not infer durable detach,
+  presentation replication, or a dependency from Foot's server mode.
 - [shpool](https://github.com/shell-pool/shpool) and
   [abduco](https://github.com/martanne/abduco) are smaller prior art for durable
   shell sessions and detach/reattach ownership. Study process reaping, signals,
@@ -241,6 +276,14 @@ prerequisite for the current single-session architecture.
   They remain excluded from the initial experiment. If Orbit grows from an
   internal runtime into a remote workspace product, revisit the naming
   proximity between Orbit and Orbs.
+- VS Code's
+  [Agent Host](https://code.visualstudio.com/docs/agents/concepts/agent-host)
+  keeps agent execution independent of the client and reconnects UI through
+  snapshots and ordered actions. [Zed Remote
+  Development](https://zed.dev/docs/remote-development) keeps local UI apart
+  from workspace processes beside the project. These projects corroborate the
+  Astra, Venus, and Orbit ownership split. They do not define Orbit's terminal
+  protocol or authorize remote workspaces.
 - [TUIOS](https://tuios.gaurav.zip/) is a warning and inspiration for
   terminal-as-workspace scope. Orbit takes no tiling, workspace, theme, or
   scripting features from it during the initial experiment.
@@ -251,13 +294,22 @@ prerequisite for the current single-session architecture.
 - `Logimux` is this repository's shorthand for Superlogical's currently unnamed
   terminal multiplexer, not an official product name.
   [Superlogical](https://www.superlogical.com/), Mitchell Hashimoto's
-  [multiplexer video](https://www.youtube.com/watch?v=o-qtso47ECk), and the
+  [architecture explanation](https://x.com/mitchellh/status/2082936029426892960),
+  [native tabs and splits
+  demonstration](https://x.com/mitchellh/status/2084630173954326672),
+  and the
   [libghostty roadmap](https://mitchellh.com/writing/libghostty-is-coming)
-  motivate the shared terminal-core ownership hypothesis. The video also
-  motivates reconnecting transient native clients to durable work, while its
-  remote, Tailscale, window-restoration, and split-restoration ideas remain
-  outside the initial Orbit contract. Orbit relies only on published behavior
-  and independently verified APIs.
+  are comparison evidence for durable terminal ownership and transient native
+  clients. Superlogical pauses its authoritative libghostty server at attach,
+  sends a custom binary reconstruction snapshot, reaches a ready state before
+  older scrollback completes, then distributes raw PTY bytes to terminal
+  emulators in its clients. Orbit accepts the server-owned PTY, authoritative
+  terminal, and coherent attachment barrier as corroborating mechanisms. It
+  does not adopt client-side terminal replicas, checkpoint-plus-tail transfer,
+  incomplete initial history, compatibility rendering, multiple clients,
+  remote transport, splits, tabs, or Superlogical's broader production-work
+  scope. Orbit relies only on published behavior and independently verified
+  APIs.
 - Zellij, Mars, and Mars Next remain comparison and behavioral references for
   Astra dogfood and graduation. Their existing ownership or compatibility
   surfaces do not define Astra, Venus, or Orbit.

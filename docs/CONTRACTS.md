@@ -57,16 +57,26 @@ explicit user decision.
 
 The `orb-bi4.3` frame version is accepted at
 `e4fde443e625180d7332eff4dff366f64bee30a8` and has no cross-repository
-consumer yet. Venus must pin that revision and the consumed contract IDs when
-its private repository is created; later breaking changes require an explicit
-user decision and coordinated update order.
+consumer yet. The private Venus repository exists but remains deferred. Before
+implementation, Venus must pin that revision and the consumed contract IDs;
+later breaking changes require an explicit user decision and coordinated
+update order.
+
+`Complete` in `ORB-C4` means the entire ORBF v1 presentation payload for its
+revision. Version 1 carries the current visible presentation and its metadata;
+it does not transfer scrollback history or unsupported graphics. A future
+snapshot, patch, history, effect, or resource design needs a user-approved
+contract change before it alters this boundary. A shared-codec package requires
+a separate ownership and distribution decision and may preserve the wire
+contract.
 
 ## Outside the initial index
 
-Orbit's accepted long-term direction includes host-owned durable workspace
-topology and native, web, or mobile clients. Multiple sessions, windows, tabs,
-splits, restart recovery, remote transport, web, mobile, and multiplayer are not
-initial Orbit contracts and receive no IDs until the user authorizes their
-implementation scope. macOS credibility is an architecture discipline rather
-than a claim of supported behavior; actual macOS runtime support also receives
-no contract ID until the user authorizes it.
+Orbit's accepted long-term direction includes host-owned terminal-session state
+and native, web, or mobile clients. Astra owns product workspace topology and
+policy. Multiple sessions, windows, tabs, splits, restart recovery, remote
+transport, web, mobile, and multiplayer are not initial Orbit contracts and
+receive no IDs until the user authorizes their implementation scope. macOS
+credibility is an architecture discipline rather than a claim of supported
+behavior; actual macOS runtime support also receives no contract ID until the
+user authorizes it.
