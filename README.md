@@ -16,7 +16,9 @@ completed `orb-bi4.3` proof adds complete structured presentation frames and
 ordered revisions; Orbit does not render a terminal. The canonical ORBF v1
 values, bounded encoder and decoder, and strict complete-frame revision reducer
 live in the dependency-free `orbit-protocol` workspace library so Orbit and an
-exact-revision Venus consumer cannot drift into separate schemas.
+exact-revision Venus consumer cannot drift into separate schemas. That
+consumer boundary is proved at
+`6e53fedb97f764f3683c83edcd9a5227b8f56e56`.
 
 ## Attachment-model proof
 
@@ -172,7 +174,9 @@ Bead is accepted and the exact proof-bearing commit is recorded.
 - the `orb-bi4.3` gate passed at
   `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
   [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
-  graphical implementation, while `orb-bi4.4` tracks Orbit-side acceptance
+  graphical implementation, the canonical codec boundary is proved at
+  `6e53fedb97f764f3683c83edcd9a5227b8f56e56`, and `orb-bi4.4` tracks Orbit-side
+  acceptance
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
 - Mars and Mars Next may inform behavior, but their code and architecture are

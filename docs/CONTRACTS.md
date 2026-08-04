@@ -22,10 +22,10 @@ system must preserve.
 | `ORB-C1` | While Orbit remains running, graphical-client disconnection does not kill the PTY or foreground process, and a later client reaches the same live session | Orbit authoritative owner loop with isolated platform PTY lifecycle | Proved | `e4fde443e625180d7332eff4dff366f64bee30a8` | [`tests/lifecycle.rs`](../tests/lifecycle.rs) detach, aborted-attach, reattach, foreground-reaping, and signal-cleanup checks; canonical Rust verification suite | Restart persistence remains outside the initial contract |
 | `ORB-C2` | Orbit is the sole libghostty terminal-state owner and the only component that sends terminal-generated responses to the PTY | Orbit platform-neutral authoritative owner loop | Proved | `e4fde443e625180d7332eff4dff366f64bee30a8` | [`only_authoritative_terminal_emits_pty_responses`](../tests/formatter_attachment.rs), `exited_child_output_is_drained_into_authoritative_state`, real-PTY integration checks, and canonical Rust verification suite | Preserve the sole-authority and response path through later client work |
 | `ORB-C3` | Exactly one local client may attach; a simultaneous second client receives deterministic rejection without disturbing the active client | Orbit authoritative owner loop with isolated local-runtime mechanics | Proved | `e4fde443e625180d7332eff4dff366f64bee30a8` | [`tests/lifecycle.rs`](../tests/lifecycle.rs) BUSY, aborted-handshake, and socket-identity checks; canonical Rust verification suite | Slow-client and backpressure hardening remains in `orb-bi4.5` under `ORB-C7` |
-| `ORB-C4` | Attachment begins with one coherent complete presentation frame at revision N followed by strictly ordered later frame revisions, with no stale final presentation | Orbit authoritative owner loop (presentation publication) | Proved | `e4fde443e625180d7332eff4dff366f64bee30a8` | [`real_pty_reattach_converges_through_complete_ordered_frames`](../src/presentation.rs) and canonical Rust verification suite | Adversarial exit, failure, and sustained-output cases remain in `orb-bi4.5` |
+| `ORB-C4` | Attachment begins with one coherent complete presentation frame at revision N followed by strictly ordered later frame revisions, with no stale final presentation | Orbit authoritative owner loop plus canonical `orbit-protocol` complete-frame codec | Proved | `6e53fedb97f764f3683c83edcd9a5227b8f56e56` | [`real_pty_reattach_converges_through_complete_ordered_frames`](../src/presentation.rs), `orbit-protocol` rich byte-for-byte and strict revision-reducer checks, and canonical workspace verification | Adversarial exit, failure, and sustained-output cases remain in `orb-bi4.5` |
 | `ORB-C5` | Clients send semantic key, mouse, focus, paste, and resize events; Orbit encodes them against authoritative terminal state | Orbit platform-neutral authoritative owner loop (input encoding) | Proved | `e4fde443e625180d7332eff4dff366f64bee30a8` | Authoritative key, mouse, focus, paste, resize, and terminal-reply checks in [`tests/formatter_attachment.rs`](../tests/formatter_attachment.rs) and [`tests/lifecycle.rs`](../tests/lifecycle.rs); canonical Rust verification suite | Venus must pin this revision before consuming the input boundary |
-| `ORB-C6` | The presentation boundary carries rich terminal state or explicitly declares unsupported capabilities; it never silently collapses the contract to plain text | Orbit authoritative owner loop (presentation extraction) | Proved | `e4fde443e625180d7332eff4dff366f64bee30a8` | `orb-bi4.1` Formatter counterexamples plus the rich-state corpus in [`src/presentation.rs`](../src/presentation.rs) | Version 1 explicitly leaves Kitty graphics unsupported; expanding that capability requires a later user decision |
-| `ORB-C7` | A slow, broken, or disconnected client cannot block authoritative PTY processing or cause unbounded buffering or frame history | Orbit authoritative owner loop (attachment transport) | Partially proved | — | `orb-bi4.3` at `e4fde443e625180d7332eff4dff366f64bee30a8`: bounded frame/output constants, adjacent-frame coalescing, and unread-client real-PTY check | `orb-bi4.5` retains adversarial failure cleanup and sustained backpressure hardening |
+| `ORB-C6` | The presentation boundary carries rich terminal state or explicitly declares unsupported capabilities; it never silently collapses the contract to plain text | Orbit authoritative extraction plus canonical `orbit-protocol` values and codec | Proved | `6e53fedb97f764f3683c83edcd9a5227b8f56e56` | `orb-bi4.1` Formatter counterexamples, the real-terminal rich-state corpus in [`src/presentation.rs`](../src/presentation.rs), and strict canonical codec coverage in [`crates/protocol`](../crates/protocol) | Version 1 explicitly leaves Kitty graphics unsupported; expanding that capability requires a later user decision |
+| `ORB-C7` | A slow, broken, or disconnected client cannot block authoritative PTY processing or cause unbounded buffering or frame history | Orbit authoritative owner loop (attachment transport) | Partially proved | — | `orb-bi4.9` at `6e53fedb97f764f3683c83edcd9a5227b8f56e56`: pre-allocation decode bounds, incremental producer-size accounting, bounded frame/output constants, adjacent-frame coalescing, and unread-client real-PTY check | `orb-bi4.5` retains adversarial failure cleanup and sustained backpressure hardening |
 
 ## Rules
 
@@ -55,20 +55,20 @@ breaking and name affected consumers and update order. A client does not hide a
 server-contract gap behind an adapter or second source of authority without an
 explicit user decision.
 
-The `orb-bi4.3` frame version is accepted at
-`e4fde443e625180d7332eff4dff366f64bee30a8` and has no cross-repository
-consumer yet. The private Venus repository exists but remains deferred. Before
-implementation, Venus must pin that revision and the consumed contract IDs;
-later breaking changes require an explicit user decision and coordinated
-update order.
+ORBF v1 and its canonical `orbit-protocol` package are accepted at
+`6e53fedb97f764f3683c83edcd9a5227b8f56e56`. The activated private Venus
+repository must pin that exact Git revision and its consumed contract IDs
+before implementation. Later breaking changes require an explicit user
+decision and coordinated update order; a Venus adapter or second decoder does
+not substitute for updating the shared owner.
 
 `Complete` in `ORB-C4` means the entire ORBF v1 presentation payload for its
 revision. Version 1 carries the current visible presentation and its metadata;
 it does not transfer scrollback history or unsupported graphics. A future
 snapshot, patch, history, effect, or resource design needs a user-approved
-contract change before it alters this boundary. A shared-codec package requires
-a separate ownership and distribution decision and may preserve the wire
-contract.
+contract change before it alters this boundary. The accepted shared codec
+preserves this wire contract and introduces no compatibility window or
+independent release surface.
 
 ## Outside the initial index
 
