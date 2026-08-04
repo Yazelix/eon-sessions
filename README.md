@@ -167,6 +167,20 @@ br ready
 
 Beads contain the dependency-ordered experiment plan.
 
+The [CI workflow](.github/workflows/ci.yml) runs on pushes to `edge` that
+change Cargo metadata, Rust source or tests, `build.rs`, Rust toolchain files,
+or the workflow itself. It can also be run deliberately with
+`gh workflow run ci.yml --ref edge`. One standard Ubuntu job installs a
+checksum-verified Zig 0.15.2 toolchain, logs the toolchain versions, and runs
+the four Cargo checks above in order. Superseded runs are cancelled, and each
+job is limited to ten minutes.
+
+The repository or its owning account must retain a $0 Actions product budget
+with **Stop usage when budget limit is reached**, budget threshold alerts, and
+included-usage alerts enabled. CI can consume the private repository's
+included runner minutes, but this budget prevents paid overage. The workflow
+does not run for documentation-only or Beads-only pushes.
+
 The [contract index](docs/CONTRACTS.md) is the durable behavioral source of
 truth. The [design rationale](docs/RATIONALE.md) records where the idea came
 from, the ownership hypothesis, relevant prior art, tradeoffs, and explicit

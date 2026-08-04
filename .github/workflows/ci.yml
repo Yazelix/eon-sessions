@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - edge
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - "src/**"
+      - "tests/**"
+      - build.rs
+      - "rust-toolchain*"
+      - .github/workflows/ci.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Zig 0.15.2
+        run: |
+          curl --fail --location --silent --show-error --retry 3 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$RUNNER_TEMP/zig.tar.xz" \
+            https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          printf '%s  %s\n' \
+            '02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239' \
+            "$RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar --extract --xz --file "$RUNNER_TEMP/zig.tar.xz" \
+            --directory "$RUNNER_TEMP"
+          printf '%s\n' "$RUNNER_TEMP/zig-x86_64-linux-0.15.2" >> "$GITHUB_PATH"
+
+      - name: Log toolchain versions
+        run: |
+          rustc --version --verbose
+          cargo --version --verbose
+          zig version
+
+      - name: Verify
+        run: |
+          cargo fmt --check
+          cargo check --locked
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
