@@ -4,36 +4,70 @@ Orbit studies existing work at the implementation boundary where it can answer
 a concrete question. A reference is evidence, not an architectural foundation,
 dependency decision, or authorization to inherit its feature set.
 
-When claiming an implementation bead:
+When claiming an implementation bead, follow the evidence-first gate in
+`AGENTS.md`. The bead classifies each source as required before code,
+conditional on a named failure, comparison only, or rejected scope. Planning
+routing does not count as implementation evidence.
 
-1. Inspect the current source and documentation for the references named by the
-   bead, recording a release or commit when behavior matters.
+1. Inspect the current source and documentation for every required reference,
+   recording a release or commit when behavior matters.
 2. Extract the smallest relevant contract, check, failure mode, or ownership
    lesson.
-3. Record what Orbit uses, rejects, or still cannot prove in the bead.
-4. Ask before adding an unplanned dependency, compatibility surface, fork, or
+3. Record what Orbit uses, rejects, or still cannot prove in an append-only
+   pre-implementation `Reference gate` comment.
+4. Name the affected `ORB-C*` contracts and state how the evidence constrains
+   ownership, dependencies, code shape, and the first contract check before
+   editing code, tests, or manifests.
+5. Ask before adding an unplanned dependency, compatibility surface, fork, or
    feature.
+
+When a slice may change Cargo dependencies, follow the separate crate gate in
+`AGENTS.md` and record the durable outcome in [the crate decision
+index](CRATES.md). Compare credible implementation shapes rather than choosing
+the first crate encountered in reference research. Normally include the
+no-new-crate or existing-dependency path and at least two viable crate-backed
+alternatives, with a smaller set only when the recorded search finds fewer
+credible choices. Architecture fit, ownership, owned LOC, transitive cost,
+maintenance, platform and build consequences, and focused measurements decide
+the recommendation.
 
 The implementation remains clean-room. Orbit may reproduce user-visible
 behavior and independently derive checks, but it does not copy source from
 Mars, Mars Next, or another project by default.
 
+## Platform portability
+
+- Inspect the exact `libc` release's Linux and Apple target definitions plus
+  recorded official Darwin or macOS documentation for `openpty`, controlling
+  terminals, process groups, signals, polling, nonblocking I/O, Unix sockets,
+  permissions, and EOF or error behavior before defining the platform seam.
+- Use `portable-pty`, `rustix`, and `rustix-openpty` as crate and API-shape
+  comparisons, not automatic portability choices. The crate gate decides
+  whether their abstraction and dependency cost improve Orbit.
+- Keep terminal authority, semantic input, presentation framing, ordering, and
+  client compatibility independent of the host OS. Do not treat building a
+  macOS backend or CI as part of the initial portability audit.
+
 ## Attachment and terminal state
 
 - [libghostty-vt](https://docs.rs/libghostty-vt/latest/libghostty_vt/) is the
-  proposed terminal-semantics owner. Study `Terminal`, `RenderState`, effects,
+  terminal-semantics owner under test. Study `Terminal`, `RenderState`, effects,
   input encoding, thread ownership, and the
   [VT formatter options](https://docs.rs/libghostty-vt/latest/libghostty_vt/fmt/struct.FormatterOptions.html).
-  Prove which active and inactive screen, scrollback, mode, palette, hyperlink,
-  image, and parser-in-progress state can cross an attachment boundary.
+  The Formatter proof records why hidden terminal state cannot form an exact
+  checkpoint. Study the public read-only surface for dimensions, styled cells
+  and graphemes, cursor, title, working directory, hyperlinks, images, and
+  explicit capability handling while inactive screens, parser continuation,
+  scrollback semantics, and PTY effects remain authoritative in Orbit.
 - [zmx](https://github.com/neurosnap/zmx) is the closest implementation
   reference for Orbit's headless half. It owns persistent PTYs, communicates
   over Unix sockets, feeds output into libghostty, and emits a VT bootstrap when
   a client attaches. Study its formatter use, socket and process lifecycle,
   tests, and documented restoration failures. Independently prove Orbit's
-  stricter snapshot-before-tail ordering, alternate-screen continuation, split
-  sequence behavior, and one-client backpressure. Do not inherit its multiple
-  clients, SSH workflow, labels, commands, or session-management surface.
+  single-owner attach ordering, authoritative handling of alternate screens and
+  split sequences, and one-client backpressure. Do not inherit its bootstrap
+  plus raw-tail contract, multiple clients, SSH workflow, labels, commands, or
+  session-management surface.
 - [vt100](https://docs.rs/vt100/latest/vt100/) provides a small example of
   formatted screen state and state diffs. It is useful as a test oracle or
   counterexample, not as Orbit's production terminal engine.
@@ -65,8 +99,10 @@ Mars, Mars Next, or another project by default.
 - [Ghostling](https://github.com/ghostty-org/ghostling) and
   [libghostty-rs](https://github.com/Uzaaft/libghostty-rs) show small clients
   built around libghostty. Study how they bridge `RenderState`, glyphs, input,
-  resize, callbacks, and a native render loop. Use measured evidence to choose
-  Venus's window, font, and renderer owners.
+  resize, callbacks, and a native render loop. Determine which rendering pieces
+  can consume Orbit-authored presentation state without giving Venus a second
+  terminal authority. Use measured evidence to choose Venus's window, font,
+  and renderer owners.
 - [rio-vt](https://github.com/raphamorim/rio/tree/main/rio-vt) is the strongest
   Rust-native alternative terminal engine. Compare complete-state access,
   parser ownership, modern protocol support, API maturity, and dependency cost
@@ -76,11 +112,13 @@ Mars, Mars Next, or another project by default.
   renderer and is relevant only when evaluating a compatible rendering stack.
   [librio](https://github.com/raphamorim/rio/tree/main/librio) is the C ABI for
   non-Rust consumers and is unnecessary for Venus's Rust implementation.
-- [justerm-core](https://github.com/kihyun1998/justerm) is a reference for an
-  alternative server-authoritative design that sends structured grid and
-  damage frames to thin native or web renderers. Consider that protocol shape
-  only if snapshot plus raw-tail convergence fails; adopting it would make
-  Orbit responsible for a versioned rendering protocol.
+- [justerm-core](https://github.com/kihyun1998/justerm) is a reference for a
+  server-authoritative design that sends structured grid and damage frames to
+  thin native or web renderers. Study its frame ownership, damage model, web
+  boundary, and protocol costs while independently keeping Orbit's initial
+  implementation to bounded complete frames. Orbit accepts responsibility for
+  a presentation boundary but must not copy a text-grid ceiling or speculative
+  general protocol framework.
 
 ## Terminal-facing utilities
 

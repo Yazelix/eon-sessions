@@ -1,8 +1,9 @@
 # Orbit rationale
 
-Orbit is a pre-implementation architecture experiment. This file records its
-origin, hypothesis, and stop conditions. The README and `AGENTS.md` define the
-current contract and boundaries; Beads define authorized work.
+Orbit is an architecture experiment. This file records its origin, hypothesis,
+and stop conditions. The README and `AGENTS.md` define the current boundaries,
+the [contract index](CONTRACTS.md) records accepted behavior and proof status,
+and Beads define authorized work.
 
 ## Where the idea came from
 
@@ -52,21 +53,25 @@ We are testing a narrower ownership model:
 ```text
 application -> PTY -> Orbit authoritative libghostty state
                               |
-                     snapshot + ordered tail
+                  structured presentation frames
                               v
-                       Venus libghostty client -> pixels
+                         Venus renderer -> pixels
 
-client input and resize -----------------------> Orbit -> PTY
+semantic client input and resize --------------> Orbit -> PTY
 ```
 
 Orbit owns process lifetime, the PTY, and authoritative terminal state. The
-client owns presentation and user input. On attachment, Orbit establishes one
-atomic boundary: everything before it is represented by a coherent snapshot,
-and everything after it is delivered once in the raw PTY tail. Both sides use
-libghostty so convergence does not depend on two unrelated terminal parsers.
+client owns presentation and user interaction. On attachment, Orbit establishes
+one atomic boundary: the client receives a coherent complete structured frame
+at one revision followed by later frame revisions in order. Hidden terminal
+state stays in Orbit, and semantic client input is encoded against that state.
+The client does not parse a replicated PTY stream or run another authoritative
+terminal emulator.
 
 We start with one local session and one active client, giving input and resize
-one unambiguous owner and isolating state transfer from workspace policy.
+one unambiguous owner and isolating presentation transfer from workspace policy.
+The boundary must account explicitly for rich presentation state instead of
+assuming that a plain-text cell grid is the final product contract.
 
 ## Why it may be better
 
@@ -74,9 +79,10 @@ one unambiguous owner and isolating state transfer from workspace policy.
   with it.
 - Venus gains persistence without Zellij's composited terminal stream or
   compatibility surface.
-- The server and client share one terminal-semantics implementation.
-- Snapshot-and-tail convergence is a precise contract that can be tested with
-  real PTYs.
+- Orbit is the only terminal-semantics owner; clients can use native, web, or
+  mobile rendering stacks without reproducing hidden terminal state.
+- Complete frames and monotonic revisions form a precise attachment contract
+  that can be tested with real PTYs.
 - A successful design gives Venus a small session owner instead of inheriting a
   general-purpose multiplexer architecture.
 - Starting clean permits ownership and tests to be stricter than Mars Next
@@ -87,17 +93,20 @@ one unambiguous owner and isolating state transfer from workspace policy.
 The visible grid is not complete terminal state. Correct continuation can also
 depend on cursor and keyboard modes, alternate-screen state, tab stops,
 character sets, palette changes, hyperlinks, images, scrollback, and a parser
-partway through an escape sequence. A snapshot that merely looks correct can
-diverge on the next byte.
+partway through an escape sequence. Orbit retains that hidden state, but a
+presentation frame must still expose every user-visible consequence without
+silently flattening styled text, metadata, or graphics.
 
 Other material risks are:
 
-- libghostty's embeddable APIs may not expose the state required by a headless
-  owner or an attachment snapshot;
-- obtaining that state may require a large fork or unstable private API;
-- switching atomically from snapshot to live bytes may introduce a gap,
-  duplication, or unbounded buffering;
-- two live libghostty states cost memory and must remain version-compatible;
+- libghostty's embeddable APIs may not expose the read-only presentation state
+  required by a headless owner;
+- obtaining that presentation state may require a large fork or unstable
+  private API;
+- extracting and publishing frames atomically may introduce stale revisions,
+  excessive copying, or unbounded slow-client buffering;
+- a client-neutral rich presentation schema may become a maintenance and
+  compatibility surface of its own;
 - the Orbit process becomes a failure boundary for every PTY it owns;
 - a one-session experiment is not yet a replacement for Zellij's workspace
   features;
@@ -118,20 +127,24 @@ Reference study is part of the evidence for completing a bead. It records a
 release or commit where behavior matters, extracts a relevant contract or
 failure mode, and states what Orbit accepts or rejects. It does not authorize a
 dependency, fork, compatibility layer, or scope expansion. Those choices still
-require the user.
+require the user. When a dependency choice is in scope, the separate
+[crate decision index](CRATES.md) and crate gate compare credible
+implementation shapes, including using no new crate, before the manifest
+changes.
 
 ## Why this is uncommon
 
-Mature multiplexers have kept PTYs alive for decades. Orbit adds the harder
-requirement of reconstructing a graphical client from complete terminal
-semantics and continuing from an ordered raw byte stream.
+Mature multiplexers have kept PTYs alive for decades. Orbit adds the requirement
+of reconnecting graphical clients to a host-owned rich presentation without
+nesting another terminal emulator in the path.
 
 Historically, terminal-emulation cores were embedded inside applications rather
 than exposed as stable libraries. Existing multiplexers also gain portability
 by presenting a conventional terminal to many unrelated clients, so their
 architecture favors broad compatibility, remote attachment, and shared
-sessions over a native client coupled to the same state engine. Even with a
-shared engine, serialization, parser state, and an atomic handoff remain hard.
+sessions over a native presentation protocol. A structured boundary avoids
+transferring parser state, but rich cell, metadata, graphics, ordering, and
+backpressure semantics remain hard.
 
 Libghostty gives us a plausible way to test this arrangement. Orbit determines
 whether its APIs make the design small enough for the narrower Yazelix use
@@ -168,13 +181,14 @@ Yazelix environment remain above both components. Mars and Zellij remain the
 current runtime until separate promotion and retirement decisions replace
 them.
 
-Venus shares Orbit's terminal core, while the current Mars application uses a
-different one. The experiment includes the smallest Venus client needed to
-prove the shared-engine design. Venus keeps its product name if the experiment
-succeeds; it does not inherit Mars. Orbit owns the headless proof through
-`orb-bi4.3`. Passing that convergence gate authorizes creation of the private
-`luccahuguet/venus` repository before `orb-bi4.4`. Graphical Venus code does not
-live in Orbit; the proven attachment contract is the repository boundary.
+Venus consumes Orbit's structured presentation boundary, while the current Mars
+application owns its terminal state directly. The experiment includes the
+smallest Venus client needed to prove the one-authority design. Venus keeps its
+product name if the experiment succeeds; it does not inherit Mars. Orbit owns
+the headless proof through `orb-bi4.3`. Passing that convergence gate authorizes
+creation of the private `luccahuguet/venus` repository before `orb-bi4.4`.
+Graphical Venus code does not live in Orbit; the proven presentation contract
+is the repository boundary.
 
 ## Naming and eventual ownership
 
@@ -201,12 +215,16 @@ Beads order the work:
 
 1. Prove the libghostty attachment model with deterministic state.
 2. Own one real PTY and survive diagnostic-client detachment.
-3. Prove a race-free snapshot boundary and convergence after arbitrary tails.
-4. Create the private Venus repository and add one minimum native client.
-5. Harden the one-client boundary.
-6. Dogfood Venus and Orbit through an opt-in Yazelix path.
-7. Decide later Venus and Orbit ownership from evidence.
-8. Decide whether Venus and Orbit graduate into Yazelix Nova.
+3. Complete `orb-pmp` to audit and isolate the Linux platform seam without
+   implementing macOS.
+4. Prove race-free structured presentation convergence on reattach.
+5. Complete `orb-9o6` to automate the machine-checkable governance invariants
+   after the protocol has two implementation slices of evidence.
+6. Create the private Venus repository and add one minimum native client.
+7. Harden the one-client boundary.
+8. Dogfood Venus and Orbit through an opt-in Yazelix path.
+9. Decide later Venus and Orbit ownership from evidence.
+10. Decide whether Venus and Orbit graduate into Yazelix Nova.
 
 A failed contract returns the project to planning before the next step.
 
@@ -214,31 +232,41 @@ A failed contract returns the project to planning before the next step.
 
 Graduate Venus and Orbit only if all of these are true:
 
-- the server and client converge after detach/reattach with hidden terminal
-  modes and simple text output;
+- reattaching clients receive coherent rich presentation while hidden terminal
+  state remains authoritative in Orbit;
 - the PTY survives client failure and has explicit exit semantics;
 - rapid output, alternate screens, Unicode, partial escape sequences, and
   resize boundaries behave deterministically;
-- a native Venus client can use the design without a broad adapter or libghostty
-  fork;
+- a native Venus client can use the structured boundary without a second
+  terminal emulator, broad adapter, or libghostty fork;
 - fresh Yazelix dogfood is useful with shells, Neovim, Yazi, full-screen TUIs,
   and long-running processes;
 - the resulting ownership and LOC are smaller than continuing the current
   Mars/Zellij chain or Mars Next;
+- direct and architecture-shaping crate choices have evidence-backed reasons,
+  recorded alternatives, and acceptable owned-LOC, build, and maintenance
+  cost;
+- Linux-specific runtime mechanics remain behind a narrow platform seam, while
+  core ownership and cross-repository contracts have no unrecorded macOS
+  blocker;
 - no known P0 or P1 correctness risk remains.
 
 ## Stop criteria
 
 Stop and return to planning if any of these become true:
 
-- a sufficient snapshot requires maintaining a large libghostty fork;
-- hidden terminal state cannot be transferred or reconstructed reliably;
-- correctness requires replaying unbounded PTY history;
-- snapshot-to-tail handoff cannot be made race-free without disproportionate
-  protocol machinery;
-- the client needs a second terminal-semantics implementation;
+- a sufficient read-only presentation surface requires maintaining a large
+  libghostty fork;
+- rich visible terminal state cannot cross the presentation boundary without
+  silent loss or a text-grid ceiling;
+- correct attachment requires retaining unbounded frame history;
+- atomic frame extraction and publication cannot be made race-free without
+  disproportionate protocol machinery;
+- the client needs another terminal-semantics implementation or PTY parser;
 - the smallest usable slice grows into layout, compatibility, multiplayer, or
   remote-session work before proving detach/reattach;
+- macOS would require redesigning core ownership, presentation or input
+  contracts, or durable state rather than adding a bounded platform backend;
 - dogfood shows no meaningful advantage over the simpler existing options.
 
 If we stop, we keep the evidence and avoid another untrusted multiplexer
