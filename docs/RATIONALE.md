@@ -26,14 +26,17 @@ We arrived at the Orbit hypothesis after examining three projects:
   close prior art for the use case. Herdr also covers agent state, layouts,
   remote access, and multiplayer concerns that Orbit excludes.
 - Mitchell Hashimoto's public [Superlogical](https://www.superlogical.com/)
-  discussion and
+  discussion, [multiplexer video](https://www.youtube.com/watch?v=o-qtso47ECk),
+  and
   [libghostty roadmap](https://mitchellh.com/writing/libghostty-is-coming)
   led us to the ownership inversion: terminal multiplexers already need
   terminal-emulation state, and that state can come from the same reusable core
   as a graphical terminal.
 
 We combine those observations for Yazelix. Superlogical's unpublished design
-may differ from Orbit.
+may differ from Orbit. `Logimux` is this repository's shorthand for
+Superlogical's currently unnamed terminal multiplexer, not an official product
+name.
 
 ## The hypothesis
 
@@ -51,7 +54,7 @@ application -> PTY -> Orbit authoritative libghostty state
                               |
                      snapshot + ordered tail
                               v
-                   Orbit/Mars libghostty client -> pixels
+                       Venus libghostty client -> pixels
 
 client input and resize -----------------------> Orbit -> PTY
 ```
@@ -69,12 +72,12 @@ one unambiguous owner and isolating state transfer from workspace policy.
 
 - A client can disappear without taking the shell or its foreground process
   with it.
-- Mars gains persistence without Zellij's composited terminal stream or
+- Venus gains persistence without Zellij's composited terminal stream or
   compatibility surface.
 - The server and client share one terminal-semantics implementation.
 - Snapshot-and-tail convergence is a precise contract that can be tested with
   real PTYs.
-- A successful design gives Mars a small session owner instead of inheriting a
+- A successful design gives Venus a small session owner instead of inheriting a
   general-purpose multiplexer architecture.
 - Starting clean permits ownership and tests to be stricter than Mars Next
   before compatibility makes mistakes expensive.
@@ -102,6 +105,20 @@ Other material risks are:
   in the session layer.
 
 The feasibility and convergence work address these risks before UI polish.
+
+## How references are used
+
+Orbit studies prior art just in time rather than choosing an entire stack in
+advance. Each implementation bead names the projects and crates that can answer
+its immediate questions. The
+[reference map](REFERENCES.md) records what to inspect, what each source can
+teach Orbit, and which surrounding features remain outside the experiment.
+
+Reference study is part of the evidence for completing a bead. It records a
+release or commit where behavior matters, extracts a relevant contract or
+failure mode, and states what Orbit accepts or rejects. It does not authorize a
+dependency, fork, compatibility layer, or scope expansion. Those choices still
+require the user.
 
 ## Why this is uncommon
 
@@ -145,31 +162,38 @@ explicit user decision.
 
 ## What Orbit would replace
 
-Orbit replaces Zellij's process, PTY, and session-lifetime role. Mars remains
-the graphical terminal client; `yzx` and the wider Yazelix environment remain
-above both components.
+Orbit would replace Zellij's process, PTY, and session-lifetime role in the
+Nova path. Venus would provide graphical presentation; `yzx` and the wider
+Yazelix environment remain above both components. Mars and Zellij remain the
+current runtime until separate promotion and retirement decisions replace
+them.
 
-The desired client shares Orbit's terminal core, while the current Mars
-application uses a different one. The experiment includes the smallest fresh
-client needed to prove the shared-engine design. If the experiment succeeds,
-that client inherits the Mars product name and Orbit remains the headless
-runtime. Orbit begins with both sides, then settles into the Zellij side of the
-current chain.
+Venus shares Orbit's terminal core, while the current Mars application uses a
+different one. The experiment includes the smallest Venus client needed to
+prove the shared-engine design. Venus keeps its product name if the experiment
+succeeds; it does not inherit Mars. Orbit owns the headless proof through
+`orb-bi4.3`. Passing that convergence gate authorizes creation of the private
+`luccahuguet/venus` repository before `orb-bi4.4`. Graphical Venus code does not
+live in Orbit; the proven attachment contract is the repository boundary.
 
 ## Naming and eventual ownership
 
-During the experiment, Orbit contains both the headless runtime and the minimum
-client required to prove it. If it graduates, the product boundary becomes:
+During the first three experiment beads, Orbit contains the headless runtime
+and diagnostic client required to prove it. The minimum graphical client begins
+in the separate Venus repository after the convergence gate passes. If Venus
+and Orbit graduate, the product boundary becomes:
 
 ```text
 Yazelix Nova
 |-- yzx: launcher and integration
-|-- Mars: graphical terminal client
+|-- Venus: graphical terminal client
 `-- Orbit: durable local session runtime
 ```
 
-Orbit survives graduation as the runtime name. A failed experiment leaves Mars
-unchanged. A successful one keeps processes in Orbit while clients come and go.
+Orbit survives graduation as the runtime name. Venus remains distinct from
+Mars during coexistence and after any eventual Mars retirement. A failed
+experiment leaves the current Mars and Zellij path unchanged. A successful one
+keeps processes in Orbit while Venus clients come and go.
 
 ## Evidence sequence
 
@@ -178,24 +202,24 @@ Beads order the work:
 1. Prove the libghostty attachment model with deterministic state.
 2. Own one real PTY and survive diagnostic-client detachment.
 3. Prove a race-free snapshot boundary and convergence after arbitrary tails.
-4. Add one minimal native client.
+4. Create the private Venus repository and add one minimum native client.
 5. Harden the one-client boundary.
-6. Dogfood through an opt-in Yazelix path.
-7. Decide later ownership from evidence.
-8. Decide whether Orbit graduates beneath Mars.
+6. Dogfood Venus and Orbit through an opt-in Yazelix path.
+7. Decide later Venus and Orbit ownership from evidence.
+8. Decide whether Venus and Orbit graduate into Yazelix Nova.
 
 A failed contract returns the project to planning before the next step.
 
 ## Graduation criteria
 
-Graduate Orbit only if all of these are true:
+Graduate Venus and Orbit only if all of these are true:
 
 - the server and client converge after detach/reattach with hidden terminal
   modes and simple text output;
 - the PTY survives client failure and has explicit exit semantics;
 - rapid output, alternate screens, Unicode, partial escape sequences, and
   resize boundaries behave deterministically;
-- a native client can use the design without a broad adapter or libghostty
+- a native Venus client can use the design without a broad adapter or libghostty
   fork;
 - fresh Yazelix dogfood is useful with shells, Neovim, Yazi, full-screen TUIs,
   and long-running processes;

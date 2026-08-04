@@ -1,8 +1,9 @@
 # Orbit
 
 Orbit is a clean-room Rust experiment for durable local terminal sessions in
-Yazelix Nova. It is intended to become the session runtime beneath the Mars
-graphical client if the experiment succeeds.
+Yazelix Nova. The experiment tests Orbit as the session runtime beneath Venus,
+the greenfield graphical client. Mars remains the current graphical product
+during the experiment.
 
 ## Status
 
@@ -24,7 +25,10 @@ cover daemon or machine restarts.
 - Linux first
 - local Unix socket transport
 - one terminal session and one active client
-- one Rust package and binary until another owner is demonstrably necessary
+- one Rust package and binary through the `orb-bi4.3` headless convergence
+  proof
+- if that gate passes, create the private `luccahuguet/venus` repository before
+  `orb-bi4.4`; graphical Venus code does not live in Orbit
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
 - Mars and Mars Next may inform behavior, but their code and architecture are
@@ -41,7 +45,10 @@ Beads contain the dependency-ordered experiment plan.
 
 The [design rationale](docs/RATIONALE.md) records where the idea came from, the
 ownership hypothesis, relevant prior art, tradeoffs, and explicit graduation
-and stop criteria.
+and stop criteria. The [reference map](docs/REFERENCES.md) connects existing
+projects and crates to the implementation slice where their evidence is useful.
+References are studied when that slice begins; they do not authorize additional
+features or dependencies.
 
 ## LOC scorecard
 

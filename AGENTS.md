@@ -1,7 +1,11 @@
 # Agent Guidelines
 
 Orbit is a clean-room Rust experiment for the durable local terminal-session
-runtime beneath Yazelix Nova and, if proven, the Mars graphical client.
+runtime beneath Venus, the greenfield graphical client for Yazelix Nova. Mars
+remains the current graphical product while the experiment runs.
+
+`Logimux` is this repository's shorthand for Superlogical's currently unnamed
+terminal multiplexer. It is not an official Superlogical product name.
 
 ## Core rule
 
@@ -24,11 +28,16 @@ Persistence across Orbit or machine restarts is outside the initial contract.
 - local Unix socket transport
 - one terminal session
 - one active client; multiplayer is a deliberate non-goal
-- one Rust package and binary until separation has a proven owner or contract
+- one Rust package and binary through the `orb-bi4.3` headless convergence
+  proof
 - no remote transport, Zellij compatibility, layouts, tabs, plugins, or
   configuration framework
 
 Do not broaden these boundaries without an explicit user decision.
+
+`orb-bi4.3` is the repository boundary gate. If it passes, create the private
+`luccahuguet/venus` repository before `orb-bi4.4` and keep graphical Venus code
+out of Orbit. The proven attachment contract is the cross-repository boundary.
 
 ## Clean-room rule
 
