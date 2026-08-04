@@ -114,11 +114,51 @@ Mars, Mars Next, or another project by default.
   non-Rust consumers and is unnecessary for Venus's Rust implementation.
 - [justerm-core](https://github.com/kihyun1998/justerm) is a reference for a
   server-authoritative design that sends structured grid and damage frames to
-  thin native or web renderers. Study its frame ownership, damage model, web
-  boundary, and protocol costs while independently keeping Orbit's initial
-  implementation to bounded complete frames. Orbit accepts responsibility for
-  a presentation boundary but must not copy a text-grid ceiling or speculative
+  thin native or web renderers. Study its frame ownership, damage model,
+  canonical web decoder, `FrameSource` seam, and protocol costs while
+  independently keeping Orbit's initial implementation to bounded complete
+  frames. Orbit accepts responsibility for a presentation boundary but must not
+  copy a text-grid ceiling, mirror justerm's schema, or adopt a speculative
   general protocol framework.
+- [winit](https://github.com/rust-windowing/winit),
+  [wgpu](https://github.com/gfx-rs/wgpu),
+  [glyphon](https://github.com/grovesNL/glyphon), and
+  [cosmic-text](https://github.com/pop-os/cosmic-text) form one credible
+  Rust-native window, GPU, glyph, shaping, and text-rendering candidate set for
+  the Venus crate gate. Compare exact releases or commits, owned LOC,
+  dependency and build cost, input methods, accessibility, Linux behavior,
+  macOS feasibility, and browser implications before selecting any part of the
+  set. WGSL is relevant only if the selected GPU design requires shaders.
+
+## Cross-stack runtimes and extensions
+
+- The WebAssembly Component Model's
+  [WIT](https://component-model.bytecodealliance.org/design/wit.html) and
+  [composition model](https://component-model.bytecodealliance.org/composing-and-distributing/composing.html)
+  are the primary references if repeated Astra or Venus extension cases justify
+  a language-neutral capability contract. Study interface, resource, lifecycle,
+  composition, and versioning behavior before selecting a runtime. They do not
+  authorize plugins in the initial experiment or inside Orbit's owner loop.
+- [Wasmtime's component API](https://docs.wasmtime.dev/api/wasmtime/component/index.html)
+  and [Extism](https://extism.org/docs/concepts/plug-in-system/) are future host
+  candidates, not selected dependencies. Compare them with an out-of-process
+  standard-input/output contract and no general plugin framework after a WIT
+  interface or equivalent capability boundary has been justified.
+- [wasm-bindgen](https://github.com/rustwasm/wasm-bindgen) and the browser
+  [WebAssembly JavaScript API](https://developer.mozilla.org/en-US/docs/WebAssembly/Guides/Using_the_JavaScript_API)
+  are required references only for an authorized web Venus slice. The preferred
+  first comparison compiles Orbit's canonical Rust frame decoder to WebAssembly
+  while TypeScript owns browser APIs; it does not assume the whole renderer is
+  shared or authorize remote transport.
+- [SwiftUI](https://developer.apple.com/documentation/SwiftUI) is conditional
+  evidence for an authorized Apple-native Venus shell when Rust-native
+  integration cannot satisfy measured lifecycle, input, menu, or accessibility
+  requirements within the accepted cost. It is not part of the Linux-first
+  proof.
+- [Yazi's Lua plugin system](https://yazi-rs.github.io/docs/plugins/overview/)
+  remains owned by Yazi. Astra may consume and pin that supported ecosystem;
+  the reference does not justify embedding Lua or adopting it as a cross-stack
+  plugin language.
 
 ## Terminal-facing utilities
 
@@ -130,7 +170,15 @@ Mars, Mars Next, or another project by default.
 - [Ratatui](https://github.com/ratatui/ratatui) can support an optional
   diagnostic or administration TUI after the core contract is proven. It does
   not provide PTY ownership, terminal-emulator state, native windowing, or the
-  graphical renderer required by Venus.
+  graphical renderer required by Venus. Any Ratatui client is an explicitly
+  lossy projection: it may exercise attachment, ordering, input, and reconnect,
+  but it cannot prove `ORB-C6` rich-presentation fidelity.
+- [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) is a conditional local
+  tool for hardening a versioned frame decoder against malformed, truncated,
+  reordered, or allocation-hostile input after deterministic checks establish
+  a concrete decoder risk. Its nightly and sanitizer requirements do not belong
+  in Orbit's default cost-bounded CI, and studying it does not approve a new
+  direct dependency or fuzzing surface.
 
 ## Product and scope references
 
@@ -167,5 +215,5 @@ Mars, Mars Next, or another project by default.
   outside the initial Orbit contract. Orbit relies only on published behavior
   and independently verified APIs.
 - Zellij, Mars, and Mars Next remain comparison and behavioral references for
-  dogfood and graduation. Their existing ownership or compatibility surfaces do
-  not define Venus or Orbit.
+  Astra dogfood and graduation. Their existing ownership or compatibility
+  surfaces do not define Astra, Venus, or Orbit.

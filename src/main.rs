@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
 mod platform;
+mod presentation;
 
 use libghostty_vt::{
     Terminal, TerminalOptions, focus,
@@ -24,6 +25,7 @@ use std::{
 };
 
 use platform::{Pty, PtyIo};
+use presentation::{Extractor, MAGIC, MAX_CELLS, MAX_FRAME_BYTES, OutputQueue, is_disconnect};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
@@ -67,6 +69,7 @@ impl Size {
 struct Client {
     stream: UnixStream,
     input: Vec<u8>,
+    output: OutputQueue,
 }
 
 enum SemanticInput {
@@ -139,6 +142,8 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
         response_sink.borrow_mut().extend(bytes);
     })?;
 
+    let mut extractor = Extractor::new()?;
+    let mut revision = 0;
     let mut client: Option<Client> = None;
     let mut pty_open = true;
     loop {
@@ -146,10 +151,15 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             return Ok(0);
         }
         if let Some(status) = pty.try_wait()? {
-            read_pty(&mut pty, &mut terminal)?;
+            let (_, changed) = read_pty(&mut pty, &mut terminal)?;
+            if changed {
+                revision = next_revision(revision)?;
+                publish_frame(&mut client, &mut extractor, revision, &terminal);
+            }
             let code = status.code().unwrap_or(1);
             if let Some(client) = &mut client {
-                let _ = send_line(&mut client.stream, &format!("EXIT {code}"));
+                client.output.push_line(&format!("EXIT {code}"));
+                let _ = client.output.flush(&mut client.stream);
             }
             return Ok(code);
         }
@@ -161,10 +171,15 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
         )?;
 
         if readiness.listener {
-            accept_clients(&listener, &mut client)?;
+            accept_clients(&listener, &mut client, &mut extractor, revision, &terminal)?;
         }
         if readiness.pty_read {
-            pty_open = read_pty(&mut pty, &mut terminal)?;
+            let (open, changed) = read_pty(&mut pty, &mut terminal)?;
+            pty_open = open;
+            if changed {
+                revision = next_revision(revision)?;
+                publish_frame(&mut client, &mut extractor, revision, &terminal);
+            }
         }
         if readiness.pty_write {
             pty_open &= flush_pty(&mut pty, &mut writes.borrow_mut())?;
@@ -176,9 +191,18 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
                 &pty,
                 &mut size,
                 &writes,
+                &mut extractor,
+                &mut revision,
             )?
         {
             client = None;
+        }
+        if let Some(active) = &mut client {
+            match active.output.flush(&mut active.stream) {
+                Ok(true) => {}
+                Ok(false) => client = None,
+                Err(error) => return Err(error.into()),
+            }
         }
     }
 }
@@ -187,30 +211,53 @@ fn run_client(socket: &Path) -> Result<i32> {
     let stream = UnixStream::connect(socket)?;
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
-    let mut response = String::new();
-    reader.read_line(&mut response)?;
-    print!("{response}");
-    if response.trim() == "BUSY" {
+    let response = read_server_message(&mut reader)?.ok_or("server closed during attachment")?;
+    println!("{response}");
+    if response == "BUSY" {
         return Ok(2);
     }
 
     for line in io::stdin().lock().lines() {
         writeln!(writer, "{}", line?)?;
-        response.clear();
-        if reader.read_line(&mut response)? == 0 {
-            break;
+        while let Some(response) = read_server_message(&mut reader)? {
+            let is_frame = response.starts_with("FRAME ");
+            println!("{response}");
+            if !is_frame {
+                break;
+            }
         }
-        print!("{response}");
     }
     Ok(0)
 }
 
+fn read_server_message(reader: &mut BufReader<UnixStream>) -> Result<Option<String>> {
+    let mut line = String::new();
+    if reader.read_line(&mut line)? == 0 {
+        return Ok(None);
+    }
+    let line = line.trim_end_matches(['\r', '\n']).to_owned();
+    if let Some(length) = line.strip_prefix("FRAME ") {
+        let length: usize = length.parse()?;
+        if length > MAX_FRAME_BYTES {
+            return Err("server frame exceeds the byte bound".into());
+        }
+        let mut frame = vec![0; length];
+        reader.read_exact(&mut frame)?;
+        if !frame.starts_with(MAGIC) {
+            return Err("invalid presentation frame magic".into());
+        }
+    }
+    Ok(Some(line))
+}
+
 fn read_client(
     client: &mut Client,
-    terminal: &mut Terminal<'_, '_>,
+    terminal: &mut Terminal<'static, '_>,
     pty: &Pty,
     size: &mut Size,
     writes: &RefCell<VecDeque<u8>>,
+    extractor: &mut Extractor,
+    revision: &mut u64,
 ) -> Result<bool> {
     let mut bytes = [0; 1024];
     let read = match client.stream.read(&mut bytes) {
@@ -222,7 +269,7 @@ fn read_client(
     };
     client.input.extend_from_slice(&bytes[..read]);
     if client.input.len() > MAX_MESSAGE {
-        let _ = send_line(&mut client.stream, "ERROR message too large");
+        client.output.push_line("ERROR message too large");
         return Ok(false);
     }
 
@@ -232,13 +279,19 @@ fn read_client(
         if message.last() == Some(&b'\r') {
             message.pop();
         }
-        let response = match std::str::from_utf8(&message) {
+        let (response, changed) = match std::str::from_utf8(&message) {
             Ok(message) => handle_message(message, terminal, pty, size, writes)
-                .unwrap_or_else(|error| format!("ERROR {error}")),
-            Err(_) => "ERROR message is not UTF-8".into(),
+                .unwrap_or_else(|error| (format!("ERROR {error}"), false)),
+            Err(_) => ("ERROR message is not UTF-8".into(), false),
         };
-        if send_line(&mut client.stream, &response).is_err() {
+        if !client.output.push_line(&response) {
             return Ok(false);
+        }
+        if changed {
+            *revision = next_revision(*revision)?;
+            if !queue_frame(client, extractor, *revision, terminal, false) {
+                return Ok(false);
+            }
         }
     }
     Ok(true)
@@ -250,24 +303,27 @@ fn handle_message(
     pty: &Pty,
     size: &mut Size,
     writes: &RefCell<VecDeque<u8>>,
-) -> Result<String> {
+) -> Result<(String, bool)> {
     if message == "PING" {
-        return Ok("PONG".into());
+        return Ok(("PONG".into(), false));
     }
     if message == "PID" {
-        return Ok(format!("PID {}", pty.id()));
+        return Ok((format!("PID {}", pty.id()), false));
     }
     if message == "TITLE" {
         let title = terminal.title()?.as_bytes();
         if title.len() > MAX_DIAGNOSTIC_TITLE {
             return Err("title exceeds the diagnostic bound".into());
         }
-        return Ok(format!("TITLE {}", hex(title)));
+        return Ok((format!("TITLE {}", hex(title)), false));
     }
     if message == "SIZE" {
-        return Ok(format!(
-            "SIZE {} {} {} {}",
-            size.cols, size.rows, size.cell_width, size.cell_height
+        return Ok((
+            format!(
+                "SIZE {} {} {} {}",
+                size.cols, size.rows, size.cell_width, size.cell_height
+            ),
+            false,
         ));
     }
     if let Some(arguments) = message.strip_prefix("RESIZE ") {
@@ -289,19 +345,20 @@ fn handle_message(
             || next.rows > 1_000
             || next.cell_width > 1_000
             || next.cell_height > 1_000
+            || usize::from(next.cols) * usize::from(next.rows) > MAX_CELLS
         {
             return Err("RESIZE values are outside the diagnostic bounds".into());
         }
         pty.resize(next)?;
         terminal.resize(next.cols, next.rows, next.cell_width, next.cell_height)?;
         *size = next;
-        return Ok("OK".into());
+        return Ok(("OK".into(), true));
     }
 
     let input = parse_input(message)?;
     let encoded = encode_input(terminal, *size, input)?;
     writes.borrow_mut().extend(encoded);
-    Ok("OK".into())
+    Ok(("OK".into(), false))
 }
 
 fn parse_input(message: &str) -> Result<SemanticInput> {
@@ -401,13 +458,17 @@ fn encode_input(terminal: &Terminal<'_, '_>, size: Size, input: SemanticInput) -
     }
 }
 
-fn read_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<bool> {
+fn read_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<(bool, bool)> {
     let mut bytes = [0; 8192];
+    let mut changed = false;
     loop {
         match pty.read(&mut bytes)? {
-            PtyIo::Ready(read) => terminal.vt_write(&bytes[..read]),
-            PtyIo::Blocked => return Ok(true),
-            PtyIo::Closed => return Ok(false),
+            PtyIo::Ready(0) | PtyIo::Closed => return Ok((false, changed)),
+            PtyIo::Ready(read) => {
+                terminal.vt_write(&bytes[..read]);
+                changed = true;
+            }
+            PtyIo::Blocked => return Ok((true, changed)),
         }
     }
 }
@@ -429,18 +490,27 @@ fn flush_pty(pty: &mut Pty, writes: &mut VecDeque<u8>) -> Result<bool> {
     Ok(true)
 }
 
-fn accept_clients(listener: &UnixListener, active: &mut Option<Client>) -> Result {
+fn accept_clients(
+    listener: &UnixListener,
+    active: &mut Option<Client>,
+    extractor: &mut Extractor,
+    revision: u64,
+    terminal: &Terminal<'static, '_>,
+) -> Result {
     loop {
         match listener.accept() {
             Ok((mut stream, _)) if active.is_some() => {
-                let _ = send_line(&mut stream, "BUSY");
+                let _ = stream.write_all(b"BUSY\n");
             }
-            Ok((mut stream, _)) => {
-                if send_line(&mut stream, "ATTACHED").is_ok() {
-                    *active = Some(Client {
-                        stream,
-                        input: Vec::new(),
-                    });
+            Ok((stream, _)) => {
+                stream.set_nonblocking(true)?;
+                let mut client = Client {
+                    stream,
+                    input: Vec::new(),
+                    output: OutputQueue::default(),
+                };
+                if queue_frame(&mut client, extractor, revision, terminal, true) {
+                    *active = Some(client);
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -450,18 +520,45 @@ fn accept_clients(listener: &UnixListener, active: &mut Option<Client>) -> Resul
     }
 }
 
-fn send_line(stream: &mut UnixStream, line: &str) -> io::Result<()> {
-    stream.write_all(line.as_bytes())?;
-    stream.write_all(b"\n")
+fn next_revision(revision: u64) -> Result<u64> {
+    revision
+        .checked_add(1)
+        .ok_or_else(|| "presentation revision exhausted".into())
 }
 
-fn is_disconnect(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::ConnectionReset
-            | io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::BrokenPipe
-    )
+fn publish_frame(
+    active: &mut Option<Client>,
+    extractor: &mut Extractor,
+    revision: u64,
+    terminal: &Terminal<'static, '_>,
+) {
+    if active
+        .as_mut()
+        .is_some_and(|client| !queue_frame(client, extractor, revision, terminal, false))
+    {
+        *active = None;
+    }
+}
+
+fn queue_frame(
+    client: &mut Client,
+    extractor: &mut Extractor,
+    revision: u64,
+    terminal: &Terminal<'static, '_>,
+    initial: bool,
+) -> bool {
+    let frame = match extractor.frame(revision, terminal) {
+        Ok(frame) => frame,
+        Err(error) => {
+            eprintln!("orbit: presentation client disconnected: {error}");
+            return false;
+        }
+    };
+    if initial {
+        client.output.push_initial_frame(frame)
+    } else {
+        client.output.push_frame(frame)
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {

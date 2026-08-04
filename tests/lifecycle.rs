@@ -2,7 +2,7 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::Shutdown,
     os::unix::{
         fs::PermissionsExt,
@@ -72,7 +72,8 @@ impl Client {
             let mut reader = BufReader::new(stream);
             let mut response = String::new();
             match reader.read_line(&mut response) {
-                Ok(read) if read > 0 && response.trim_end_matches(['\r', '\n']) == "ATTACHED" => {
+                Ok(read) if read > 0 && response.starts_with("FRAME ") => {
+                    read_frame_payload(&mut reader, &response)?;
                     return Ok(Self { reader });
                 }
                 Ok(read)
@@ -99,12 +100,18 @@ impl Client {
     }
 
     fn read_line(&mut self) -> TestResult<String> {
-        let mut line = String::new();
-        let read = self.reader.read_line(&mut line)?;
-        if read == 0 {
-            return Err("diagnostic connection closed".into());
+        loop {
+            let mut line = String::new();
+            let read = self.reader.read_line(&mut line)?;
+            if read == 0 {
+                return Err("diagnostic connection closed".into());
+            }
+            if line.starts_with("FRAME ") {
+                read_frame_payload(&mut self.reader, &line)?;
+                continue;
+            }
+            return Ok(line.trim_end_matches(['\r', '\n']).to_owned());
         }
-        Ok(line.trim_end_matches(['\r', '\n']).to_owned())
     }
 
     fn pid(&mut self) -> TestResult<u32> {
@@ -133,6 +140,20 @@ impl Client {
             thread::yield_now();
         }
     }
+}
+
+fn read_frame_payload(reader: &mut BufReader<UnixStream>, header: &str) -> TestResult<Vec<u8>> {
+    let length: usize = header
+        .trim_end_matches(['\r', '\n'])
+        .strip_prefix("FRAME ")
+        .ok_or("missing frame header")?
+        .parse()?;
+    let mut payload = vec![0; length];
+    reader.read_exact(&mut payload)?;
+    if !payload.starts_with(b"ORBF") {
+        return Err("invalid presentation frame magic".into());
+    }
+    Ok(payload)
 }
 
 fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {

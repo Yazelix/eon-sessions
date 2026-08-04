@@ -7,7 +7,7 @@ and Beads define authorized work.
 
 ## Where the idea came from
 
-Yazelix composes three independently evolved layers:
+Yazelix Nova composes three independently evolved layers:
 
 ```text
 yzx -> Mars -> Yazelix Zellij fork
@@ -132,6 +132,33 @@ require the user. When a dependency choice is in scope, the separate
 implementation shapes, including using no new crate, before the manifest
 changes.
 
+## Independent validation without shared authority
+
+The three greenfield components do not need to advance as one inseparable
+implementation. Each owner can expose bounded evidence that lets the next
+component validate its own boundary while only one architectural frontier is
+active:
+
+- Orbit can be exercised by diagnostic clients and comparison oracles that
+  consume its proven structured frames without parsing PTY output or owning
+  terminal state.
+- Venus can validate decoding and frame-to-draw behavior from a small,
+  versioned, Orbit-generated frame corpus or protocol-faithful replay source
+  pinned to an exact Orbit proof revision before depending on a live PTY for
+  every development cycle.
+- Astra can validate Astra-owned package composition, launch arguments,
+  environment, ordering, and failure reporting with explicit process probes;
+  those probes do not claim to prove Orbit runtime or Venus rendering.
+
+These validation surfaces stay subordinate to the product contracts. A lossy
+terminal projection can prove attachment, ordering, reconnect, input, or
+backpressure behavior, but not rich-presentation fidelity. A replay source must
+reuse the canonical Orbit wire representation rather than grow a mirror schema
+or alternate server contract. Recorded frames are bounded test evidence, not
+restart persistence, unbounded history, or a public trace format. Any public
+command, durable format, adapter, package, or additional binary remains a user
+scope decision.
+
 ## Why this is uncommon
 
 Mature multiplexers have kept PTYs alive for decades. Orbit adds the requirement
@@ -175,11 +202,16 @@ explicit user decision.
 
 ## What Orbit would replace
 
-Orbit would replace Zellij's process, PTY, and session-lifetime role in the
-Nova path. Venus would provide graphical presentation; `yzx` and the wider
-Yazelix environment remain above both components. Mars and Zellij remain the
-current runtime until separate promotion and retirement decisions replace
-them.
+Orbit would replace the process, PTY, and session-lifetime role that a
+conventional multiplexer such as Zellij would otherwise provide in the
+greenfield Yazelix Astra line. Venus would provide graphical presentation,
+while Astra would own only Yazelix-specific orchestration, policy, and
+configuration above both components.
+
+Astra is not a migration of Nova and does not make Nova the compatibility path
+for the experiment. Nova remains an independently valuable product on its
+current Mars and Zellij architecture. The two lines grow separately unless the
+user later chooses a specific shared child-repository contract.
 
 Venus consumes Orbit's structured presentation boundary, while the current Mars
 application owns its terminal state directly. The experiment includes the
@@ -192,22 +224,26 @@ is the repository boundary.
 
 ## Naming and eventual ownership
 
+The greenfield line is named **Yazelix Astra**. `Saturn` and `Eon` remain
+reserved names for possible future use; that reservation creates no product,
+repository, feature, or planning scope.
+
 During the first three experiment beads, Orbit contains the headless runtime
 and diagnostic client required to prove it. The minimum graphical client begins
 in the separate Venus repository after the convergence gate passes. If Venus
 and Orbit graduate, the product boundary becomes:
 
 ```text
-Yazelix Nova
-|-- yzx: launcher and integration
+Yazelix Astra
+|-- Astra-owned orchestration and Yazelix policy/configuration
 |-- Venus: graphical terminal client
 `-- Orbit: durable local session runtime
 ```
 
 Orbit survives graduation as the runtime name. Venus remains distinct from
-Mars during coexistence and after any eventual Mars retirement. A failed
-experiment leaves the current Mars and Zellij path unchanged. A successful one
-keeps processes in Orbit while Venus clients come and go.
+Mars. A failed experiment leaves Nova and its Mars and Zellij path unchanged. A
+successful experiment gives Astra its own architecture while Nova continues to
+grow independently.
 
 ## Evidence sequence
 
@@ -222,15 +258,15 @@ Beads order the work:
    after the protocol has two implementation slices of evidence.
 6. Create the private Venus repository and add one minimum native client.
 7. Harden the one-client boundary.
-8. Dogfood Venus and Orbit through an opt-in Yazelix path.
-9. Decide later Venus and Orbit ownership from evidence.
-10. Decide whether Venus and Orbit graduate into Yazelix Nova.
+8. Dogfood Venus and Orbit through a minimum Astra-owned integration path.
+9. Decide whether Venus and Orbit earn graduation into Yazelix Astra.
+10. Choose later Venus and Orbit ownership expansions from evidence.
 
 A failed contract returns the project to planning before the next step.
 
 ## Graduation criteria
 
-Graduate Venus and Orbit only if all of these are true:
+Graduate Venus and Orbit into Yazelix Astra only if all of these are true:
 
 - reattaching clients receive coherent rich presentation while hidden terminal
   state remains authoritative in Orbit;
@@ -239,8 +275,8 @@ Graduate Venus and Orbit only if all of these are true:
   resize boundaries behave deterministically;
 - a native Venus client can use the structured boundary without a second
   terminal emulator, broad adapter, or libghostty fork;
-- fresh Yazelix dogfood is useful with shells, Neovim, Yazi, full-screen TUIs,
-  and long-running processes;
+- fresh Yazelix Astra dogfood is useful with shells, Neovim, Yazi, full-screen
+  TUIs, and long-running processes;
 - the resulting ownership and LOC are smaller than continuing the current
   Mars/Zellij chain or Mars Next;
 - direct and architecture-shaping crate choices have evidence-backed reasons,

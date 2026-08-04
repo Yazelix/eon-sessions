@@ -1,17 +1,19 @@
 # Orbit
 
 Orbit is a clean-room Rust experiment for durable local terminal sessions in
-Yazelix Nova. The experiment tests Orbit as the session runtime beneath Venus,
-the greenfield graphical client. Mars remains the current graphical product
-during the experiment.
+Yazelix Astra, a greenfield Yazelix line separate from Yazelix Nova. The
+experiment tests Orbit as the session runtime beneath Venus, Astra's
+greenfield graphical client. Nova remains an independently valuable product on
+its current Mars and Zellij architecture during the experiment.
 
 ## Status
 
 The completed `orb-bi4.1` proof rejects the released libghostty formatter as an
 exact terminal checkpoint. The `orb-bi4.2` implementation runs one real PTY
 shell and one authoritative libghostty terminal in a foreground Orbit process;
-a diagnostic client can disconnect and later reach the same live shell. Orbit
-does not yet supply structured presentation frames or render a terminal.
+a diagnostic client can disconnect and later reach the same live shell. The
+`orb-bi4.3` candidate adds complete structured presentation frames and ordered
+revisions for review; Orbit does not render a terminal.
 
 ## Attachment-model proof
 
@@ -55,10 +57,20 @@ replay fallback, PTY, socket, or protocol implementation in this slice.
 Orbit keeps the sole authoritative terminal state and supplies clients with
 host-authored structured presentation frames. It does not export a checkpoint,
 replicate raw PTY tails, or run another terminal emulator in the client. The
-presentation boundary accounts explicitly for styled graphemes, cursor, title,
-hyperlinks, graphics resources, and unsupported capabilities rather than
-silently reducing the terminal to plain text. `orb-bi4.3` proves the minimum
-public read-only libghostty surface before any API expansion is considered.
+`orb-bi4.3` candidate uses `RenderState::update` and its public row and cell
+iterators to encode a complete versioned frame containing geometry, styled
+graphemes, colors and palette, cursor state, active screen, title, working
+directory, and hyperlinks. Version 1 explicitly advertises hyperlink support
+and declares Kitty graphics unsupported.
+
+Each frame has a 4 MiB and 100,000-cell bound. Nonblocking client output retains
+the initial frame and at most one coalesced latest frame when no diagnostic
+response separates them; total queued output is bounded. The co-located
+real-PTY proof in [`src/presentation.rs`](src/presentation.rs) covers output before attach,
+ordered revisions, alternate-screen rich state, restoration of an inactive
+primary screen with pending wrap, split CSI, UTF-8, and APC input, a slow client,
+background-only erased cells, and final-state convergence after reattach. The
+candidate adds no dependency.
 
 ## PTY-lifetime proof
 
@@ -69,11 +81,11 @@ cargo run -- serve
 cargo run -- client
 ```
 
-The server owns the PTY, child process, terminal state, input encoding, resize,
-and terminal-generated replies on one thread. The client sends a bounded
-diagnostic message set containing semantic key, mouse, focus, paste, and resize
-events. It receives acknowledgements and limited lifecycle diagnostics, never
-raw PTY output or terminal state suitable for presentation.
+The server owns the PTY, child process, terminal state, presentation extraction,
+input encoding, resize, and terminal-generated replies on one thread. The
+client sends a bounded diagnostic message set containing semantic key, mouse,
+focus, paste, and resize events. It receives structured presentation frames,
+acknowledgements, and limited lifecycle diagnostics, never raw PTY output.
 
 The default socket is `$XDG_RUNTIME_DIR/yazelix-orbit/orbit.sock`, falling back
 to `/tmp/yazelix-orbit-$UID/orbit.sock`. Its directory is user-owned and private,
@@ -160,8 +172,11 @@ graduation and stop criteria. The [reference map](docs/REFERENCES.md) connects
 existing projects and crates to the implementation slice where their evidence
 is useful. The [crate decision index](docs/CRATES.md) records which direct or
 architecture-shaping dependencies are selected, rejected, or still pending.
-The [changelog](CHANGELOG.md) records accepted user- and consumer-visible
-changes without duplicating candidate evidence or internal development work.
+The [Astra technology boundaries](docs/STACK.md) record the cross-stack
+language, WebAssembly, extension, and client-framework posture without
+authorizing those deferred features. The [changelog](CHANGELOG.md) records
+accepted user- and consumer-visible changes without duplicating candidate
+evidence or internal development work.
 References are studied when a slice begins; they do not authorize additional
 features or dependencies.
 
@@ -176,4 +191,4 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Rust source | 1,554 |
+| Rust source | 2,322 |

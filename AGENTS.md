@@ -1,8 +1,10 @@
 # Agent Guidelines
 
 Orbit is a clean-room Rust experiment for the durable local terminal-session
-runtime beneath Venus, the greenfield graphical client for Yazelix Nova. Mars
-remains the current graphical product while the experiment runs.
+runtime beneath Venus, the greenfield graphical client for Yazelix Astra.
+Astra is a separate greenfield Yazelix line. Yazelix Nova remains an
+independently valuable product on its current Mars and Zellij architecture
+while the experiment runs.
 
 `Logimux` is this repository's shorthand for Superlogical's currently unnamed
 terminal multiplexer. It is not an official Superlogical product name.
@@ -225,6 +227,26 @@ the update order and support or removal of the previous revision. Breaking
 changes, adapters, and compatibility windows require an explicit user choice.
 Clients must report a gap back to the owning contract rather than silently
 compensating and creating a second owner.
+
+## Validation consumers and test doubles
+
+A diagnostic client, recorded-frame corpus, replay source, renderer experiment,
+or fake child process proves only the boundary it actually exercises. It does
+not become an alternate product backend or an independent owner of Orbit,
+Venus, or Astra behavior.
+
+Protocol-faithful validation pins the exact Orbit proof commit and contract IDs
+and consumes the canonical wire representation. Do not maintain a second
+handwritten protocol schema, reparse raw PTY bytes, or compensate for missing
+server state in a test client. If replay would require a public trace format,
+new compatibility surface, adapter, package, or binary, stop for explicit user
+choice before adding it.
+
+Mark lossy projections explicitly. A terminal or text projection may prove
+attachment, ordering, reconnect, resize, semantic input, and failure behavior,
+but it cannot prove `ORB-C6` rich-presentation fidelity. Likewise, an Astra
+process or package probe may prove Astra-owned launch and orchestration policy,
+but not Orbit runtime or Venus rendering behavior.
 
 ## Protocol exceptions
 
