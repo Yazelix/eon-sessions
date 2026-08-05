@@ -18,7 +18,7 @@ values, bounded encoder and decoder, and strict complete-frame revision reducer
 live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
-`78a1c0cf361f28262ab6aba69aa362ef98f84cda`.
+`c905bf9610581747f1b07565814b501ca66cfaa6`.
 The same package owns the ORBS v1 local-session envelope and typed attachment,
 frame, lifecycle, key, mouse, focus, paste, and resize messages consumed by
 Orbit's server and diagnostic client. Its canonical key validation rejects C0,
@@ -28,6 +28,9 @@ Positional modifier bits are accepted only with their corresponding logical
 modifier, so encoding and decoding enforce the same canonical key and mouse
 values. Mouse press and release require a button, wheel directions are
 momentary press events, and buttonless motion means that no button is pressed.
+Mouse axes and surface pixel dimensions stay within the selected terminal
+mapper's `u16` domain, so extreme client values fail before checked native
+coordinate conversion.
 Orbit passes held-button semantics to the terminal-aware mapper so active-button
 motion remains reportable outside the viewport without treating a wheel tick as
 held. Once a fatal negotiation or protocol response is queued, that client
@@ -209,7 +212,7 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
   [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
   graphical implementation, the canonical codec boundary is proved at
-  `78a1c0cf361f28262ab6aba69aa362ef98f84cda`, and `orb-bi4.4` tracks Orbit-side
+  `c905bf9610581747f1b07565814b501ca66cfaa6`, and `orb-bi4.4` tracks Orbit-side
   acceptance
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
