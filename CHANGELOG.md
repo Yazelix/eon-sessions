@@ -20,7 +20,7 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   and rejection of stale or duplicate complete-frame revisions.
 - ORBS v1 adds the dependency-free canonical attachment, frame-envelope,
   lifecycle, semantic key, mouse, focus, arbitrary paste, and resize codec at
-  `814a5dbcfdd3284769f8fb982ffff21110618754`, hardening `ORB-C3` and `ORB-C4`
+  `78a1c0cf361f28262ab6aba69aa362ef98f84cda`, hardening `ORB-C3` and `ORB-C4`
   and changing `ORB-C5` to the reusable Venus boundary. This intentionally
   replaces the private unaccepted line-oriented diagnostic syntax without an
   adapter or compatibility window; Orbit's in-repository consumers moved
@@ -39,4 +39,5 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   stops accepting input and publishing later frames or lifecycle messages to
   that connection while the bounded response drains. After Orbit observes PTY
   closure, later semantic requests receive a terminal failure instead of a
-  false acknowledgement, and already queued undeliverable bytes are released.
+  false acknowledgement, and already queued undeliverable bytes and their
+  retained queue storage are released.

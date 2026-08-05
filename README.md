@@ -18,7 +18,7 @@ values, bounded encoder and decoder, and strict complete-frame revision reducer
 live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
-`814a5dbcfdd3284769f8fb982ffff21110618754`.
+`78a1c0cf361f28262ab6aba69aa362ef98f84cda`.
 The same package owns the ORBS v1 local-session envelope and typed attachment,
 frame, lifecycle, key, mouse, focus, paste, and resize messages consumed by
 Orbit's server and diagnostic client. Its canonical key validation rejects C0,
@@ -209,7 +209,7 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
   [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
   graphical implementation, the canonical codec boundary is proved at
-  `814a5dbcfdd3284769f8fb982ffff21110618754`, and `orb-bi4.4` tracks Orbit-side
+  `78a1c0cf361f28262ab6aba69aa362ef98f84cda`, and `orb-bi4.4` tracks Orbit-side
   acceptance
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
