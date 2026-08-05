@@ -173,7 +173,7 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             pty_open = flush_pty(&mut pty, &mut writes.borrow_mut())?;
         }
         if pty_was_open && !pty_open {
-            writes.borrow_mut().clear();
+            discard_pty_writes(&writes);
         }
         if readiness.client
             && !read_client(
@@ -197,6 +197,10 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             }
         }
     }
+}
+
+fn discard_pty_writes(writes: &RefCell<VecDeque<u8>>) {
+    drop(writes.take());
 }
 
 fn run_client(socket: &Path) -> Result<i32> {
@@ -812,14 +816,19 @@ mod tests {
     }
 
     #[test]
-    fn closed_pty_rejects_input_without_queueing() -> Result {
+    fn closed_pty_discards_queued_storage_and_rejects_input() -> Result {
         let (mut client, mut peer) = attached_client()?;
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
-        let writes = RefCell::new(VecDeque::new());
+        let mut queued = VecDeque::with_capacity(1_024);
+        queued.extend(b"queued before closure");
+        let writes = RefCell::new(queued);
         let mut extractor = Extractor::new()?;
         let mut revision = 0;
 
+        discard_pty_writes(&writes);
+        assert!(writes.borrow().is_empty());
+        assert_eq!(writes.borrow().capacity(), 0);
         assert!(handle_client_message(
             &mut client,
             ClientMessage::Paste(b"undeliverable".to_vec()),
