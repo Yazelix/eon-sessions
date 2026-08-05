@@ -59,7 +59,7 @@ pub enum Error {
     InvalidVersionRange,
     /// Consumed modifiers are not a subset of active modifiers.
     ConsumedModifiersNotActive,
-    /// Mouse coordinates are negative or non-finite.
+    /// Mouse coordinates are outside the terminal mapper's supported range.
     InvalidCoordinates,
     /// Surface dimensions are empty, inconsistent, or too large.
     InvalidSurfaceSize,
@@ -461,7 +461,7 @@ pub enum MouseButton {
     Eleven,
 }
 
-/// Pointer event in surface pixels.
+/// Pointer event in surface pixels within the terminal mapper's `u16` domain.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MouseEvent {
     pub action: MouseAction,
@@ -479,7 +479,7 @@ pub enum FocusEvent {
     Lost,
 }
 
-/// Terminal grid and drawing-surface measurements.
+/// Terminal grid and drawing-surface measurements within the mapper's `u16` pixel domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SurfaceSize {
     pub cols: u16,
@@ -921,7 +921,8 @@ fn validate_mouse(event: &MouseEvent) -> Result<()> {
             field: "mouse action",
         });
     }
-    if event.x.is_finite() && event.y.is_finite() && event.x >= 0.0 && event.y >= 0.0 {
+    let coordinate_range = 0.0..=f32::from(u16::MAX);
+    if coordinate_range.contains(&event.x) && coordinate_range.contains(&event.y) {
         Ok(())
     } else {
         Err(Error::InvalidCoordinates)
@@ -929,6 +930,7 @@ fn validate_mouse(event: &MouseEvent) -> Result<()> {
 }
 
 fn validate_surface_size(size: &SurfaceSize) -> Result<()> {
+    let max_screen = u32::from(u16::MAX);
     let cells = usize::from(size.cols).checked_mul(usize::from(size.rows));
     let horizontal_padding = size.padding_left.checked_add(size.padding_right);
     let vertical_padding = size.padding_top.checked_add(size.padding_bottom);
@@ -940,6 +942,8 @@ fn validate_surface_size(size: &SurfaceSize) -> Result<()> {
         || size.rows == 0
         || size.screen_width == 0
         || size.screen_height == 0
+        || size.screen_width > max_screen
+        || size.screen_height > max_screen
         || size.cell_width == 0
         || size.cell_height == 0
         || !matches!(cells, Some(count) if count <= MAX_CELLS)
@@ -1584,6 +1588,39 @@ mod tests {
         assert_eq!(
             encode_client_message(&invalid),
             Err(Error::InvalidCoordinates)
+        );
+
+        let mut mouse = MouseEvent {
+            action: MouseAction::Motion,
+            button: None,
+            modifiers: Modifiers::empty(),
+            x: f32::from(u16::MAX),
+            y: f32::from(u16::MAX),
+        };
+        assert!(encode_client_message(&ClientMessage::Mouse(mouse)).is_ok());
+        mouse.x += 1.0;
+        assert_eq!(
+            encode_client_message(&ClientMessage::Mouse(mouse)),
+            Err(Error::InvalidCoordinates)
+        );
+
+        let mut size = SurfaceSize {
+            cols: 1,
+            rows: 1,
+            screen_width: u32::from(u16::MAX),
+            screen_height: 1,
+            cell_width: 1,
+            cell_height: 1,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+        };
+        assert!(encode_client_message(&ClientMessage::Resize(size)).is_ok());
+        size.screen_width += 1;
+        assert_eq!(
+            encode_client_message(&ClientMessage::Resize(size)),
+            Err(Error::InvalidSurfaceSize)
         );
 
         let invalid = ClientMessage::Resize(SurfaceSize {
