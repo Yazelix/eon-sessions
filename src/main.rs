@@ -58,6 +58,11 @@ struct Client {
 }
 
 impl Client {
+    fn close_when_flushed(&mut self) {
+        self.input = Vec::new();
+        self.close_after_flush = true;
+    }
+
     fn finish_session(&mut self, code: i32) -> Result {
         if self.attached {
             if !self.close_after_flush {
@@ -316,8 +321,7 @@ fn read_client(
                 if !queue_failure(client, FailureCode::Protocol, error.to_string())? {
                     return Ok(false);
                 }
-                client.input.clear();
-                client.close_after_flush = true;
+                client.close_when_flushed();
                 return Ok(true);
             }
         };
@@ -327,7 +331,7 @@ fn read_client(
                 if !queue_failure(client, FailureCode::Protocol, error.to_string())? {
                     return Ok(false);
                 }
-                client.close_after_flush = true;
+                client.close_when_flushed();
                 return Ok(true);
             }
         };
@@ -374,7 +378,7 @@ fn handle_client_message(
                     minimum_version: session::VERSION,
                     maximum_version: session::VERSION,
                 })?;
-                client.close_after_flush = true;
+                client.close_when_flushed();
                 Ok(queued)
             }
             _ => {
@@ -383,7 +387,7 @@ fn handle_client_message(
                     FailureCode::Protocol,
                     "first client message must be Hello".into(),
                 )?;
-                client.close_after_flush = true;
+                client.close_when_flushed();
                 Ok(queued)
             }
         };
@@ -395,7 +399,7 @@ fn handle_client_message(
             FailureCode::Protocol,
             "Hello may only be sent once".into(),
         )?;
-        client.close_after_flush = true;
+        client.close_when_flushed();
         return Ok(queued);
     }
     let Some(pty) = pty else {
@@ -715,7 +719,7 @@ mod tests {
         });
         let expected = session::encode_server_message(&failure)?;
         assert!(client.output.push_message(&failure)?);
-        client.close_after_flush = true;
+        client.close_when_flushed();
         Ok((client, peer, expected))
     }
 
@@ -794,7 +798,7 @@ mod tests {
     fn terminal_closing_client_cannot_apply_later_input() -> Result {
         let (mut client, mut peer) = attached_client()?;
         write_client_message(&mut peer, &ClientMessage::Paste(b"ignored".to_vec()))?;
-        client.close_after_flush = true;
+        client.close_when_flushed();
         let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
@@ -812,6 +816,42 @@ mod tests {
             &mut revision,
         )?);
         assert!(writes.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn fatal_decode_releases_client_input_storage() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let mut message = session::encode_client_message(&mouse())?;
+        message[session::HEADER_BYTES + 4..session::HEADER_BYTES + 8]
+            .copy_from_slice(&f32::MAX.to_bits().to_le_bytes());
+        peer.write_all(&message)?;
+        let mut terminal = terminal()?;
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut extractor = Extractor::new()?;
+        let mut revision = 0;
+
+        assert!(read_client(
+            &mut client,
+            &mut terminal,
+            None,
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+        )?);
+        assert!(client.close_after_flush);
+        assert!(client.input.is_empty());
+        assert_eq!(client.input.capacity(), 0);
+        assert!(client.output.flush(&mut client.stream)?);
+        assert_eq!(
+            read_server_message(&mut peer)?,
+            Some(ServerMessage::Failure(Failure {
+                code: FailureCode::Protocol,
+                detail: "invalid mouse coordinates".into(),
+            }))
+        );
         Ok(())
     }
 
