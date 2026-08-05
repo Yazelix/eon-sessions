@@ -18,7 +18,7 @@ values, bounded encoder and decoder, and strict complete-frame revision reducer
 live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
-`c905bf9610581747f1b07565814b501ca66cfaa6`.
+`838b67652c4df1979e599b9c401ee664ffac66bd`.
 The same package owns the ORBS v1 local-session envelope and typed attachment,
 frame, lifecycle, key, mouse, focus, paste, and resize messages consumed by
 Orbit's server and diagnostic client. Its canonical key validation rejects C0,
@@ -35,7 +35,8 @@ Orbit passes held-button semantics to the terminal-aware mapper so active-button
 motion remains reportable outside the viewport without treating a wheel tick as
 held. Once a fatal negotiation or protocol response is queued, that client
 cannot send later terminal input or receive later presentation frames or
-session-exit messages while the bounded response drains. Once PTY closure is
+session-exit messages while the bounded response drains, and its unread input
+bytes and retained input storage are released immediately. Once PTY closure is
 observed, semantic requests fail instead of being acknowledged or retained as
 undeliverable input while Orbit continues to wait for the known child.
 
@@ -212,7 +213,7 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
   [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
   graphical implementation, the canonical codec boundary is proved at
-  `c905bf9610581747f1b07565814b501ca66cfaa6`, and `orb-bi4.4` tracks Orbit-side
+  `838b67652c4df1979e599b9c401ee664ffac66bd`, and `orb-bi4.4` tracks Orbit-side
   acceptance
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
