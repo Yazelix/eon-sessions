@@ -317,6 +317,6 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 6,002 |
+| Product Rust source and tests | 5,957 |
 | Governance Rust tool and tests | 765 |
-| **Total owned Rust** | **6,767** |
+| **Total owned Rust** | **6,722** |

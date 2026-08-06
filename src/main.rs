@@ -726,28 +726,6 @@ mod tests {
         Ok(terminal)
     }
 
-    fn key(key: PhysicalKey) -> ClientMessage {
-        ClientMessage::Key(KeyEvent {
-            action: KeyAction::Press,
-            key,
-            modifiers: Modifiers::empty(),
-            consumed_modifiers: Modifiers::empty(),
-            composing: false,
-            text: None,
-            unshifted_codepoint: None,
-        })
-    }
-
-    fn mouse() -> ClientMessage {
-        ClientMessage::Mouse(session::MouseEvent {
-            action: MouseAction::Press,
-            button: Some(MouseButton::Left),
-            modifiers: Modifiers::empty(),
-            x: 1.0,
-            y: 1.0,
-        })
-    }
-
     fn attached_client() -> Result<(Client, UnixStream)> {
         let (stream, peer) = UnixStream::pair()?;
         stream.set_nonblocking(true)?;
@@ -773,39 +751,6 @@ mod tests {
         assert!(client.output.push_message(&failure)?);
         client.close_when_flushed();
         Ok((client, peer, expected))
-    }
-
-    #[test]
-    fn authoritative_state_controls_all_semantic_input_encoding() -> Result {
-        let size = INITIAL_SIZE;
-        let normal = terminal()?;
-        assert_eq!(
-            encode_input(&normal, size, key(PhysicalKey::ARROW_UP))?,
-            b"\x1b[A"
-        );
-        assert!(encode_input(&normal, size, mouse())?.is_empty());
-        assert!(encode_input(&normal, size, ClientMessage::Focus(FocusEvent::Gained))?.is_empty());
-        assert_eq!(
-            encode_input(&normal, size, ClientMessage::Paste(b"a\nb".to_vec()))?,
-            b"a\rb"
-        );
-
-        let mut modes = terminal()?;
-        modes.vt_write(b"\x1b[?1h\x1b[?1000h\x1b[?1006h\x1b[?1004h\x1b[?2004h");
-        assert_eq!(
-            encode_input(&modes, size, key(PhysicalKey::ARROW_UP))?,
-            b"\x1bOA"
-        );
-        assert_eq!(encode_input(&modes, size, mouse())?, b"\x1b[<0;1;1M");
-        assert_eq!(
-            encode_input(&modes, size, ClientMessage::Focus(FocusEvent::Gained))?,
-            b"\x1b[I"
-        );
-        assert_eq!(
-            encode_input(&modes, size, ClientMessage::Paste(b"a\nb".to_vec()))?,
-            b"\x1b[200~a\nb\x1b[201~"
-        );
-        Ok(())
     }
 
     #[test]
@@ -874,7 +819,14 @@ mod tests {
     #[test]
     fn fatal_decode_releases_client_input_storage() -> Result {
         let (mut client, mut peer) = attached_client()?;
-        let mut message = session::encode_client_message(&mouse())?;
+        let mut message =
+            session::encode_client_message(&ClientMessage::Mouse(session::MouseEvent {
+                action: MouseAction::Press,
+                button: Some(MouseButton::Left),
+                modifiers: Modifiers::empty(),
+                x: 1.0,
+                y: 1.0,
+            }))?;
         message[session::HEADER_BYTES + 4..session::HEADER_BYTES + 8]
             .copy_from_slice(&f32::MAX.to_bits().to_le_bytes());
         peer.write_all(&message)?;

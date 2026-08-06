@@ -135,11 +135,11 @@ impl Client {
         self.request(&ClientMessage::Paste(bytes.into()))
     }
 
-    fn key(&mut self, action: KeyAction, key: PhysicalKey) -> TestResult {
+    fn key(&mut self, action: KeyAction, key: PhysicalKey, modifiers: Modifiers) -> TestResult {
         self.request(&ClientMessage::Key(KeyEvent {
             action,
             key,
-            modifiers: Modifiers::empty(),
+            modifiers,
             consumed_modifiers: Modifiers::empty(),
             composing: false,
             text: None,
@@ -148,15 +148,15 @@ impl Client {
     }
 
     fn enter(&mut self) -> TestResult {
-        self.key(KeyAction::Press, PhysicalKey::ENTER)
+        self.key(KeyAction::Press, PhysicalKey::ENTER, Modifiers::empty())
     }
 
-    fn text(&mut self, text: impl Into<String>) -> TestResult {
+    fn text(&mut self, text: impl Into<String>, consumed_modifiers: Modifiers) -> TestResult {
         self.request(&ClientMessage::Key(KeyEvent {
             action: KeyAction::Press,
             key: PhysicalKey::A,
-            modifiers: Modifiers::empty(),
-            consumed_modifiers: Modifiers::empty(),
+            modifiers: consumed_modifiers,
+            consumed_modifiers,
             composing: false,
             text: Some(text.into()),
             unshifted_codepoint: Some('a'),
@@ -448,7 +448,10 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     first.enter()?;
     let shell_pid = wait_file_text(&first_pid_file)?.trim().parse()?;
 
-    first.text(format!("printf key > {}", key_file.display()))?;
+    first.text(
+        format!("printf key > {}", key_file.display()),
+        Modifiers::empty(),
+    )?;
     first.enter()?;
     wait_file_text_matching(&key_file, |text| text == "key")?;
     first.paste(format!(
@@ -541,7 +544,7 @@ fn authoritative_input_modes_and_resize_survive_detach() -> TestResult {
             .arg(
                 "stty -echo -icanon -icrnl min 1 time 0; \
                  printf '\\033[?1h\\033[?1000h\\033[?1006h\\033[?1004h\\033[?2004h\\033]2;input-modes-on\\033\\\\'; \
-                 dd bs=1 count=31 of=\"$ORBIT_DIR/first\" 2>/dev/null; \
+                 dd bs=1 count=34 of=\"$ORBIT_DIR/first\" 2>/dev/null; \
                  stty size > \"$ORBIT_SIZE\"; printf done > \"$ORBIT_FIRST_DONE\"; \
                  printf '\\033[>11u\\033]2;kitty-on\\033\\\\'; \
                  dd bs=1 count=9 of=\"$ORBIT_DIR/kitty\" 2>/dev/null; \
@@ -572,34 +575,34 @@ fn authoritative_input_modes_and_resize_survive_detach() -> TestResult {
         screen_width: 920,
         screen_height: 740,
         cell_width: 9,
-        cell_height: 18,
-        padding_top: 10,
-        padding_bottom: 10,
+        cell_height: 17,
+        padding_top: 30,
+        padding_bottom: 30,
         padding_left: 10,
         padding_right: 10,
     }))?;
-    first.text("q")?;
-    first.key(KeyAction::Press, PhysicalKey::ARROW_UP)?;
+    first.text("q", Modifiers::ALT)?;
+    first.key(KeyAction::Press, PhysicalKey::ARROW_UP, Modifiers::empty())?;
     first.request(&ClientMessage::Mouse(session::MouseEvent {
         action: session::MouseAction::Press,
         button: Some(session::MouseButton::Left),
-        modifiers: Modifiers::empty(),
-        x: 1.0,
-        y: 1.0,
+        modifiers: Modifiers::SHIFT,
+        x: 915.0,
+        y: 725.0,
     }))?;
     first.request(&ClientMessage::Focus(FocusEvent::Gained))?;
     first.paste(b"a\nb".to_vec())?;
     assert_eq!(wait_file_text(&first_done)?, "done");
     assert_eq!(
         fs::read(dir.0.join("first"))?,
-        b"q\x1bOA\x1b[<0;1;1M\x1b[I\x1b[200~a\nb\x1b[201~"
+        b"q\x1bOA\x1b[<4;100;40M\x1b[I\x1b[200~a\nb\x1b[201~"
     );
     assert_eq!(wait_file_text(&size)?.trim(), "40 100");
 
     first.wait_title("kitty-on")?;
-    first.key(KeyAction::Release, PhysicalKey::ENTER)?;
+    first.key(KeyAction::Release, PhysicalKey::ENTER, Modifiers::SHIFT)?;
     assert_eq!(wait_file_text(&kitty_done)?, "done");
-    assert_eq!(fs::read(dir.0.join("kitty"))?, b"\x1b[13;1:3u");
+    assert_eq!(fs::read(dir.0.join("kitty"))?, b"\x1b[13;2:3u");
     drop(first);
 
     fs::write(&release, b"release")?;
@@ -610,8 +613,8 @@ fn authoritative_input_modes_and_resize_survive_detach() -> TestResult {
         (second.frame.dimensions.cols, second.frame.dimensions.rows),
         (100, 40)
     );
-    second.text("z")?;
-    second.key(KeyAction::Press, PhysicalKey::ARROW_UP)?;
+    second.text("z", Modifiers::empty())?;
+    second.key(KeyAction::Press, PhysicalKey::ARROW_UP, Modifiers::empty())?;
     second.request(&ClientMessage::Mouse(session::MouseEvent {
         action: session::MouseAction::Press,
         button: Some(session::MouseButton::Left),
@@ -620,7 +623,7 @@ fn authoritative_input_modes_and_resize_survive_detach() -> TestResult {
         y: 1.0,
     }))?;
     second.request(&ClientMessage::Focus(FocusEvent::Gained))?;
-    second.key(KeyAction::Release, PhysicalKey::ENTER)?;
+    second.key(KeyAction::Release, PhysicalKey::ENTER, Modifiers::empty())?;
     second.paste(b"c\nd".to_vec())?;
 
     assert_eq!(wait_file_text(&result)?, "ok");
