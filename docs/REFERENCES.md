@@ -182,15 +182,20 @@ prerequisite for the current single-session architecture.
   can consume Orbit-authored presentation state without giving Venus a second
   terminal authority. Use measured evidence to choose Venus's window, font,
   and renderer owners.
-- [rio-vt](https://github.com/raphamorim/rio/tree/main/rio-vt) is the strongest
+- [rio-vt at `3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/rio-vt) is the strongest
   Rust-native alternative terminal engine. Compare complete-state access,
   parser ownership, modern protocol support, API maturity, and dependency cost
   if libghostty cannot satisfy Orbit's contract. It replaces libghostty in that
   comparison; it is not an additional terminal engine.
-- [Sugarloaf](https://github.com/raphamorim/rio/tree/main/sugarloaf) is Rio's
+- [Sugarloaf at `3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/sugarloaf) is Rio's
   renderer and is relevant only when evaluating a compatible rendering stack.
-  [librio](https://github.com/raphamorim/rio/tree/main/librio) is the C ABI for
-  non-Rust consumers and is unnecessary for Venus's Rust implementation.
+  [librio at the same commit](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/librio)
+  owns a PTY, Rio VT state, semantic input, callbacks, selection, and a
+  host-pulled materialized render snapshot with dirty rows behind a C ABI. Its
+  [design specification](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/specs/librio.md)
+  is useful as a compact same-process engine/frontend comparison. Venus is a
+  Rust client of Orbit's independently released protocol, so librio is neither
+  a dependency nor a substitute for Orbit's detach boundary.
 - [justerm-core](https://github.com/kihyun1998/justerm) is a reference for a
   server-authoritative design that sends structured grid and damage frames to
   thin native or web renderers. Study its frame ownership, damage model,
@@ -291,16 +296,31 @@ prerequisite for the current single-session architecture.
   terminals in a Rust client/server multiplexer. Orbit studies its user-visible
   detach and reattach behavior while excluding layouts, remote access,
   multiplayer, and agent-management policy.
-- `Logimux` is this repository's shorthand for Superlogical's currently unnamed
-  terminal multiplexer, not an official product name.
-  [Superlogical](https://www.superlogical.com/), Mitchell Hashimoto's
+- [Canario](https://rapha.land/canario/) at Rio commit
+  [`3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario)
+  is comparison evidence for a browser-inspired native terminal workspace:
+  spaces, splits, a command palette, CWD-based filing, a global quick terminal,
+  and on-demand live pane previews. Its SwiftUI/AppKit frontend owns those
+  policies around same-process librio surfaces. The
+  [session store](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario/Sources/SessionStore.swift)
+  persists layout, CWD, title, and plain-text scrollback;
+  [RioEngine](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario/Sources/RioEngine.swift)
+  starts a fresh shell and replays that text into a new display rather than
+  preserving the process.
+  Astra may study the workspace interaction, especially command-driven
+  navigation and on-demand previews. Orbit rejects same-process UI/PTY lifetime
+  and textual restoration as substitutes for `ORB-C1` detach survival.
+- The [Superlogical terminal multiplexer](https://www.superlogical.com/) is the
+  company's published first product; Mitchell Hashimoto's
+  [company announcement](https://mitchellh.com/writing/superlogical),
   [architecture explanation](https://x.com/mitchellh/status/2082936029426892960),
   [native tabs and splits
   demonstration](https://x.com/mitchellh/status/2084630173954326672),
   and the
   [libghostty roadmap](https://mitchellh.com/writing/libghostty-is-coming)
   are comparison evidence for durable terminal ownership and transient native
-  clients. Superlogical pauses its authoritative libghostty server at attach,
+  clients. Its published architecture pauses the authoritative libghostty
+  server at attach,
   sends a custom binary reconstruction snapshot, reaches a ready state before
   older scrollback completes, then distributes raw PTY bytes to terminal
   emulators in its clients. Orbit accepts the server-owned PTY, authoritative

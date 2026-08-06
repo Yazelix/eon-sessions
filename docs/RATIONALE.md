@@ -43,8 +43,8 @@ before transferring older scrollback. Orbit shares the durable PTY,
 server-authority, and attachment-barrier principles while using a different
 replication boundary. Venus receives complete host-authored
 presentation frames and does not parse PTY output or reconstruct libghostty
-state. `Logimux` is this repository's shorthand for Superlogical's currently
-unnamed terminal multiplexer, not an official product name.
+state. This repository uses the published description **Superlogical terminal
+multiplexer** rather than inventing a product codename.
 
 ## The hypothesis
 
@@ -192,6 +192,32 @@ Other material risks are:
   in the session layer.
 
 The feasibility and convergence work address these risks before UI polish.
+
+## Why Orbit is a separate process
+
+[Canario](https://rapha.land/canario/) at Rio commit
+[`3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario)
+is the strongest compact counterexample to the Orbit boundary. It combines a
+native SwiftUI/AppKit workspace with librio surfaces in one application. The
+frontend can pull materialized terminal state directly and ship spaces, splits,
+a command palette, CWD routing, a quick terminal, and on-demand previews without
+an independently versioned session protocol. That is an excellent shape when
+restarting shells and restoring workspace presentation meets the product
+contract.
+
+It does not meet Orbit's contract. At the inspected revision, librio owns each
+PTY inside the application process. Canario's persistence path starts fresh
+shells: SessionStore saves layout, CWD, title, and plain-text scrollback, and
+RioEngine injects that text into a new terminal display. Closing the application
+therefore ends the live processes; visual restoration is not detach and
+reattach.
+
+Orbit exists only to make that lifetime boundary real. Graduation must compare
+its extra process, repository, and protocol cost against Canario's simpler
+integrated shape. If native dogfood does not make process survival, independent
+failure, replaceable clients, and authoritative structured state materially
+valuable, the separate boundary has not earned its cost and the experiment
+should stop.
 
 ## How references are used
 

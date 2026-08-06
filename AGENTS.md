@@ -329,8 +329,8 @@ Astra is a separate greenfield Yazelix line. Yazelix Nova remains an
 independently valuable product on its current Mars and Zellij architecture
 while the experiment runs.
 
-`Logimux` is this repository's shorthand for Superlogical's currently unnamed
-terminal multiplexer. It is not an official Superlogical product name.
+Use `Superlogical terminal multiplexer` for Superlogical's published first
+product. Do not invent a shorter product name or research codename.
 
 ## Core rule
 
