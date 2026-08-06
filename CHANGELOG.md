@@ -51,6 +51,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   session instead of silently losing an authoritative reply. The accepted
   `fdd55e1e8bf6b932c2949ea3c897601ff63c0743` pressure proof hardens `ORB-C3`
   and `ORB-C4` while advancing the transport evidence for `ORB-C7`.
+- The accepted `9e9b136969dc583d365daa75402ec03c265080f1`
+  lifecycle proof hardens `ORB-C1` and `ORB-C3` and proves `ORB-C7` for the
+  local one-client boundary. Silent pre-attachment peers release the only slot
+  after a bounded deadline, simultaneous peers receive deterministic Busy,
+  reattachment receives the retained authoritative dimensions, and known-child
+  exit stops owned process groups before a fixed final PTY-read budget. A
+  continuously writing descendant cannot hold Orbit or its socket open.
 - Venus is the accepted first external ORBS v1 and ORBF v1 consumer. Its
   accepted relationship is recorded at
   `8149002c7275a00db1c08fded171e09f249dd977`, and it pins Orbit
