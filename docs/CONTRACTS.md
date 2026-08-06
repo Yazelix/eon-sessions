@@ -56,11 +56,14 @@ server-contract gap behind an adapter or second source of authority without an
 explicit user decision.
 
 ORBS v1, ORBF v1, and their canonical `orbit-protocol` package are accepted at
-`838b67652c4df1979e599b9c401ee664ffac66bd`. The activated private Venus
-repository must pin that exact Git revision and its consumed contract IDs before
-implementation. Later breaking changes require an explicit user decision and
-coordinated update order; a Venus adapter or second decoder does not substitute
-for updating the shared owner.
+`838b67652c4df1979e599b9c401ee664ffac66bd`. Venus consumes the package at
+`c905bf9610581747f1b07565814b501ca66cfaa6`; that revision is an ancestor of
+`838b67652c4df1979e599b9c401ee664ffac66bd`, and the protocol package, root
+manifest, and lockfile are byte-identical between them. The intervening Orbit
+changes are compatible runtime resource-lifetime hardening, so they require no
+Venus manifest migration. Later boundary changes require an explicit
+compatible-or-breaking classification and coordinated update order; a Venus
+adapter or second decoder does not substitute for updating the shared owner.
 
 `Complete` in `ORB-C4` means the entire ORBF v1 presentation payload for its
 revision. Version 1 carries the current visible presentation and its metadata;
@@ -70,12 +73,12 @@ contract change before it alters this boundary. The accepted shared codec
 preserves this wire contract and introduces no compatibility window or
 independent release surface.
 
-`838b67652c4df1979e599b9c401ee664ffac66bd` intentionally and atomically
-replaces Orbit's private, unaccepted line-oriented diagnostic syntax. No
+The ORBS v1 lineage intentionally and atomically replaced Orbit's private,
+unaccepted line-oriented diagnostic syntax before Venus implementation. No
 accepted external consumer used that syntax. Orbit's server, diagnostic client,
-output queue, and tests moved together; Venus follows by pinning this proof
-revision. The user selected no adapter, compatibility window, or support for the
-removed syntax.
+output queue, and tests moved together, and Venus pins the canonical package at
+`c905bf9610581747f1b07565814b501ca66cfaa6`. The user selected no adapter,
+compatibility window, or support for the removed syntax.
 
 ## Outside the initial index
 
