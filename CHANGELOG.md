@@ -44,6 +44,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   PTY closure, later semantic requests receive a terminal failure instead of a
   false acknowledgement, and already queued undeliverable bytes and their
   retained queue storage are released.
+- The authoritative owner loop yields after each productive PTY read and caps
+  the shared terminal-response and semantic-input backlog. A whole semantic
+  input that exceeds the remaining bound receives a terminal failure and closes
+  that client without partial admission; terminal-response overflow fails the
+  session instead of silently losing an authoritative reply. The accepted
+  `fdd55e1e8bf6b932c2949ea3c897601ff63c0743` pressure proof hardens `ORB-C3`
+  and `ORB-C4` while advancing the transport evidence for `ORB-C7`.
 - Venus is the accepted first external ORBS v1 and ORBF v1 consumer. Its
   accepted relationship is recorded at
   `8149002c7275a00db1c08fded171e09f249dd977`, and it pins Orbit
