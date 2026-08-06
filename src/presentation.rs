@@ -486,7 +486,7 @@ mod tests {
         let stop = directory.0.join("stop");
         let primary = "P".repeat(80);
         let script = format!(
-            "printf '{primary}'; : > '{ready}'; while [ ! -e '{enrich}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?1049h\\033[2J\\033[H'; printf '\\033]2;rich\\033\\\\\\033]7;file:///tmp/orbit\\033\\\\'; printf '\\033]8;;https://example.test\\033\\\\\\033[1;38;2;12;34;56mA\\033[0m\\033]8;;\\033\\\\'; printf 'e\\314\\201\\347\\225\\214'; printf '\\033[4;1H\\033[48;2;5;6;7m\\033[2K\\033[0m\\033[3;5H'; while [ ! -e '{release}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; running=yes; trap 'running=' INT; dd if=/dev/zero bs=65536 count=64 2>/dev/null; : > '{flooding}'; while [ -n \"$running\" ]; do printf '{primary}'; done; trap - INT; printf '\\033[?1049lX'; printf '\\033[3'; sleep 0.02; printf '2mS\\033[0m'; printf '\\303'; sleep 0.02; printf '\\251'; printf '\\033_Ga=q;'; sleep 0.02; printf '\\033\\\\'; printf '\\033]2;final\\033\\\\'; : > '{finished}'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
+            "printf '{primary}'; : > '{ready}'; while [ ! -e '{enrich}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?1049h\\033[2J\\033[H'; printf '\\033]2;rich\\033\\\\\\033]7;file:///tmp/orbit\\033\\\\'; printf '\\033]10;rgb:01/02/03\\033\\\\\\033]11;rgb:04/05/06\\033\\\\\\033]12;rgb:07/08/09\\033\\\\\\033]4;17;rgb:0a/0b/0c\\033\\\\'; printf '\\033]8;;https://example.test\\033\\\\\\033[1\"q\\033[1;2;3;4:3;5;7;8;9;53;38;2;12;34;56;48;5;17;58;2;7;8;9mA\\033[0m\\033[0\"q\\033]8;;\\033\\\\'; printf 'e\\314\\201\\347\\225\\214'; printf '\\033[4;1H\\033[48;2;5;6;7m\\033[2K\\033[0m\\033[3;5H\\033[?25l\\033[4 q'; while [ ! -e '{release}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; running=yes; trap 'running=' INT; dd if=/dev/zero bs=65536 count=64 2>/dev/null; : > '{flooding}'; while [ -n \"$running\" ]; do printf '{primary}'; done; trap - INT; printf '\\033[?1049lX'; printf '\\033[3'; sleep 0.02; printf '2mS\\033[0m'; printf '\\303'; sleep 0.02; printf '\\251'; printf '\\033_Ga=q;'; sleep 0.02; printf '\\033\\\\'; printf '\\033]2;final\\033\\\\'; : > '{finished}'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
             ready = ready.display(),
             enrich = enrich.display(),
             release = release.display(),
@@ -511,38 +511,101 @@ mod tests {
             assert!(next.revision > rich.revision);
             rich = next;
         }
+        first_reader
+            .get_mut()
+            .write_all(&encode_client_message(&ClientMessage::Resize(
+                session::SurfaceSize {
+                    rows: 30,
+                    screen_height: 480,
+                    ..crate::INITIAL_SIZE
+                },
+            ))?)?;
+        while (rich.dimensions.cols, rich.dimensions.rows) != (80, 30) {
+            let next =
+                read_frame(&mut first_reader)?.ok_or("client became busy after attachment")?;
+            assert!(next.revision > rich.revision);
+            rich = next;
+        }
         assert_eq!(
             (rich.dimensions.cols, rich.dimensions.rows, rich.screen),
-            (80, 24, ProtocolScreen::Alternate)
+            (80, 30, ProtocolScreen::Alternate)
         );
         assert_eq!(rich.title, "rich");
         assert_eq!(rich.working_directory, "file:///tmp/orbit");
-        assert!(rich.capabilities.hyperlinks);
-        assert!(!rich.capabilities.kitty_graphics);
         assert_eq!(
-            rich.cursor.viewport.map(|cursor| (cursor.x, cursor.y)),
-            Some((4, 2))
+            rich.capabilities,
+            Capabilities {
+                hyperlinks: true,
+                kitty_graphics: false,
+            }
         );
-        let linked = cells(&rich).find(|cell| cell.text == "A").unwrap();
+        assert_eq!(rich.colors.background, Rgb { r: 4, g: 5, b: 6 });
+        assert_eq!(rich.colors.foreground, Rgb { r: 1, g: 2, b: 3 });
+        assert_eq!(rich.colors.cursor, Some(Rgb { r: 7, g: 8, b: 9 }));
+        assert_eq!(
+            rich.colors.palette[17],
+            Rgb {
+                r: 10,
+                g: 11,
+                b: 12
+            }
+        );
+        assert_eq!(
+            rich.cursor,
+            Cursor {
+                visible: false,
+                blinking: false,
+                password_input: false,
+                shape: CursorShape::Underline,
+                viewport: Some(CursorViewport {
+                    x: 4,
+                    y: 2,
+                    at_wide_tail: false,
+                }),
+            }
+        );
+        let linked = cell(&rich, 0, 0);
+        assert_eq!(linked.text, "A");
         assert_eq!(linked.hyperlink, "https://example.test");
         assert_eq!(
-            linked.style.foreground,
-            StyleColor::Rgb(Rgb {
-                r: 12,
-                g: 34,
-                b: 56
-            })
+            linked.style,
+            CellStyle {
+                foreground: StyleColor::Rgb(Rgb {
+                    r: 12,
+                    g: 34,
+                    b: 56,
+                }),
+                background: StyleColor::Rgb(Rgb {
+                    r: 10,
+                    g: 11,
+                    b: 12,
+                }),
+                underline_color: StyleColor::Rgb(Rgb { r: 7, g: 8, b: 9 }),
+                bold: true,
+                italic: true,
+                faint: true,
+                blink: true,
+                inverse: true,
+                invisible: true,
+                strikethrough: true,
+                overline: true,
+                selected: false,
+                protected: true,
+                underline: Underline::Curly,
+            }
         );
-        assert!(linked.style.bold);
-        assert!(cells(&rich).any(|cell| cell.text == "e\u{301}"));
-        assert!(cells(&rich).any(|cell| cell.text == "界" && cell.width == CellWidth::Wide));
-        assert!(
-            cells(&rich)
-                .any(|cell| { cell.style.background == StyleColor::Rgb(Rgb { r: 5, g: 6, b: 7 }) })
+        assert_eq!(cell(&rich, 1, 0).text, "e\u{301}");
+        assert_eq!(cell(&rich, 2, 0).text, "界");
+        assert_eq!(cell(&rich, 2, 0).width, CellWidth::Wide);
+        assert_eq!(cell(&rich, 3, 0).width, CellWidth::SpacerTail);
+        assert_eq!(
+            cell(&rich, 0, 3).style.background,
+            StyleColor::Rgb(Rgb { r: 5, g: 6, b: 7 })
         );
         drop(first_reader);
 
-        let (mut slow_client, _) = attach(&socket)?;
+        let (mut slow_client, reattached_rich) = attach(&socket)?;
+        assert_eq!(reattached_rich, rich);
         fs::write(&release, b"go")?;
         wait_file(&flooding)?;
         slow_client
@@ -568,8 +631,15 @@ mod tests {
             assert!(next.revision > final_frame.revision);
             final_frame = next;
         }
-        assert!(initial_revision >= rich.revision);
-        assert_eq!(final_frame.screen, ProtocolScreen::Primary);
+        assert!(initial_revision > rich.revision);
+        assert_eq!(
+            (
+                final_frame.dimensions.cols,
+                final_frame.dimensions.rows,
+                final_frame.screen,
+            ),
+            (80, 30, ProtocolScreen::Primary)
+        );
         assert_eq!(final_frame.title, "final");
         assert_eq!(final_frame.working_directory, "file:///tmp/orbit");
         assert_eq!(cell(&final_frame, 0, 0).text, "P");
