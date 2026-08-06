@@ -8,21 +8,21 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 ## Protocol import record
 
 - Source: `https://github.com/luccahuguet/starcompass`
-- Source commit: `f41e799db9d78277f18409985287e96a6fc80f51`
+- Source commit: `95c29fa76a971726b65e1d1dc06c518d525c46a2`
 - Profiles: `greenfield`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
 
 | Protocol | Version | SHA-256 |
 | --- | ---: | --- |
 | `AP-SCOPE-001` | 1 | `b3f7e012df0708d4baf8957e3c315878a9eb8cd7fddf637dfde1506609d08444` |
-| `AP-CONTRACT-001` | 1 | `0aa692f4c52542111149b691b7d0c015a0c16523cd620a67b0cf335f3284da82` |
+| `AP-CONTRACT-001` | 2 | `f8a3b323f95816ee6d56d136c2ad19c691860155a4e58f57a62a4fb4dfc78cbb` |
 | `AP-REFERENCE-001` | 2 | `ecb28af3796a9964dd98c037463a33b7444d9c39a0365783fb0e9ae9fc007b9c` |
-| `AP-MINIMAL-001` | 1 | `256c158cc8b226e4baf96d5590531ea180edc9717338dac0fe51a34dd037791f` |
+| `AP-MINIMAL-001` | 2 | `3f4ebb1ab87f50ed5c9f041fb60d94cc7ded264ab04e56413fd1da343baa38f3` |
 | `AP-DEPENDENCY-001` | 1 | `a389ff9054708574c52ec5e5dd7fc3e2d13b125d2218c70062f50a86761981ca` |
 | `AP-OWNERSHIP-001` | 1 | `bdc09117f79b0d8dbe78e2dd8673a2463398aa31880fe27209fd6cc47f58bbf7` |
 | `AP-TEST-001` | 1 | `363da7c542521be22233a4cc3373c0d3c3c5a9a0cf37f633cd5029545f4a3bee` |
 | `AP-PROOF-001` | 1 | `1af235a56e9711d55362d869fa4057f1658d0aa7fe766030be0897ee5fd7c02b` |
-| `AP-PLAN-001` | 4 | `5bc0426788693717e8af011277d9358c65899e839d7c0c71299003ec0d8acc4b` |
+| `AP-PLAN-001` | 6 | `04b96c47978d49d2e6584f89626bca42b6cb39df537fa3e5abd6da0bdc2edfda` |
 | `AP-CI-001` | 1 | `78f1662259cd83f33d22ff4ddd0859ab0d4f704ba4f38756eef40a8b9b787bec` |
 | `AP-EXCEPTION-001` | 1 | `f66749229dbbc005e1c3103bfed86cf95169d7b32466c72fd8442e841cadb268` |
 | `AP-GIT-001` | 3 | `16d27b0df7ccc94880bb31020e822e32b37503f43c2cf7a69de333300cbfdacf` |
@@ -61,6 +61,10 @@ repositories need to cite them.
 
 Required practice:
 
+- Among contracts that fit the user request and available evidence, choose the one
+  with the fewest unsupported guarantees or restrictions. Leave reasonable
+  future behavior unspecified unless the request or evidence requires a
+  commitment.
 - Name the consumer, trigger, observable result, and important failure behavior.
 - Identify the current sources of truth and decide which one owner survives.
 - Choose the cheapest check that can falsify the contract.
@@ -102,23 +106,42 @@ Reference review is a decision gate, not a requirement to copy the reference.
 
 ### AP-MINIMAL-001 — Minimum sufficient implementation
 
-Understand the affected flow before choosing the smallest complete solution.
-Use the first option that fully satisfies the chosen contract:
+Use the accepted contract and source evidence to identify the correct owner,
+affected flow, and necessary boundaries before minimizing code. Then use the
+first option that fully satisfies those constraints:
 
 1. Make no change when the required behavior already exists.
-2. Reuse an existing owner, helper, or pattern in the repository.
+2. Reuse an existing correct owner, helper, or pattern in the repository.
 3. Use the standard library or a native platform capability.
 4. Use an already accepted dependency that owns the behavior.
 5. Implement the minimum local code that is correct and maintainable.
+
+Evaluate minimality across the accepted system and its lifecycle, not only the
+current patch. Lines, files, dependencies, and patch size are evidence, not
+objectives. Include duplicated truth, cross-owner coordination, coupling,
+migration and removal, portability, operations, and proof cost.
+
+A smaller patch is not minimal when it preserves a known misplaced or duplicate
+owner, patches a symptom below its shared cause, bypasses an accepted boundary,
+or increases downstream coordination. A necessary root-cause or ownership
+correction may be locally larger. Use patch size only as a tie-breaker among
+shapes that satisfy the same contract, ownership, lifecycle, and proof duties.
 
 Prefer deletion over addition, direct ownership over adapters, and fewer files
 over scaffolding. Minimalism must not remove required behavior, trust-boundary
 validation, data-loss protection, security, accessibility, or the cheapest
 runnable check for non-trivial logic.
 
-Ponytail is the adopted agent-side implementation of this discipline when the
-host supports it. Use the upstream project directly rather than copying its
-rules or adapters. The reviewed source is
+Ponytail is the adopted agent-side aid for this discipline when the host
+supports it; it is a fallible implementation bias, not an architectural
+authority. Apply its YAGNI, shortest-diff, standard-library, native, and
+one-line heuristics only after the constraints above. Repository contracts,
+ownership, evidence, dependency decisions, safety, accessibility, portability,
+proof obligations, and explicit user choices take precedence. Do not invoke
+Ponytail to avoid a necessary architectural or root-cause change.
+
+Use the upstream project directly rather than copying its rules or adapters.
+The reviewed source is
 [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail/tree/16f29800fd2681bdf24f3eb4ccffe38be3baec6b).
 If Ponytail is unavailable or disabled, the self-contained requirements above
 still apply. Its instruction hooks improve consistency; they do not prove
@@ -196,13 +219,34 @@ durable planning system or canonical documentation. An issue represents a
 chosen goal, decision, material defect, or schedulable follow-up. Review and
 implementation methods belong to that issue.
 
+An agent run is one uninterrupted execution ending when control returns to the
+user, including automatic continuations. A run may inspect any planning state
+read-only. A run that writes planning state or implementation may use one of two
+issue-work shapes:
+
+1. Own at most one issue. The run may create, claim, update, implement, or close
+   that issue.
+2. Use a bounded planning-only batch with explicit user authorization over a
+   named or accepted issue set. The run may create, update, or close only that
+   set; it may not claim an issue or make implementation edits.
+
+Do not combine these shapes in one run.
+
 Required practice:
 
-- After review, fresh-eyes, simplification, or verification, update the owning
-  issue's editable fields to describe the accepted state instead of pass
+- Bind an implementation run to its one owning issue before its first issue
+  write or implementation edit.
+- After the owning implementation issue is complete, blocked, or handed off,
+  stop and return control to the user. Do not begin another issue, including
+  work newly unblocked by the completion.
+- Leave unapproved follow-up findings as reported findings. A planning-only
+  batch may include only its named or accepted issue set.
+- After review, fresh-eyes, simplification, or verification of an owning issue,
+  update its editable fields to describe the accepted state instead of pass
   chronology.
-- Create a separate issue only for a material finding outside the owning scope
-  or one worth scheduling on its own. Name it after the outcome or finding.
+- Create a separate issue only for a material finding outside the prior owning
+  scope or one worth scheduling on its own. Outside an authorized planning-only
+  batch, defer creation to a later run. Name it after the outcome or finding.
 - Record the contract, decision boundary, dependencies, acceptance evidence,
   material negative results, and rejected alternatives that constrain later
   work.

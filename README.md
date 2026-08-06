@@ -230,7 +230,7 @@ cargo test --locked --workspace
 cargo run --locked --quiet -p orbit-governance -- .
 cargo install --locked \
   --git https://github.com/luccahuguet/starcompass.git \
-  --rev 9d119c235cd3d9f5a2b996e54f37a96a9640f679 \
+  --rev 95c29fa76a971726b65e1d1dc06c518d525c46a2 \
   --root target/starcompass
 target/starcompass/bin/starcompass check-consumer \
   --overlay .agent-protocols.local.md \
@@ -280,7 +280,7 @@ evidence comment is truthful, that a crate gate was required, or that a runtime
 contract actually passes. It deliberately does not parse `.agent-protocols.*`
 or generated `AGENTS.md`: Starcompass owns that interpretation. CI installs
 Starcompass from exact public Git revision
-`9d119c235cd3d9f5a2b996e54f37a96a9640f679` and runs its source-independent
+`95c29fa76a971726b65e1d1dc06c518d525c46a2` and runs its source-independent
 `check-consumer` command against the four local import files. That proves their
 structure, hashes, framing, and local suffix agree; it treats the canonical
 protocol section as opaque. Complete canonical-protocol authentication still

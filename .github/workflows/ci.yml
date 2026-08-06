@@ -63,7 +63,7 @@ jobs:
         run: |
           cargo install --locked \
             --git https://github.com/luccahuguet/starcompass.git \
-            --rev 9d119c235cd3d9f5a2b996e54f37a96a9640f679 \
+            --rev 95c29fa76a971726b65e1d1dc06c518d525c46a2 \
             --root "$RUNNER_TEMP/starcompass"
 
       - name: Verify
