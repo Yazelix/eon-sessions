@@ -135,16 +135,20 @@ impl Client {
         self.request(&ClientMessage::Paste(bytes.into()))
     }
 
-    fn enter(&mut self) -> TestResult {
+    fn key(&mut self, action: KeyAction, key: PhysicalKey) -> TestResult {
         self.request(&ClientMessage::Key(KeyEvent {
-            action: KeyAction::Press,
-            key: PhysicalKey::ENTER,
+            action,
+            key,
             modifiers: Modifiers::empty(),
             consumed_modifiers: Modifiers::empty(),
             composing: false,
             text: None,
             unshifted_codepoint: None,
         }))
+    }
+
+    fn enter(&mut self) -> TestResult {
+        self.key(KeyAction::Press, PhysicalKey::ENTER)
     }
 
     fn text(&mut self, text: impl Into<String>) -> TestResult {
@@ -515,6 +519,115 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     assert!(wait_bounded(&mut server)?.success());
     assert!(!socket.exists());
     wait_process_gone(shell_pid)?;
+    Ok(())
+}
+
+#[test]
+fn authoritative_input_modes_and_resize_survive_detach() -> TestResult {
+    let dir = TestDir::new("input-modes")?;
+    let socket = dir.0.join("orbit.sock");
+    let first_done = dir.0.join("first-done");
+    let kitty_done = dir.0.join("kitty-done");
+    let release = dir.0.join("release");
+    let modes_off = dir.0.join("modes-off");
+    let size = dir.0.join("size");
+    let result = dir.0.join("result");
+    let mut server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(
+                "stty -echo -icanon -icrnl min 1 time 0; \
+                 printf '\\033[?1h\\033[?1000h\\033[?1006h\\033[?1004h\\033[?2004h\\033]2;input-modes-on\\033\\\\'; \
+                 dd bs=1 count=31 of=\"$ORBIT_DIR/first\" 2>/dev/null; \
+                 stty size > \"$ORBIT_SIZE\"; printf done > \"$ORBIT_FIRST_DONE\"; \
+                 printf '\\033[>11u\\033]2;kitty-on\\033\\\\'; \
+                 dd bs=1 count=9 of=\"$ORBIT_DIR/kitty\" 2>/dev/null; \
+                 printf done > \"$ORBIT_KITTY_DONE\"; \
+                 while [ ! -e \"$ORBIT_RELEASE\" ]; do sleep 0.01; done; \
+                 printf '\\033[<u\\033[?1l\\033[?1000l\\033[?1006l\\033[?1004l\\033[?2004l\\033]2;input-modes-off\\033\\\\'; \
+                 printf done > \"$ORBIT_MODES_OFF\"; \
+                 dd bs=1 count=7 of=\"$ORBIT_DIR/second\" 2>/dev/null; \
+                 stty min 0 time 1; dd bs=1 count=1 of=\"$ORBIT_DIR/extra\" 2>/dev/null; \
+                 if [ -s \"$ORBIT_DIR/extra\" ]; then printf duplicate > \"$ORBIT_RESULT\"; exit 1; fi; \
+                 printf ok > \"$ORBIT_RESULT\"",
+            )
+            .env("ORBIT_DIR", &dir.0)
+            .env("ORBIT_FIRST_DONE", &first_done)
+            .env("ORBIT_KITTY_DONE", &kitty_done)
+            .env("ORBIT_RELEASE", &release)
+            .env("ORBIT_MODES_OFF", &modes_off)
+            .env("ORBIT_SIZE", &size)
+            .env("ORBIT_RESULT", &result)
+            .spawn()?,
+    );
+
+    let mut first = Client::attach(&socket)?;
+    first.wait_title("input-modes-on")?;
+    first.request(&ClientMessage::Resize(SurfaceSize {
+        cols: 100,
+        rows: 40,
+        screen_width: 920,
+        screen_height: 740,
+        cell_width: 9,
+        cell_height: 18,
+        padding_top: 10,
+        padding_bottom: 10,
+        padding_left: 10,
+        padding_right: 10,
+    }))?;
+    first.text("q")?;
+    first.key(KeyAction::Press, PhysicalKey::ARROW_UP)?;
+    first.request(&ClientMessage::Mouse(session::MouseEvent {
+        action: session::MouseAction::Press,
+        button: Some(session::MouseButton::Left),
+        modifiers: Modifiers::empty(),
+        x: 1.0,
+        y: 1.0,
+    }))?;
+    first.request(&ClientMessage::Focus(FocusEvent::Gained))?;
+    first.paste(b"a\nb".to_vec())?;
+    assert_eq!(wait_file_text(&first_done)?, "done");
+    assert_eq!(
+        fs::read(dir.0.join("first"))?,
+        b"q\x1bOA\x1b[<0;1;1M\x1b[I\x1b[200~a\nb\x1b[201~"
+    );
+    assert_eq!(wait_file_text(&size)?.trim(), "40 100");
+
+    first.wait_title("kitty-on")?;
+    first.key(KeyAction::Release, PhysicalKey::ENTER)?;
+    assert_eq!(wait_file_text(&kitty_done)?, "done");
+    assert_eq!(fs::read(dir.0.join("kitty"))?, b"\x1b[13;1:3u");
+    drop(first);
+
+    fs::write(&release, b"release")?;
+    assert_eq!(wait_file_text(&modes_off)?, "done");
+    let mut second = Client::attach(&socket)?;
+    second.wait_title("input-modes-off")?;
+    assert_eq!(
+        (second.frame.dimensions.cols, second.frame.dimensions.rows),
+        (100, 40)
+    );
+    second.text("z")?;
+    second.key(KeyAction::Press, PhysicalKey::ARROW_UP)?;
+    second.request(&ClientMessage::Mouse(session::MouseEvent {
+        action: session::MouseAction::Press,
+        button: Some(session::MouseButton::Left),
+        modifiers: Modifiers::empty(),
+        x: 1.0,
+        y: 1.0,
+    }))?;
+    second.request(&ClientMessage::Focus(FocusEvent::Gained))?;
+    second.key(KeyAction::Release, PhysicalKey::ENTER)?;
+    second.paste(b"c\nd".to_vec())?;
+
+    assert_eq!(wait_file_text(&result)?, "ok");
+    assert_eq!(fs::read(dir.0.join("second"))?, b"z\x1b[Ac\rd");
+    drop(second);
+    assert!(wait_bounded(&mut server)?.success());
+    assert!(!socket.exists());
     Ok(())
 }
 
