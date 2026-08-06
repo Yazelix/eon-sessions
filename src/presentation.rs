@@ -481,14 +481,16 @@ mod tests {
         let ready = directory.0.join("ready");
         let enrich = directory.0.join("enrich");
         let release = directory.0.join("release");
+        let flooding = directory.0.join("flooding");
         let finished = directory.0.join("finished");
         let stop = directory.0.join("stop");
         let primary = "P".repeat(80);
         let script = format!(
-            "printf '{primary}'; : > '{ready}'; while [ ! -e '{enrich}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?1049h\\033[2J\\033[H'; printf '\\033]2;rich\\033\\\\\\033]7;file:///tmp/orbit\\033\\\\'; printf '\\033]8;;https://example.test\\033\\\\\\033[1;38;2;12;34;56mA\\033[0m\\033]8;;\\033\\\\'; printf 'e\\314\\201\\347\\225\\214'; printf '\\033[4;1H\\033[48;2;5;6;7m\\033[2K\\033[0m\\033[3;5H'; while [ ! -e '{release}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; i=0; while [ $i -lt 200 ]; do dd if=/dev/zero bs=8192 count=1 2>/dev/null; sleep 0.005; i=$((i + 1)); done; printf '\\033[?1049lX'; printf '\\033[3'; sleep 0.02; printf '2mS\\033[0m'; printf '\\303'; sleep 0.02; printf '\\251'; printf '\\033_Ga=q;'; sleep 0.02; printf '\\033\\\\'; printf '\\033]2;final\\033\\\\'; : > '{finished}'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
+            "printf '{primary}'; : > '{ready}'; while [ ! -e '{enrich}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?1049h\\033[2J\\033[H'; printf '\\033]2;rich\\033\\\\\\033]7;file:///tmp/orbit\\033\\\\'; printf '\\033]8;;https://example.test\\033\\\\\\033[1;38;2;12;34;56mA\\033[0m\\033]8;;\\033\\\\'; printf 'e\\314\\201\\347\\225\\214'; printf '\\033[4;1H\\033[48;2;5;6;7m\\033[2K\\033[0m\\033[3;5H'; while [ ! -e '{release}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; running=yes; trap 'running=' INT; dd if=/dev/zero bs=65536 count=64 2>/dev/null; : > '{flooding}'; while [ -n \"$running\" ]; do printf '{primary}'; done; trap - INT; printf '\\033[?1049lX'; printf '\\033[3'; sleep 0.02; printf '2mS\\033[0m'; printf '\\303'; sleep 0.02; printf '\\251'; printf '\\033_Ga=q;'; sleep 0.02; printf '\\033\\\\'; printf '\\033]2;final\\033\\\\'; : > '{finished}'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
             ready = ready.display(),
             enrich = enrich.display(),
             release = release.display(),
+            flooding = flooding.display(),
             finished = finished.display(),
             stop = stop.display(),
         );
@@ -501,7 +503,9 @@ mod tests {
         wait_file(&ready)?;
         let (mut first_reader, mut rich) = attach(&socket)?;
         fs::write(&enrich, b"enrich")?;
-        while rich.title != "rich" {
+        while rich.title != "rich"
+            || rich.cursor.viewport.map(|cursor| (cursor.x, cursor.y)) != Some((4, 2))
+        {
             let next =
                 read_frame(&mut first_reader)?.ok_or("client became busy after attachment")?;
             assert!(next.revision > rich.revision);
@@ -538,8 +542,22 @@ mod tests {
         );
         drop(first_reader);
 
-        let (slow_client, _) = attach(&socket)?;
+        let (mut slow_client, _) = attach(&socket)?;
         fs::write(&release, b"go")?;
+        wait_file(&flooding)?;
+        slow_client
+            .get_mut()
+            .write_all(&encode_client_message(&ClientMessage::Key(
+                session::KeyEvent {
+                    action: session::KeyAction::Press,
+                    key: session::PhysicalKey::C,
+                    modifiers: session::Modifiers::CTRL,
+                    consumed_modifiers: session::Modifiers::empty(),
+                    composing: false,
+                    text: None,
+                    unshifted_codepoint: Some('c'),
+                },
+            ))?)?;
         wait_file(&finished)?;
         drop(slow_client);
         let (mut second_reader, mut final_frame) = attach(&socket)?;

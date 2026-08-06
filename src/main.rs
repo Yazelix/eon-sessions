@@ -21,7 +21,7 @@ use orbit_protocol::session::{
     MouseAction, MouseButton, PhysicalKey, ServerMessage, SurfaceSize,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     env,
     error::Error,
@@ -35,6 +35,8 @@ use platform::{Pty, PtyIo};
 use presentation::{Extractor, OutputQueue, is_disconnect};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
+
+const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 
 const INITIAL_SIZE: SurfaceSize = SurfaceSize {
     cols: 80,
@@ -122,6 +124,8 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
 
     let writes = Rc::new(RefCell::new(VecDeque::<u8>::new()));
     let response_sink = Rc::clone(&writes);
+    let response_overflow = Rc::new(Cell::new(false));
+    let overflow_sink = Rc::clone(&response_overflow);
     let mut terminal = Terminal::new(TerminalOptions {
         cols: size.cols,
         rows: size.rows,
@@ -129,7 +133,9 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
     })?;
     terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
     terminal.on_pty_write(move |_, bytes| {
-        response_sink.borrow_mut().extend(bytes);
+        if !queue_pty_write(&mut response_sink.borrow_mut(), bytes) {
+            overflow_sink.set(true);
+        }
     })?;
 
     let mut extractor = Extractor::new()?;
@@ -142,6 +148,7 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
         }
         if let Some(status) = pty.try_wait()? {
             let (_, changed) = read_pty(&mut pty, &mut terminal)?;
+            fail_on_pty_write_overflow(&response_overflow)?;
             if changed {
                 revision = next_revision(revision)?;
                 publish_frame(&mut client, &mut extractor, revision, &terminal)?;
@@ -167,7 +174,8 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             accept_clients(&listener, &mut client)?;
         }
         if readiness.pty_read {
-            let (open, changed) = read_pty(&mut pty, &mut terminal)?;
+            let (open, changed) = read_pty_turn(&mut pty, &mut terminal)?;
+            fail_on_pty_write_overflow(&response_overflow)?;
             pty_open = open;
             if changed {
                 revision = next_revision(revision)?;
@@ -206,6 +214,21 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
 
 fn discard_pty_writes(writes: &RefCell<VecDeque<u8>>) {
     drop(writes.take());
+}
+
+fn queue_pty_write(writes: &mut VecDeque<u8>, bytes: &[u8]) -> bool {
+    if writes.len().saturating_add(bytes.len()) > MAX_PTY_WRITE_BYTES {
+        return false;
+    }
+    writes.extend(bytes);
+    true
+}
+
+fn fail_on_pty_write_overflow(overflow: &Cell<bool>) -> Result {
+    if overflow.get() {
+        return Err("PTY response exceeded the bounded write queue".into());
+    }
+    Ok(())
 }
 
 fn run_client(socket: &Path) -> Result<i32> {
@@ -423,8 +446,17 @@ fn handle_client_message(
         }
         message => match encode_input(terminal, *size, message) {
             Ok(encoded) => {
-                writes.borrow_mut().extend(encoded);
-                client.output.push_message(&ServerMessage::Accepted)
+                if queue_pty_write(&mut writes.borrow_mut(), &encoded) {
+                    client.output.push_message(&ServerMessage::Accepted)
+                } else {
+                    let queued = queue_failure(
+                        client,
+                        FailureCode::Terminal,
+                        "PTY input queue is full".into(),
+                    )?;
+                    client.close_when_flushed();
+                    Ok(queued)
+                }
             }
             Err(error) => queue_failure(client, FailureCode::Terminal, error.to_string()),
         },
@@ -560,17 +592,25 @@ fn ghostty_mouse_button(button: MouseButton) -> GhosttyMouseButton {
 }
 
 fn read_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<(bool, bool)> {
-    let mut bytes = [0; 8192];
     let mut changed = false;
     loop {
-        match pty.read(&mut bytes)? {
-            PtyIo::Ready(0) | PtyIo::Closed => return Ok((false, changed)),
-            PtyIo::Ready(read) => {
-                terminal.vt_write(&bytes[..read]);
-                changed = true;
-            }
-            PtyIo::Blocked => return Ok((true, changed)),
+        let (open, read) = read_pty_turn(pty, terminal)?;
+        changed |= read;
+        if !open || !read {
+            return Ok((open, changed));
         }
+    }
+}
+
+fn read_pty_turn(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<(bool, bool)> {
+    let mut bytes = [0; 8192];
+    match pty.read(&mut bytes)? {
+        PtyIo::Ready(0) | PtyIo::Closed => Ok((false, false)),
+        PtyIo::Ready(read) => {
+            terminal.vt_write(&bytes[..read]);
+            Ok((true, true))
+        }
+        PtyIo::Blocked => Ok((true, false)),
     }
 }
 
@@ -852,6 +892,49 @@ mod tests {
                 detail: "invalid mouse coordinates".into(),
             }))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn pty_write_pressure_rejects_whole_input_and_closes_client() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let mut terminal = terminal()?;
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        assert!(queue_pty_write(
+            &mut writes.borrow_mut(),
+            &vec![b'x'; MAX_PTY_WRITE_BYTES],
+        ));
+        let mut extractor = Extractor::new()?;
+        let mut revision = 0;
+
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Paste(b"rejected".to_vec()),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+        )?);
+        assert_eq!(writes.borrow().len(), MAX_PTY_WRITE_BYTES);
+        assert!(client.close_after_flush);
+        assert!(client.input.is_empty());
+        assert_eq!(client.input.capacity(), 0);
+        assert!(client.output.flush(&mut client.stream)?);
+        assert_eq!(
+            read_server_message(&mut peer)?,
+            Some(ServerMessage::Failure(Failure {
+                code: FailureCode::Terminal,
+                detail: "PTY input queue is full".into(),
+            }))
+        );
+
+        discard_pty_writes(&writes);
+        assert!(writes.borrow().is_empty());
+        assert_eq!(writes.borrow().capacity(), 0);
         Ok(())
     }
 
