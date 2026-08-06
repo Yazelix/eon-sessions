@@ -158,9 +158,12 @@ Orbit's current one-session proof uses an owned synchronous poll/event loop.
 Do not replace or generalize it without a measured contract pressure and a
 crate gate that compares all four credible shapes:
 
-- [Asupersync](https://github.com/Dicklesworthstone/asupersync) for
-  region-owned tasks, explicit cancellation and quiescence, bounded cleanup,
-  and deterministic schedule or replay tests.
+- [Asupersync 0.3.10 at `876110528f81`](https://github.com/Dicklesworthstone/asupersync/tree/876110528f810c3334a99450a521daa27995a3ec)
+  for region-owned tasks, explicit cancellation and quiescence, bounded
+  cleanup, and deterministic schedule or replay tests. Its unstable 0.x API,
+  pinned-nightly default, broad runtime surface, and nonstandard MIT rider are
+  crate-gate costs; its distributed RaptorQ snapshot machinery does not fit
+  Orbit's reliable local stream.
 - [Tokio](https://tokio.rs/) for ecosystem maturity, I/O coverage, diagnostics,
   and operational familiarity.
 - [smol](https://github.com/smol-rs/smol) for a smaller composable async stack.
@@ -219,7 +222,7 @@ prerequisite for the current single-session architecture.
 - The WebAssembly Component Model's
   [WIT](https://component-model.bytecodealliance.org/design/wit.html) and
   [composition model](https://component-model.bytecodealliance.org/composing-and-distributing/composing.html)
-  are the primary references if repeated Astra or Venus extension cases justify
+  are the primary references if repeated Eon or Venus extension cases justify
   a language-neutral capability contract. Study interface, resource, lifecycle,
   composition, and versioning behavior before selecting a runtime. They do not
   authorize plugins in the initial experiment or inside Orbit's owner loop.
@@ -230,7 +233,7 @@ prerequisite for the current single-session architecture.
   interface or equivalent capability boundary has been justified.
 - [wasm-bindgen](https://github.com/rustwasm/wasm-bindgen) and the browser
   [WebAssembly JavaScript API](https://developer.mozilla.org/en-US/docs/WebAssembly/Guides/Using_the_JavaScript_API)
-  are required references only for an authorized web Venus slice. The preferred
+  are required references only for an authorized Eon Web slice. The preferred
   first comparison compiles Orbit's canonical Rust frame decoder to WebAssembly
   while TypeScript owns browser APIs; it does not assume the whole renderer is
   shared or authorize remote transport.
@@ -240,7 +243,7 @@ prerequisite for the current single-session architecture.
   requirements within the accepted cost. It is not part of the Linux-first
   proof.
 - [Yazi's Lua plugin system](https://yazi-rs.github.io/docs/plugins/overview/)
-  remains owned by Yazi. Astra may consume and pin that supported ecosystem;
+  remains owned by Yazi. Eon may consume and pin that supported ecosystem;
   the reference does not justify embedding Lua or adopting it as a cross-stack
   plugin language.
 
@@ -287,7 +290,7 @@ prerequisite for the current single-session architecture.
   snapshots and ordered actions. [Zed Remote
   Development](https://zed.dev/docs/remote-development) keeps local UI apart
   from workspace processes beside the project. These projects corroborate the
-  Astra, Venus, and Orbit ownership split. They do not define Orbit's terminal
+  Eon, Venus, and Orbit ownership split. They do not define Orbit's terminal
   protocol or authorize remote workspaces.
 - [TUIOS](https://tuios.gaurav.zip/) is a warning and inspiration for
   terminal-as-workspace scope. Orbit takes no tiling, workspace, theme, or
@@ -307,7 +310,7 @@ prerequisite for the current single-session architecture.
   [RioEngine](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario/Sources/RioEngine.swift)
   starts a fresh shell and replays that text into a new display rather than
   preserving the process.
-  Astra may study the workspace interaction, especially command-driven
+  Eon may study the workspace interaction, especially command-driven
   navigation and on-demand previews. Orbit rejects same-process UI/PTY lifetime
   and textual restoration as substitutes for `ORB-C1` detach survival.
 - The [Superlogical terminal multiplexer](https://www.superlogical.com/) is the
@@ -331,5 +334,5 @@ prerequisite for the current single-session architecture.
   scope. Orbit relies only on published behavior and independently verified
   APIs.
 - Zellij, Mars, and Mars Next remain comparison and behavioral references for
-  Astra dogfood and graduation. Their existing ownership or compatibility
-  surfaces do not define Astra, Venus, or Orbit.
+  Eon dogfood and graduation. Their existing ownership or compatibility
+  surfaces do not define Eon, Venus, or Orbit.

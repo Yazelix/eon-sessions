@@ -1,10 +1,9 @@
-# Orbit
+# Eon Sessions
 
-Orbit is a clean-room Rust experiment for durable local terminal sessions in
-Yazelix Astra, a greenfield Yazelix line separate from Yazelix Nova. The
-experiment tests Orbit as the session runtime beneath Venus, Astra's
-greenfield graphical client. Nova remains an independently valuable product on
-its current Mars and Zellij architecture during the experiment.
+Eon Sessions is the repository for Eon's durable terminal sessions. Its Orbit
+subsystem is a clean-room Rust experiment that owns session lifetime and
+terminal state beneath the Venus subsystem in Eon Desktop. Yazelix Nova remains
+an independent product on its current Mars and Zellij architecture.
 
 ## Status
 
@@ -216,11 +215,14 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   repository-governance tool; only the binary owns terminal and PTY authority
 - the `orb-bi4.3` gate passed at
   `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
-  [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
-  graphical implementation, the canonical codec boundary is proved at
-  `838b67652c4df1979e599b9c401ee664ffac66bd`, and Orbit accepts the minimum
-  Venus consumer relationship recorded at
-  `8149002c7275a00db1c08fded171e09f249dd977`
+  [`Yazelix/eon-desktop`](https://github.com/Yazelix/eon-desktop) repository
+  owns graphical implementation through Venus, the canonical codec boundary is
+  proved at
+  `838b67652c4df1979e599b9c401ee664ffac66bd`, Orbit accepts the minimum Venus
+  consumer relationship recorded at
+  `8149002c7275a00db1c08fded171e09f249dd977`, and current Venus proof
+  `8929c9f9d151641a343813ddeb6005cb9c771286` preserves that boundary while
+  passing the pre-graduation workload envelope
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
 - Mars and Mars Next may inform behavior, but their code and architecture are
@@ -298,7 +300,7 @@ graduation and stop criteria. The [reference map](docs/REFERENCES.md) connects
 existing projects and crates to the implementation slice where their evidence
 is useful. The [crate decision index](docs/CRATES.md) records which direct or
 architecture-shaping dependencies are selected, rejected, or still pending.
-The [Astra technology boundaries](docs/STACK.md) record the cross-stack
+The [Eon technology boundaries](docs/STACK.md) record the cross-stack
 language, WebAssembly, extension, and client-framework posture without
 authorizing those deferred features. The [changelog](CHANGELOG.md) records
 accepted user- and consumer-visible changes without duplicating candidate

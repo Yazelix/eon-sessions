@@ -365,13 +365,12 @@ Required practice:
 
 ## Repository-local rules
 
-### Orbit repository rules
+### Eon Sessions repository rules
 
-Orbit is a clean-room Rust experiment for the durable local terminal-session
-runtime beneath Venus, the greenfield graphical client for Yazelix Astra.
-Astra is a separate greenfield Yazelix line. Yazelix Nova remains an
-independently valuable product on its current Mars and Zellij architecture
-while the experiment runs.
+Eon Sessions is the repository for Eon's durable terminal sessions. Its Orbit
+subsystem is a clean-room Rust experiment beneath the Venus subsystem in Eon
+Desktop. Yazelix Nova remains an independently valuable product on its current
+Mars and Zellij architecture while the experiment runs.
 
 Use `Superlogical terminal multiplexer` for Superlogical's published first
 product. Do not invent a shorter product name or research codename.
@@ -473,10 +472,10 @@ contract ID only after the user authorizes that product scope.
 and before `orb-bi4.3` begins the structured-presentation implementation.
 
 `orb-bi4.3` was the repository boundary gate and passed. The private
-`luccahuguet/venus` repository owns graphical implementation; `orb-bi4.4` is
-the Orbit-side cross-repository acceptance gate. Keep graphical Venus code out
-of Orbit. The proven structured presentation contract is the cross-repository
-boundary.
+`Yazelix/eon-desktop` repository owns graphical implementation through Venus;
+`orb-bi4.4` is the Orbit-side cross-repository acceptance gate. Keep graphical
+Venus code out of Orbit. The proven structured presentation contract is the
+cross-repository boundary.
 
 ## Clean-room rule
 
@@ -601,7 +600,7 @@ compensating and creating a second owner.
 A diagnostic client, recorded-frame corpus, replay source, renderer experiment,
 or fake child process proves only the boundary it actually exercises. It does
 not become an alternate product backend or an independent owner of Orbit,
-Venus, or Astra behavior.
+Venus, or Eon behavior.
 
 Protocol-faithful validation pins the exact Orbit proof commit and contract IDs
 and consumes the canonical wire representation. Do not maintain a second
@@ -612,8 +611,8 @@ choice before adding it.
 
 Mark lossy projections explicitly. A terminal or text projection may prove
 attachment, ordering, reconnect, resize, semantic input, and failure behavior,
-but it cannot prove `ORB-C6` rich-presentation fidelity. Likewise, an Astra
-process or package probe may prove Astra-owned launch and orchestration policy,
+but it cannot prove `ORB-C6` rich-presentation fidelity. Likewise, an Eon
+process or package probe may prove Eon-owned launch and orchestration policy,
 but not Orbit runtime or Venus rendering behavior.
 
 ## Protocol exceptions

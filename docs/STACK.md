@@ -1,10 +1,11 @@
-# Astra technology boundaries
+# Eon stack technology boundaries
 
-This document records the current cross-stack technology posture for Yazelix
-Astra, Orbit, and Venus. It guides later decision beads; it does not authorize
-a feature, dependency, repository, plugin system, web client, mobile client, or
-Apple client. The initial Orbit experiment retains the narrower boundaries in
-`AGENTS.md` and `docs/CONTRACTS.md`.
+This document records the current cross-stack technology posture for Eon, Eon
+Sessions, and Eon Desktop. Orbit and Venus remain the underlying session and
+client subsystems. This document guides later decision beads; it does not
+authorize a feature, dependency, repository, plugin system, web client, mobile
+client, or Apple client. The initial Orbit experiment retains the narrower
+boundaries in `AGENTS.md` and `docs/CONTRACTS.md`.
 
 ## Default ownership
 
@@ -13,15 +14,15 @@ where they have a concrete native advantage.
 
 | Surface | Default owner | Boundary |
 | --- | --- | --- |
-| Orbit runtime and terminal authority | Rust | No second application language or in-process plugin runtime |
+| Eon Sessions / Orbit runtime and terminal authority | Rust | No second application language or in-process plugin runtime |
 | Canonical Orbit protocol codec | Rust | May compile to WebAssembly for a browser consumer |
-| Venus shared state and native client | Rust | Renderer dependencies require the Venus crate gate |
-| Venus GPU shaders | WGSL when required | Shader code only, not application policy |
-| Astra composition and packaging | Nix | Reuse child-repository outputs instead of local wrappers |
-| Astra executable logic | Rust when Nix alone is insufficient | Add only for deterministic behavior that earns a typed, checked owner |
-| Future Venus web shell | TypeScript | Browser lifecycle, transport, DOM, accessibility, and PWA integration |
-| Future Apple-native Venus shell | Swift and SwiftUI only if justified | Apple lifecycle, input, menus, and accessibility around a narrow Rust boundary |
-| Yazi extensions | Lua, owned by Yazi | Astra may pin or package them without making Lua an Astra-wide API |
+| Eon Desktop / Venus shared state and native client | Rust | Renderer dependencies require the Venus crate gate |
+| Eon Desktop / Venus GPU shaders | WGSL when required | Shader code only, not application policy |
+| Eon composition and packaging | Nix | Reuse child-repository outputs instead of local wrappers |
+| Eon executable logic | Rust when Nix alone is insufficient | Add only for deterministic behavior that earns a typed, checked owner |
+| Future Eon Web shell | TypeScript | Browser lifecycle, transport, DOM, accessibility, and PWA integration |
+| Future Apple-native Eon Desktop shell | Swift and SwiftUI only if justified | Apple lifecycle, input, menus, and accessibility around a narrow Rust boundary |
+| Yazi extensions | Lua, owned by Yazi | Eon may pin or package them without making Lua an Eon-wide API |
 | Future cross-language extensions | WebAssembly Components described by WIT | Only after concrete extension cases establish a stable capability contract |
 
 Upstream implementation languages stay encapsulated. In particular,
@@ -29,18 +30,19 @@ libghostty's use of Zig does not make Zig a directly owned Orbit language.
 
 ## Runtime ownership
 
-Astra owns product composition: manifests, policy, component selection,
+Eon owns product composition: manifests, policy, component selection,
 launching, updates, distribution, and the mapping among repositories, agents,
-services, and terminal sessions. Orbit owns generic terminal-session lifetime,
-PTYs, authoritative libghostty state, bounded terminal history, and the
-versioned client protocol. Venus owns native rendering, input collection, and
-ephemeral view state over Orbit-authored presentation.
+services, and terminal sessions. Eon Sessions contains Orbit, which owns
+generic terminal-session lifetime, PTYs, authoritative libghostty state,
+bounded terminal history, and the versioned client protocol. Eon Desktop
+contains Venus, which owns native rendering, input collection, and ephemeral
+view state over Orbit-authored presentation.
 
 Raw PTY bytes and terminal-generated replies stay inside Orbit. Venus
 materializes ORBF v1 complete frames and does not run a terminal parser. A later
-user-approved patch protocol would update the same presentation state. Astra
+user-approved patch protocol would update the same presentation state. Eon
 does not interpret terminal presentation. Future multiple-session work must
-keep generic Orbit session identity separate from Astra's product workspace
+keep generic Orbit session identity separate from Eon's product workspace
 policy.
 
 Orbit owns the wire schema and its state-transition rules. The accepted
@@ -54,8 +56,9 @@ of mirroring the schema.
 
 ### Browser code sharing
 
-A future web Venus may compile the canonical Rust frame decoder and client-state
-transitions to WebAssembly. TypeScript should own browser APIs and transport.
+A future Eon Web client may compile the canonical Rust frame decoder and
+client-state transitions to WebAssembly. TypeScript should own browser APIs and
+transport.
 The first decision should share protocol interpretation, not assume that the
 entire native renderer must also run through WebAssembly.
 
@@ -64,7 +67,7 @@ expand the Orbit contract, or authorize remote attachment.
 
 ### Sandboxed extensions
 
-If Astra or Venus later needs a language-neutral plugin boundary, define the
+If Eon or Venus later needs a language-neutral plugin boundary, define the
 accepted host capabilities in WIT and evaluate WebAssembly Components. Select a
 host such as direct Wasmtime or a higher-level framework such as Extism only
 after the interface exists and through the owning repository's crate gate.
@@ -92,7 +95,7 @@ Native Rust dynamic libraries are not the default extension shape because they
 lack a stable Rust ABI and weaken portability and isolation. Embedded Lua,
 Python, Rhai, Starlark, JavaScript, or another scripting runtime requires a new
 decision; an existing child product's plugin language does not establish an
-Astra-wide precedent. MCP may expose Astra actions to agents or tools later,
+Eon-wide precedent. MCP may expose Eon actions to agents or tools later,
 but it is not the product UI or runtime plugin ABI.
 
 ## Extension placement
@@ -100,17 +103,17 @@ but it is not the product UI or runtime plugin ABI.
 - Orbit remains the smallest authoritative PTY and terminal-state owner. It
   does not host arbitrary plugins in its owner loop. A future read-only observer
   or exporter would require a separate contract and failure-isolation decision.
-- Astra may expose orchestration, workspace metadata, launch-policy, or action
+- Eon may expose orchestration, workspace metadata, launch-policy, or action
   capabilities. It must not absorb behavior already owned by a child repository.
 - Venus may expose commands, status items, sidebars, inspectors, or panels. UI
   contributions should use host-rendered declarative data and events rather
   than raw GPU, window, or terminal authority.
-- Yazi Lua plugins remain Yazi plugins. Astra may select, pin, and configure
+- Yazi Lua plugins remain Yazi plugins. Eon may select, pin, and configure
   them through Yazi's supported surface.
 
 Every accepted extension contract names one owner, its capabilities, lifecycle,
 failure behavior, versioning, compatibility policy, and cheapest proof. A
-cross-repository extension cannot hide a missing Orbit, Venus, Astra, or
+cross-repository extension cannot hide a missing Orbit, Venus, Eon, or
 child-repository contract.
 
 ## Venus framework gate
@@ -130,8 +133,8 @@ graphical framework and cannot prove rich-presentation fidelity.
 
 ## Deferred platform decisions
 
-- TypeScript and browser WebAssembly become implementation scope only after a
-  web Venus contract and transport decision are authorized.
+- TypeScript and browser WebAssembly become implementation scope only after an
+  Eon Web contract and transport decision are authorized.
 - Swift and SwiftUI become implementation scope only when measured Apple
   integration needs justify a separate shell over the Rust core.
 - Kotlin, Compose Multiplatform, Flutter, Electron, Tauri, Qt, and a shared

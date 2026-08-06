@@ -123,7 +123,7 @@ Orbit owns history because the authoritative terminal supplies wrap metadata,
 row contents, and stable anchors. A future Venus may own ephemeral viewport
 position and selection gestures over materialized rows. Orbit retains copy
 extraction and content semantics. Agent observation or durable session history
-needs a separate Astra or Orbit observer contract; the presentation stream is
+needs a separate Eon or Orbit observer contract; the presentation stream is
 not a durable event log.
 
 ## Conditional client-side terminal replicas
@@ -250,7 +250,7 @@ active:
   versioned, Orbit-generated frame corpus or protocol-faithful replay source
   pinned to an exact Orbit proof revision before depending on a live PTY for
   every development cycle.
-- Astra can validate Astra-owned package composition, launch arguments,
+- Eon can validate Eon-owned package composition, launch arguments,
   environment, ordering, and failure reporting with explicit process probes;
   those probes do not claim to prove Orbit runtime or Venus rendering.
 
@@ -307,45 +307,45 @@ explicit user decision.
 ## What Orbit would replace
 
 Orbit would replace the process, PTY, and session-lifetime role that a
-conventional multiplexer such as Zellij would otherwise provide in the
-greenfield Yazelix Astra line. Venus would provide graphical presentation,
-while Astra would own only Yazelix-specific orchestration, policy, and
-configuration above both components.
+conventional multiplexer such as Zellij would otherwise provide in Eon. Venus
+would provide graphical presentation through Eon Desktop, while Eon would own
+only product orchestration, policy, and configuration above both subsystems.
 
-Astra is not a migration of Nova and does not make Nova the compatibility path
+Eon is not a migration of Nova and does not make Nova the compatibility path
 for the experiment. Nova remains an independently valuable product on its
 current Mars and Zellij architecture. The two lines grow separately unless the
 user later chooses a specific shared child-repository contract.
 
 Venus consumes Orbit's structured presentation boundary, while the current Mars
 application owns its terminal state directly. The experiment includes the
-smallest Venus client needed to prove the one-authority design. Venus keeps its
-product name if the experiment succeeds; it does not inherit Mars. Orbit owns
-the headless proof through `orb-bi4.3`. That convergence gate passed, and the
-private `luccahuguet/venus` repository now owns graphical implementation;
-`orb-bi4.4` tracks Orbit-side acceptance. Graphical Venus code does not live in
-Orbit; the proven presentation contract is the repository boundary.
+smallest Venus client needed to prove the one-authority design. Orbit owns the
+headless proof through `orb-bi4.3`. That convergence gate passed, and the
+private [`Yazelix/eon-desktop`](https://github.com/Yazelix/eon-desktop)
+repository now owns graphical implementation through Venus; `orb-bi4.4` tracks
+Orbit-side acceptance. Graphical Venus code does not live in Orbit; the proven
+presentation contract is the repository boundary.
 
 ## Naming and eventual ownership
 
-The greenfield line is named **Yazelix Astra**. `Saturn` and `Eon` remain
-reserved names for possible future use; that reservation creates no product,
-repository, feature, or planning scope.
+The product is named **Eon**. The repositories are **Eon**, **Eon Desktop**, and
+**Eon Sessions**; Venus and Orbit remain their underlying client and session
+subsystems. `Saturn` remains reserved for possible future use; that reservation
+creates no product, repository, feature, or planning scope.
 
-Orbit retains the headless runtime and diagnostic client used by its proof. The
-private Venus repository will own the minimum graphical client after the user
-activates it. If Venus and Orbit graduate, the product boundary becomes:
+Orbit retains the headless runtime and diagnostic client used by its proof. Eon
+Desktop owns the graphical client through Venus. If Venus and Orbit graduate,
+the intended product boundary becomes:
 
 ```text
-Yazelix Astra
-|-- Astra-owned orchestration and Yazelix policy/configuration
-|-- Venus: graphical terminal client
-`-- Orbit: durable local session runtime
+Eon
+|-- Eon-owned orchestration and product policy/configuration
+|-- Eon Desktop / Venus: graphical terminal client
+`-- Eon Sessions / Orbit: durable local session runtime
 ```
 
-Orbit survives graduation as the runtime name. Venus remains distinct from
-Mars. A failed experiment leaves Nova and its Mars and Zellij path unchanged. A
-successful experiment gives Astra its own architecture while Nova continues to
+Orbit survives as the runtime subsystem name. Venus remains distinct from Mars.
+A failed experiment leaves Nova and its Mars and Zellij path unchanged. A
+successful experiment gives Eon its own architecture while Nova continues to
 grow independently.
 
 ## Evidence sequence
@@ -359,18 +359,19 @@ Beads order the work:
 4. Prove race-free structured presentation convergence on reattach.
 5. Complete `orb-9o6` to automate the machine-checkable governance invariants
    after the protocol has two implementation slices of evidence.
-6. Activate the existing private Venus repository, choose its protocol-code and
-   rendering boundaries, and add one minimum native client.
+6. Activate Eon Desktop, choose the Venus protocol-code and rendering
+   boundaries, and add one minimum native client.
 7. Harden the one-client boundary.
-8. Dogfood Venus and Orbit through a minimum Astra-owned integration path.
-9. Decide whether Venus and Orbit earn graduation into Yazelix Astra.
-10. Choose later Astra, Venus, and Orbit ownership expansions from evidence.
+8. Dogfood Eon Desktop and Eon Sessions through a minimum Eon-owned
+   integration path.
+9. Decide whether the Venus and Orbit subsystems earn graduation into Eon.
+10. Choose later Eon, Venus, and Orbit ownership expansions from evidence.
 
 A failed contract returns the project to planning before the next step.
 
 ## Graduation criteria
 
-Graduate Venus and Orbit into Yazelix Astra only if all of these are true:
+Graduate Eon Desktop and Eon Sessions into Eon only if all of these are true:
 
 - reattaching clients receive coherent rich presentation while hidden terminal
   state remains authoritative in Orbit;
@@ -379,7 +380,7 @@ Graduate Venus and Orbit into Yazelix Astra only if all of these are true:
   resize boundaries behave deterministically;
 - a native Venus client can use the structured boundary without a second
   terminal emulator, broad adapter, or libghostty fork;
-- fresh Yazelix Astra dogfood is useful with shells, Neovim, Yazi, full-screen
+- fresh Eon dogfood is useful with shells, Neovim, Yazi, full-screen
   TUIs, and long-running processes;
 - the resulting ownership and LOC are smaller than continuing the current
   Mars/Zellij chain or Mars Next;
