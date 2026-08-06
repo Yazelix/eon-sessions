@@ -29,6 +29,7 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
     rc::Rc,
+    time::{Duration, Instant},
 };
 
 use platform::{Pty, PtyIo};
@@ -37,6 +38,8 @@ use presentation::{Extractor, OutputQueue, is_disconnect};
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
 const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
+const MAX_EXIT_PTY_READS: usize = 4;
+const CLIENT_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
 
 const INITIAL_SIZE: SurfaceSize = SurfaceSize {
     cols: 80,
@@ -55,8 +58,8 @@ struct Client {
     stream: UnixStream,
     input: Vec<u8>,
     output: OutputQueue,
-    attached: bool,
     close_after_flush: bool,
+    negotiation_deadline: Option<Instant>,
 }
 
 impl Client {
@@ -66,7 +69,7 @@ impl Client {
     }
 
     fn finish_session(&mut self, code: i32) -> Result {
-        if self.attached {
+        if self.negotiation_deadline.is_none() {
             if !self.close_after_flush {
                 let _ = self.output.push_message(&ServerMessage::Exited { code })?;
             }
@@ -147,7 +150,8 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             return Ok(0);
         }
         if let Some(status) = pty.try_wait()? {
-            let (_, changed) = read_pty(&mut pty, &mut terminal)?;
+            pty.stop_and_reap();
+            let changed = drain_exited_pty(&mut pty, &mut terminal)?;
             fail_on_pty_write_overflow(&response_overflow)?;
             if changed {
                 revision = next_revision(revision)?;
@@ -158,6 +162,13 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
                 client.finish_session(code)?;
             }
             return Ok(code);
+        }
+        if client
+            .as_ref()
+            .and_then(|client| client.negotiation_deadline)
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            client = None;
         }
 
         let readiness = platform::poll(
@@ -382,13 +393,13 @@ fn handle_client_message(
     extractor: &mut Extractor,
     revision: &mut u64,
 ) -> Result<bool> {
-    if !client.attached {
+    if client.negotiation_deadline.is_some() {
         return match message {
             ClientMessage::Hello {
                 minimum_version,
                 maximum_version,
             } if minimum_version <= session::VERSION && maximum_version >= session::VERSION => {
-                client.attached = true;
+                client.negotiation_deadline = None;
                 if !client.output.push_message(&ServerMessage::Attached {
                     version: session::VERSION,
                 })? {
@@ -591,15 +602,16 @@ fn ghostty_mouse_button(button: MouseButton) -> GhosttyMouseButton {
     }
 }
 
-fn read_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<(bool, bool)> {
+fn drain_exited_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<bool> {
     let mut changed = false;
-    loop {
+    for _ in 0..MAX_EXIT_PTY_READS {
         let (open, read) = read_pty_turn(pty, terminal)?;
         changed |= read;
         if !open || !read {
-            return Ok((open, changed));
+            break;
         }
     }
+    Ok(changed)
 }
 
 fn read_pty_turn(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<(bool, bool)> {
@@ -644,8 +656,8 @@ fn accept_clients(listener: &UnixListener, active: &mut Option<Client>) -> Resul
                     stream,
                     input: Vec::new(),
                     output: OutputQueue::default(),
-                    attached: false,
                     close_after_flush: false,
+                    negotiation_deadline: Some(Instant::now() + CLIENT_NEGOTIATION_TIMEOUT),
                 });
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -669,7 +681,7 @@ fn publish_frame(
 ) -> Result {
     if let Some(client) = active
         .as_mut()
-        .filter(|client| client.attached && !client.close_after_flush)
+        .filter(|client| client.negotiation_deadline.is_none() && !client.close_after_flush)
         && !queue_frame(client, extractor, revision, terminal, false)?
     {
         *active = None;
@@ -744,8 +756,8 @@ mod tests {
                 stream,
                 input: Vec::new(),
                 output: OutputQueue::default(),
-                attached: true,
                 close_after_flush: false,
+                negotiation_deadline: None,
             },
             peer,
         ))
@@ -1015,7 +1027,7 @@ mod tests {
         let command = [
             "/bin/sh".into(),
             "-c".into(),
-            "printf '\\033]2;final-title\\033\\\\'".into(),
+            "printf '%5000s' x; printf '\\033]2;final-title\\033\\\\'".into(),
         ];
         let mut pty = Pty::spawn(&command, size)?;
         let mut terminal = terminal()?;
@@ -1023,7 +1035,8 @@ mod tests {
 
         let status = loop {
             if let Some(status) = pty.try_wait()? {
-                read_pty(&mut pty, &mut terminal)?;
+                pty.stop_and_reap();
+                drain_exited_pty(&mut pty, &mut terminal)?;
                 break status;
             }
             if Instant::now() >= deadline {

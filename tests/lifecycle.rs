@@ -74,22 +74,26 @@ struct Client {
 impl Client {
     fn attach(socket: &Path) -> TestResult<Self> {
         let deadline = Instant::now() + Duration::from_secs(5);
+        let hello = encode_client_message(&ClientMessage::Hello {
+            minimum_version: session::VERSION,
+            maximum_version: session::VERSION,
+        })?;
         loop {
             let stream = connect_bounded(socket, deadline)?;
             stream.set_read_timeout(Some(Duration::from_secs(2)))?;
             stream.set_write_timeout(Some(Duration::from_secs(2)))?;
             let mut reader = BufReader::new(stream);
-            write_message(
-                reader.get_mut(),
-                &ClientMessage::Hello {
-                    minimum_version: session::VERSION,
-                    maximum_version: session::VERSION,
-                },
-            )?;
+            if let Err(error) = reader.get_mut().write_all(&hello) {
+                if Instant::now() >= deadline {
+                    return Err(error.into());
+                }
+                thread::yield_now();
+                continue;
+            }
             let mut attached = false;
             loop {
                 match read_message(&mut reader) {
-                    Ok(ServerMessage::Attached { version }) => {
+                    Ok(ServerMessage::Attached { version }) if !attached => {
                         assert_eq!(version, session::VERSION);
                         attached = true;
                     }
@@ -99,12 +103,11 @@ impl Client {
                             frame: *frame,
                         });
                     }
-                    Ok(ServerMessage::Busy) if Instant::now() < deadline => break,
+                    Ok(ServerMessage::Busy) if !attached && Instant::now() < deadline => break,
                     Ok(message) => {
                         return Err(format!("unexpected attach response: {message:?}").into());
                     }
-                    Err(error) if Instant::now() < deadline => {
-                        let _ = error;
+                    Err(error) if Instant::now() < deadline && error.is::<std::io::Error>() => {
                         break;
                     }
                     Err(error) => return Err(error),
@@ -305,7 +308,7 @@ fn terminate(server: &Server) -> std::io::Result<()> {
 }
 
 #[test]
-fn attachment_negotiation_rejects_incompatible_and_unordered_clients() -> TestResult {
+fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult {
     let dir = TestDir::new("negotiation")?;
     let socket = dir.0.join("orbit.sock");
     let server = spawn_server(&socket)?;
@@ -337,7 +340,17 @@ fn attachment_negotiation_rejects_incompatible_and_unordered_clients() -> TestRe
     }
     drop(unordered);
 
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut first = connect_bounded(&socket, deadline)?;
+    first.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut second = connect_bounded(&socket, deadline)?;
+    second.set_read_timeout(Some(Duration::from_secs(2)))?;
+
+    assert_eq!(read_message(&mut second)?, ServerMessage::Busy);
+    drop(second);
+
     drop(Client::attach(&socket)?);
+    assert_eq!(first.read(&mut [0])?, 0);
     assert!(server.shutdown()?.success());
     Ok(())
 }
@@ -375,6 +388,38 @@ fn closed_pty_rejects_input_while_child_remains_alive() -> TestResult {
     }
     assert!(server.0.try_wait()?.is_none());
     assert!(server.shutdown()?.success());
+    Ok(())
+}
+
+#[test]
+fn writing_descendant_cannot_hold_server_open_after_known_child_exit() -> TestResult {
+    let dir = TestDir::new("writing-descendant")?;
+    let socket = dir.0.join("orbit.sock");
+    let descendant_pid_file = dir.0.join("descendant.pid");
+    let mut server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(
+                "sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_DESCENDANT_PID\"; exec yes orbit' & while [ ! -s \"$ORBIT_DESCENDANT_PID\" ]; do :; done",
+            )
+            .env("ORBIT_DESCENDANT_PID", &descendant_pid_file)
+            .spawn()?,
+    );
+
+    let descendant_pid = wait_file_text(&descendant_pid_file)?.trim().parse()?;
+    let status = wait_bounded(&mut server);
+    if status.is_err() {
+        unsafe {
+            libc::kill(descendant_pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+
+    assert!(status?.success());
+    assert!(!socket.exists());
+    wait_process_gone(descendant_pid)?;
     Ok(())
 }
 
@@ -432,10 +477,6 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     first.paste("printf '\\033]2;size-%s\\033\\\\' \"$(stty size)\"")?;
     first.enter()?;
     first.wait_title("size-40 100")?;
-    assert_eq!(
-        (first.frame.dimensions.cols, first.frame.dimensions.rows),
-        (100, 40)
-    );
 
     let mut rejected = UnixStream::connect(&socket)?;
     rejected.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -453,6 +494,10 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     writeln!(OpenOptions::new().write(true).open(&fifo)?, "go")?;
 
     let mut second = Client::attach(&socket)?;
+    assert_eq!(
+        (second.frame.dimensions.cols, second.frame.dimensions.rows),
+        (100, 40)
+    );
     second.paste(format!(
         "printf '%s\\n' \"$$\" > {}",
         second_pid_file.display()

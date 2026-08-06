@@ -27,7 +27,7 @@ pub(crate) enum PtyIo {
 
 pub(crate) struct Pty {
     master: File,
-    child: Child,
+    child: Option<Child>,
 }
 
 impl Pty {
@@ -79,7 +79,10 @@ impl Pty {
             });
         }
         let child = child_command.spawn()?;
-        Ok(Self { master, child })
+        Ok(Self {
+            master,
+            child: Some(child),
+        })
     }
 
     pub(crate) fn resize(&self, size: SurfaceSize) -> Result {
@@ -92,7 +95,10 @@ impl Pty {
     }
 
     pub(crate) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        self.child
+            .as_mut()
+            .expect("PTY child already reaped")
+            .try_wait()
     }
 
     pub(crate) fn read(&mut self, bytes: &mut [u8]) -> Result<PtyIo> {
@@ -103,22 +109,22 @@ impl Pty {
         nonblocking(|| self.master.write(bytes))
     }
 
-    fn stop_and_reap(&mut self) {
-        let child_running = !matches!(self.child.try_wait(), Ok(Some(_)));
-        let child_group = self.child.id() as libc::pid_t;
+    pub(crate) fn stop_and_reap(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let child_group = child.id() as libc::pid_t;
         let foreground_group = unsafe { libc::tcgetpgrp(self.master.as_raw_fd()) };
         unsafe {
             for signal in [libc::SIGHUP, libc::SIGKILL] {
-                if child_running {
-                    libc::kill(-child_group, signal);
-                }
-                if foreground_group > 0 && (!child_running || foreground_group != child_group) {
+                libc::kill(-child_group, signal);
+                if foreground_group > 0 && foreground_group != child_group {
                     libc::kill(-foreground_group, signal);
                 }
             }
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
