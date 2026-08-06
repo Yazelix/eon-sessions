@@ -587,6 +587,24 @@ on contract proof. An exception never pretends the skipped gate passed, does
 not apply to another Bead, and does not authorize unrelated scope or
 dependencies.
 
+## Bead execution size
+
+An epic is a planning container, not a production-code, test, or manifest
+implementation unit. Do not claim an epic for implementation. Before code,
+activate or create a child Bead with one code-owning repository, one primary
+invariant or failure domain, one cohesive contract cluster, and one cheapest
+meaningful proof. Sequence cross-repository work as owner implementation,
+consumer implementation, and acceptance rather than editing both owners in one
+run. Close the epic only after its required children and acceptance evidence
+are reconciled.
+
+During Beads priming and before claiming any non-epic implementation Bead,
+check whether it spans independent state machines, repository owners, or proof
+surfaces. Split it before implementation when those parts can fail and be
+proved independently. Repeated fresh-eyes findings across different subsystems
+are evidence that future work needs smaller Beads; they are not a reason to
+stop reviewing or to cap the number of passes.
+
 ## Method
 
 For a review, audit, or fresh-eyes request, investigate read-only first. Stop
