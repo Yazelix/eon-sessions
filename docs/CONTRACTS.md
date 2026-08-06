@@ -61,9 +61,11 @@ ORBS v1, ORBF v1, and their canonical `orbit-protocol` package are accepted at
 `838b67652c4df1979e599b9c401ee664ffac66bd`, and the protocol package, root
 manifest, and lockfile are byte-identical between them. The intervening Orbit
 changes are compatible runtime resource-lifetime hardening, so they require no
-Venus manifest migration. Later boundary changes require an explicit
-compatible-or-breaking classification and coordinated update order; a Venus
-adapter or second decoder does not substitute for updating the shared owner.
+Venus manifest migration. Venus records the accepted consumer relationship at
+`8149002c7275a00db1c08fded171e09f249dd977`. Later boundary changes require an
+explicit compatible-or-breaking classification and coordinated update order; a
+Venus adapter or second decoder does not substitute for updating the shared
+owner.
 
 `Complete` in `ORB-C4` means the entire ORBF v1 presentation payload for its
 revision. Version 1 carries the current visible presentation and its metadata;

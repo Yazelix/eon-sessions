@@ -213,8 +213,9 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   `e4fde443e625180d7332eff4dff366f64bee30a8`; the private
   [`luccahuguet/venus`](https://github.com/luccahuguet/venus) repository owns
   graphical implementation, the canonical codec boundary is proved at
-  `838b67652c4df1979e599b9c401ee664ffac66bd`, and `orb-bi4.4` tracks Orbit-side
-  acceptance
+  `838b67652c4df1979e599b9c401ee664ffac66bd`, and Orbit accepts the minimum
+  Venus consumer relationship recorded at
+  `8149002c7275a00db1c08fded171e09f249dd977`
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
 - Mars and Mars Next may inform behavior, but their code and architecture are

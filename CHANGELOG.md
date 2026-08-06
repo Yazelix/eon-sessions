@@ -44,3 +44,9 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   PTY closure, later semantic requests receive a terminal failure instead of a
   false acknowledgement, and already queued undeliverable bytes and their
   retained queue storage are released.
+- Venus is the accepted first external ORBS v1 and ORBF v1 consumer. Its
+  accepted relationship is recorded at
+  `8149002c7275a00db1c08fded171e09f249dd977`, and it pins Orbit
+  `c905bf9610581747f1b07565814b501ca66cfaa6`; the later Orbit proof
+  `838b67652c4df1979e599b9c401ee664ffac66bd` is compatible without a manifest
+  migration because the protocol package and Cargo metadata are byte-identical.
