@@ -16,7 +16,7 @@ use std::{
 };
 
 use orbit_protocol::{
-    Frame,
+    Frame, Screen,
     session::{
         self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, PhysicalKey,
         ServerMessage, SurfaceSize, decode_server_message, encode_client_message,
@@ -515,6 +515,85 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     assert!(wait_bounded(&mut server)?.success());
     assert!(!socket.exists());
     wait_process_gone(shell_pid)?;
+    Ok(())
+}
+
+#[test]
+fn parser_state_and_terminal_replies_survive_client_failure() -> TestResult {
+    let dir = TestDir::new("terminal-authority")?;
+    let socket = dir.0.join("orbit.sock");
+    let begin = dir.0.join("begin");
+    let partial = dir.0.join("partial");
+    let release = dir.0.join("release");
+    let answered = dir.0.join("answered");
+    let check_duplicate = dir.0.join("check-duplicate");
+    let result = dir.0.join("result");
+    let stop = dir.0.join("stop");
+    let mut server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(
+                "stty -echo -icanon min 1 time 0; \
+                 while [ ! -e \"$ORBIT_BEGIN\" ]; do sleep 0.01; done; \
+                 printf '\\033[?104'; printf partial > \"$ORBIT_PARTIAL\"; \
+                 while [ ! -e \"$ORBIT_RELEASE\" ]; do sleep 0.01; done; \
+                 printf '9h\\033[?25l\\033[H\\033[6n'; \
+                 reply=$(dd bs=1 count=6 2>/dev/null); \
+                 if [ \"$reply\" != \"$(printf '\\033[1;1R')\" ]; then printf wrong > \"$ORBIT_RESULT\"; exit 1; fi; \
+                 printf answered > \"$ORBIT_ANSWERED\"; printf '\\033]2;authoritative-reply\\033\\\\'; \
+                 while [ ! -e \"$ORBIT_CHECK_DUPLICATE\" ]; do sleep 0.01; done; \
+                 stty min 0 time 1; extra=$(dd bs=1 count=1 2>/dev/null); stty sane; \
+                 if [ -n \"$extra\" ]; then printf duplicate > \"$ORBIT_RESULT\"; exit 1; fi; \
+                 printf once > \"$ORBIT_RESULT\"; \
+                 while [ ! -e \"$ORBIT_STOP\" ]; do sleep 0.01; done; \
+                 printf '\\033[?1049l'",
+            )
+            .env("ORBIT_BEGIN", &begin)
+            .env("ORBIT_PARTIAL", &partial)
+            .env("ORBIT_RELEASE", &release)
+            .env("ORBIT_ANSWERED", &answered)
+            .env("ORBIT_CHECK_DUPLICATE", &check_duplicate)
+            .env("ORBIT_RESULT", &result)
+            .env("ORBIT_STOP", &stop)
+            .spawn()?,
+    );
+
+    let mut first = Client::attach(&socket)?;
+    let initial_revision = first.frame.revision;
+    fs::write(&begin, b"begin")?;
+    assert_eq!(wait_file_text(&partial)?, "partial");
+    while first.frame.revision == initial_revision {
+        if let ServerMessage::Frame(frame) = read_message(&mut first.reader)? {
+            first.frame = *frame;
+        }
+    }
+    drop(first);
+
+    fs::write(&release, b"release")?;
+    assert_eq!(wait_file_text(&answered)?, "answered");
+    let mut second = Client::attach(&socket)?;
+    second.wait_title("authoritative-reply")?;
+    assert_eq!(second.frame.screen, Screen::Alternate);
+    assert!(!second.frame.cursor.visible);
+    fs::write(&check_duplicate, b"check")?;
+    assert_eq!(wait_file_text(&result)?, "once");
+
+    fs::write(&stop, b"stop")?;
+    let exit_code = loop {
+        match read_message(&mut second.reader)? {
+            ServerMessage::Frame(frame) => second.frame = *frame,
+            ServerMessage::Exited { code } => break code,
+            _ => {}
+        }
+    };
+    assert_eq!(exit_code, 0);
+    assert_eq!(second.frame.screen, Screen::Primary);
+    drop(second);
+    assert!(wait_bounded(&mut server)?.success());
+    assert!(!socket.exists());
     Ok(())
 }
 
