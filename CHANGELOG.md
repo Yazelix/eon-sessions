@@ -58,6 +58,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   reattachment receives the retained authoritative dimensions, and known-child
   exit stops owned process groups before a fixed final PTY-read budget. A
   continuously writing descendant cannot hold Orbit or its socket open.
+- The accepted `8e3ba0beeb18157dc5a48c68c38812fa8d8fb779`
+  terminal-authority proof hardens `ORB-C2`. Partial private-mode parser state
+  survives client failure without export or reconstruction; Orbit alone sends
+  the ordered terminal reply while detached, and canonical attachment cannot
+  duplicate it. Ordered client-visible effects remain a separate transport gap.
 - Venus is the accepted first external ORBS v1 and ORBF v1 consumer. Its
   accepted relationship is recorded at
   `8149002c7275a00db1c08fded171e09f249dd977`, and it pins Orbit
