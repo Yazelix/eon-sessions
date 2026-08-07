@@ -14,7 +14,8 @@ use libghostty_vt::{
         EncoderSize as MouseEncoderSize, Event as GhosttyMouseEvent, Position as MousePosition,
     },
     paste,
-    terminal::Mode,
+    screen::Screen,
+    terminal::{Mode, ScrollViewport},
 };
 use orbit_protocol::session::{
     self, ClientMessage, Failure, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers,
@@ -439,7 +440,7 @@ fn handle_client_message(
     let Some(pty) = pty else {
         return queue_failure(client, FailureCode::Terminal, "PTY is closed".into());
     };
-    match message {
+    let message = match message {
         ClientMessage::Resize(surface) => {
             pty.resize(surface)?;
             terminal.resize(
@@ -449,29 +450,85 @@ fn handle_client_message(
                 surface.cell_height,
             )?;
             *size = surface;
+            *revision = next_revision(*revision)?;
             if !client.output.push_message(&ServerMessage::Accepted)? {
                 return Ok(false);
             }
-            *revision = next_revision(*revision)?;
-            queue_frame(client, extractor, *revision, terminal, false)
+            return queue_frame(client, extractor, *revision, terminal, false);
         }
-        message => match encode_input(terminal, *size, message) {
-            Ok(encoded) => {
-                if queue_pty_write(&mut writes.borrow_mut(), &encoded) {
-                    client.output.push_message(&ServerMessage::Accepted)
-                } else {
-                    let queued = queue_failure(
-                        client,
-                        FailureCode::Terminal,
-                        "PTY input queue is full".into(),
-                    )?;
-                    client.close_when_flushed();
-                    Ok(queued)
+        message => message,
+    };
+    let return_live = matches!(&message, ClientMessage::Key(_));
+    let message = match message {
+        ClientMessage::Mouse(input)
+            if matches!(input.button, Some(MouseButton::Four | MouseButton::Five))
+                && !terminal.is_mouse_tracking()? =>
+        {
+            let delta = if input.button == Some(MouseButton::Four) {
+                -1
+            } else {
+                1
+            };
+            if terminal.active_screen()? == Screen::Alternate && terminal.mode(Mode::ALT_SCROLL)? {
+                ClientMessage::Key(KeyEvent {
+                    action: KeyAction::Press,
+                    key: if delta < 0 {
+                        PhysicalKey::ARROW_UP
+                    } else {
+                        PhysicalKey::ARROW_DOWN
+                    },
+                    modifiers: Modifiers::empty(),
+                    consumed_modifiers: Modifiers::empty(),
+                    composing: false,
+                    text: None,
+                    unshifted_codepoint: None,
+                })
+            } else {
+                terminal.scroll_viewport(ScrollViewport::Delta(delta));
+                *revision = next_revision(*revision)?;
+                if !client.output.push_message(&ServerMessage::Accepted)? {
+                    return Ok(false);
                 }
+                return queue_frame(client, extractor, *revision, terminal, false);
             }
-            Err(error) => queue_failure(client, FailureCode::Terminal, error.to_string()),
-        },
+        }
+        message => message,
+    };
+    let encoded = match encode_input(terminal, *size, message) {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            return queue_failure(client, FailureCode::Terminal, error.to_string());
+        }
+    };
+    if !queue_pty_write(&mut writes.borrow_mut(), &encoded) {
+        let queued = queue_failure(
+            client,
+            FailureCode::Terminal,
+            "PTY input queue is full".into(),
+        )?;
+        client.close_when_flushed();
+        return Ok(queued);
     }
+    let returned_live =
+        if return_live && !encoded.is_empty() && terminal.active_screen()? == Screen::Primary {
+            let scrollbar = terminal.scrollbar()?;
+            if scrollbar.offset.saturating_add(scrollbar.len) < scrollbar.total {
+                terminal.scroll_viewport(ScrollViewport::Bottom);
+                *revision = next_revision(*revision)?;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+    if !client.output.push_message(&ServerMessage::Accepted)? {
+        return Ok(false);
+    }
+    if returned_live {
+        return queue_frame(client, extractor, *revision, terminal, false);
+    }
+    Ok(true)
 }
 
 fn queue_failure(client: &mut Client, code: FailureCode, mut detail: String) -> Result<bool> {
@@ -716,11 +773,15 @@ mod tests {
     use std::{thread, time::Instant};
 
     fn terminal() -> Result<Terminal<'static, 'static>> {
+        terminal_with_scrollback(0)
+    }
+
+    fn terminal_with_scrollback(max_scrollback: usize) -> Result<Terminal<'static, 'static>> {
         let size = INITIAL_SIZE;
         let mut terminal = Terminal::new(TerminalOptions {
             cols: size.cols,
             rows: size.rows,
-            max_scrollback: 0,
+            max_scrollback,
         })?;
         terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
         Ok(terminal)
@@ -751,6 +812,207 @@ mod tests {
         assert!(client.output.push_message(&failure)?);
         client.close_when_flushed();
         Ok((client, peer, expected))
+    }
+
+    fn wheel(button: MouseButton) -> ClientMessage {
+        ClientMessage::Mouse(session::MouseEvent {
+            action: MouseAction::Press,
+            button: Some(button),
+            modifiers: Modifiers::empty(),
+            x: 1.0,
+            y: 1.0,
+        })
+    }
+
+    fn flush_message(client: &mut Client, peer: &mut UnixStream) -> Result<ServerMessage> {
+        assert!(client.output.flush(&mut client.stream)?);
+        read_server_message(peer)?.ok_or_else(|| "client output closed".into())
+    }
+
+    fn fill_output(output: &mut OutputQueue) -> Result {
+        let failure = ServerMessage::Failure(Failure {
+            code: FailureCode::Terminal,
+            detail: "x".repeat(session::MAX_FAILURE_BYTES),
+        });
+        while output.push_message(&failure)? {}
+        while output.push_message(&ServerMessage::Accepted)? {}
+        Ok(())
+    }
+
+    #[test]
+    fn authoritative_viewport_routes_wheel_and_key_from_terminal_state() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let mut terminal = terminal_with_scrollback(100)?;
+        for line in 0..32 {
+            terminal.vt_write(format!("history-{line:02}\r\n").as_bytes());
+        }
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut extractor = Extractor::new()?;
+        let mut revision = 0;
+        macro_rules! accept {
+            ($message:expr, $frame:expr) => {{
+                let previous_revision = revision;
+                assert!(handle_client_message(
+                    &mut client,
+                    $message,
+                    &mut terminal,
+                    Some(&pty),
+                    &mut size,
+                    &writes,
+                    &mut extractor,
+                    &mut revision,
+                )?);
+                assert_eq!(revision, previous_revision + u64::from($frame));
+                assert_eq!(
+                    flush_message(&mut client, &mut peer)?,
+                    ServerMessage::Accepted
+                );
+                if $frame {
+                    assert!(matches!(
+                        flush_message(&mut client, &mut peer)?,
+                        ServerMessage::Frame(frame) if frame.revision == revision
+                    ));
+                }
+            }};
+        }
+
+        let live = terminal.scrollbar()?;
+        assert_eq!(live.offset + live.len, live.total);
+        accept!(wheel(MouseButton::Four), true);
+        let scrolled = terminal.scrollbar()?;
+        assert_eq!(scrolled.offset + 1, live.offset);
+
+        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Top);
+        accept!(wheel(MouseButton::Four), true);
+        assert_eq!(terminal.scrollbar()?.offset, 0);
+
+        accept!(wheel(MouseButton::Five), true);
+        assert_eq!(terminal.scrollbar()?.offset, 1);
+
+        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Bottom);
+        accept!(wheel(MouseButton::Five), true);
+        let live = terminal.scrollbar()?;
+        assert_eq!(live.offset + live.len, live.total);
+
+        terminal.vt_write(b"\x1b[?1000h\x1b[?1006h");
+        for (button, expected) in [
+            (MouseButton::Four, b"\x1b[<64;1;1M".as_slice()),
+            (MouseButton::Six, b"\x1b[<66;1;1M".as_slice()),
+        ] {
+            accept!(wheel(button), false);
+            assert_eq!(writes.take().into_iter().collect::<Vec<_>>(), expected);
+        }
+
+        terminal.vt_write(b"\x1b[?1000l\x1b[?1006l\x1b[?1049h\x1b[?1007h");
+        for (modes, button, expected) in [
+            (
+                b"\x1b[?1l".as_slice(),
+                MouseButton::Four,
+                b"\x1b[A".as_slice(),
+            ),
+            (
+                b"\x1b[?1h".as_slice(),
+                MouseButton::Five,
+                b"\x1bOB".as_slice(),
+            ),
+        ] {
+            terminal.vt_write(modes);
+            accept!(wheel(button), false);
+            assert_eq!(writes.take().into_iter().collect::<Vec<_>>(), expected);
+        }
+
+        terminal.vt_write(b"\x1b[?1007l");
+        accept!(wheel(MouseButton::Four), true);
+        assert!(writes.borrow().is_empty());
+
+        terminal.vt_write(b"\x1b[?1049l");
+        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Delta(-1));
+        let key = ClientMessage::Key(KeyEvent {
+            action: KeyAction::Press,
+            key: PhysicalKey::A,
+            modifiers: Modifiers::empty(),
+            consumed_modifiers: Modifiers::empty(),
+            composing: false,
+            text: Some("x".into()),
+            unshifted_codepoint: Some('x'),
+        });
+        accept!(key, true);
+        assert_eq!(writes.take().into_iter().collect::<Vec<_>>(), b"x");
+        let live = terminal.scrollbar()?;
+        assert_eq!(live.offset + live.len, live.total);
+
+        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Delta(-1));
+        let before_empty = terminal.scrollbar()?;
+        accept!(
+            ClientMessage::Key(KeyEvent {
+                action: KeyAction::Release,
+                key: PhysicalKey::ENTER,
+                modifiers: Modifiers::empty(),
+                consumed_modifiers: Modifiers::empty(),
+                composing: false,
+                text: None,
+                unshifted_codepoint: None,
+            }),
+            false
+        );
+        assert!(writes.borrow().is_empty());
+        assert_eq!(terminal.scrollbar()?.offset, before_empty.offset);
+
+        assert!(queue_pty_write(
+            &mut writes.borrow_mut(),
+            &vec![b'q'; MAX_PTY_WRITE_BYTES],
+        ));
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Key(KeyEvent {
+                action: KeyAction::Press,
+                key: PhysicalKey::A,
+                modifiers: Modifiers::empty(),
+                consumed_modifiers: Modifiers::empty(),
+                composing: false,
+                text: Some("rejected".into()),
+                unshifted_codepoint: Some('r'),
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+        )?);
+        assert_eq!(terminal.scrollbar()?.offset, before_empty.offset);
+        assert_eq!(revision, 6);
+        assert!(client.close_after_flush);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::Terminal,
+                ..
+            })
+        ));
+
+        let (mut blocked_client, _) = attached_client()?;
+        fill_output(&mut blocked_client.output)?;
+        let resized = SurfaceSize {
+            rows: 25,
+            screen_height: 400,
+            ..INITIAL_SIZE
+        };
+        assert!(!handle_client_message(
+            &mut blocked_client,
+            ClientMessage::Resize(resized),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+        )?);
+        assert_eq!(size, resized);
+        assert_eq!(revision, 7);
+        Ok(())
     }
 
     #[test]

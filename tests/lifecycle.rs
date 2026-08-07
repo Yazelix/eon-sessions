@@ -131,6 +131,28 @@ impl Client {
         }
     }
 
+    fn request_frame(&mut self, request: &ClientMessage) -> TestResult {
+        let previous_revision = self.frame.revision;
+        write_message(self.reader.get_mut(), request)?;
+        let mut accepted = false;
+        loop {
+            match read_message(&mut self.reader)? {
+                ServerMessage::Accepted => accepted = true,
+                ServerMessage::Frame(frame) => {
+                    assert!(frame.revision > self.frame.revision);
+                    self.frame = *frame;
+                    if accepted && self.frame.revision > previous_revision {
+                        return Ok(());
+                    }
+                }
+                ServerMessage::Failure(failure) => {
+                    return Err(format!("request failed: {failure:?}").into());
+                }
+                message => return Err(format!("unexpected response: {message:?}").into()),
+            }
+        }
+    }
+
     fn paste(&mut self, bytes: impl Into<Vec<u8>>) -> TestResult {
         self.request(&ClientMessage::Paste(bytes.into()))
     }
@@ -160,6 +182,16 @@ impl Client {
             composing: false,
             text: Some(text.into()),
             unshifted_codepoint: Some('a'),
+        }))
+    }
+
+    fn wheel(&mut self, button: session::MouseButton) -> TestResult {
+        self.request_frame(&ClientMessage::Mouse(session::MouseEvent {
+            action: session::MouseAction::Press,
+            button: Some(button),
+            modifiers: Modifiers::empty(),
+            x: 1.0,
+            y: 1.0,
         }))
     }
 
@@ -309,6 +341,19 @@ fn terminate(server: &Server) -> std::io::Result<()> {
         0 => Ok(()),
         _ => Err(std::io::Error::last_os_error()),
     }
+}
+
+fn frame_text(frame: &Frame) -> String {
+    frame
+        .rows
+        .iter()
+        .flat_map(|row| {
+            row.cells
+                .iter()
+                .map(|cell| cell.text.as_str())
+                .chain(["\n"])
+        })
+        .collect()
 }
 
 #[test]
@@ -522,6 +567,126 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     assert!(wait_bounded(&mut server)?.success());
     assert!(!socket.exists());
     wait_process_gone(shell_pid)?;
+    Ok(())
+}
+
+#[test]
+fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResult {
+    let dir = TestDir::new("viewport")?;
+    let socket = dir.0.join("orbit.sock");
+    let release = dir.0.join("release");
+    let clear = dir.0.join("clear");
+    let pressure = dir.0.join("pressure");
+    let stop = dir.0.join("stop");
+    let script = format!(
+        "stty -echo; \
+         i=0; while [ \"$i\" -lt 48 ]; do printf 'history-%02d\\n' \"$i\"; i=$((i + 1)); done; \
+         printf '\\033]2;history-ready\\033\\\\'; \
+         while [ ! -e '{release}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
+         [ -e '{stop}' ] && exit; \
+         printf 'tail-after-pin\\n\\033]2;pinned-output\\033\\\\'; \
+         while [ ! -e '{clear}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
+         [ -e '{stop}' ] && exit; \
+         printf '\\033[3J'; \
+         i=0; while [ \"$i\" -lt 1100 ]; do printf 'prune-%04d-abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789\\n' \"$i\"; i=$((i + 1)); done; \
+         printf '\\033]2;pruned\\033\\\\'; \
+         while [ ! -e '{pressure}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
+         [ -e '{stop}' ] && exit; \
+         printf '\\033]2;pressure-complete\\033\\\\'; \
+         while [ ! -e '{stop}' ]; do sleep 0.01; done",
+        release = release.display(),
+        clear = clear.display(),
+        pressure = pressure.display(),
+        stop = stop.display(),
+    );
+    let mut server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .spawn()?,
+    );
+
+    let mut first = Client::attach(&socket)?;
+    first.wait_title("history-ready")?;
+    let live_text = frame_text(&first.frame);
+    for _ in 0..6 {
+        first.wheel(session::MouseButton::Four)?;
+    }
+    let pinned = first.frame.clone();
+    assert_ne!(frame_text(&pinned), live_text);
+
+    fs::write(&release, b"release")?;
+    first.wait_title("pinned-output")?;
+    assert_eq!(first.frame.rows, pinned.rows);
+    assert!(!frame_text(&first.frame).contains("tail-after-pin"));
+    let detached = first.frame.clone();
+    drop(first);
+
+    let mut second = Client::attach(&socket)?;
+    assert_eq!(second.frame, detached);
+    second.request_frame(&ClientMessage::Key(KeyEvent {
+        action: KeyAction::Press,
+        key: PhysicalKey::A,
+        modifiers: Modifiers::empty(),
+        consumed_modifiers: Modifiers::empty(),
+        composing: false,
+        text: Some("x".into()),
+        unshifted_codepoint: Some('x'),
+    }))?;
+    assert!(frame_text(&second.frame).contains("tail-after-pin"));
+
+    fs::write(&clear, b"clear")?;
+    second.wait_title("pruned")?;
+    second.request_frame(&ClientMessage::Resize(SurfaceSize {
+        cols: 40,
+        rows: 12,
+        screen_width: 320,
+        screen_height: 192,
+        cell_width: 8,
+        cell_height: 16,
+        padding_top: 0,
+        padding_bottom: 0,
+        padding_left: 0,
+        padding_right: 0,
+    }))?;
+    assert_eq!(
+        (second.frame.dimensions.cols, second.frame.dimensions.rows),
+        (40, 12)
+    );
+
+    let started = Instant::now();
+    for _ in 0..32 {
+        second.wheel(session::MouseButton::Four)?;
+    }
+    let wheel_elapsed = started.elapsed();
+    let frame_bytes =
+        session::encode_server_message(&ServerMessage::Frame(Box::new(second.frame.clone())))?
+            .len();
+    eprintln!(
+        "viewport measurement: 32 wheel round trips in {wheel_elapsed:?}; complete ORBS frame {frame_bytes} bytes"
+    );
+    assert!(wheel_elapsed < Duration::from_secs(5));
+
+    let wheel = encode_client_message(&ClientMessage::Mouse(session::MouseEvent {
+        action: session::MouseAction::Press,
+        button: Some(session::MouseButton::Four),
+        modifiers: Modifiers::empty(),
+        x: 1.0,
+        y: 1.0,
+    }))?;
+    let _ = second.reader.get_mut().write_all(&wheel.repeat(4096));
+    fs::write(&pressure, b"pressure")?;
+    let mut third = Client::attach(&socket)?;
+    drop(second);
+    third.wait_title("pressure-complete")?;
+
+    fs::write(&stop, b"stop")?;
+    drop(third);
+    assert!(wait_bounded(&mut server)?.success());
+    assert!(!socket.exists());
     Ok(())
 }
 
