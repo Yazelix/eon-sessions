@@ -18,11 +18,12 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns the accepted ORBS v1 attachment, frame, lifecycle, key,
-mouse, focus, paste, and resize messages. The approved ORBS v2 candidate
-replaces that session revision, retains those messages, and adds selection and
-copy for Orbit's server and diagnostic client. It resolves selection from the
-exact complete-frame revision and current viewport, publishes selected cells
+The same package owns the accepted ORBS v2 attachment, frame, lifecycle, key,
+mouse, focus, paste, resize, selection, and copy messages. ORBS v2 replaces the
+accepted v1 session revision while retaining its existing messages. Orbit's
+server and diagnostic client use its added selection and copy values. Orbit
+resolves selection from the exact complete-frame revision and current
+viewport, publishes selected cells
 through normal frames, and returns only bounded plain text frozen at Finish.
 That frozen value survives later terminal output, resize or reflow, and active-
 screen transitions; a new selection, client loss, or exit clears it.
@@ -118,7 +119,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The approved candidate replaces ORBS v1 with ORBS v2: a 12-byte explicit
+The accepted ORBS v2 replacement uses a 12-byte explicit
 little-endian header with `ORBS` magic, one exact revision, a typed message
 kind, zero reserved flags, and a bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -199,10 +200,11 @@ terminal state. The initial contract covers surviving client exits and
 disconnections while Orbit continues running; it does not cover daemon or
 machine restarts.
 
-ORBS v1 carrying canonical ORBF v1 frames remains the last accepted Venus
-boundary. The approved Orbit-first ORBS v2 candidate adds authoritative
-selection and bounded copy without dual-version support; Venus updates
-separately through `ven-4sn`. Complete frames prove convergence and define the
+ORBS v1 carrying canonical ORBF v1 frames remains the last Venus-compatible
+boundary. The accepted Orbit-first ORBS v2 proof at
+`9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` adds authoritative selection and
+bounded copy without dual-version support; Venus updates separately through
+`ven-4sn`. Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
 during steady operation, bounded history pages, and a separate ordered stream

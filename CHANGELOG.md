@@ -49,6 +49,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   PTY closure, later semantic requests receive a terminal failure instead of a
   false acknowledgement, and already queued undeliverable bytes and their
   retained queue storage are released.
+- The accepted `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` proof replaces
+  ORBS v1 with ORBS v2 and adds `ORB-C9`: revision-bound current-viewport
+  selection, authoritative selected presentation, and bounded plain-text copy.
+  A successful Finish freezes one immutable client-scoped value that survives
+  later terminal output, resize or reflow, and active-screen transitions; a
+  newer selection, client loss, or exit clears it. Venus updates separately
+  through `ven-4sn` without a v1 adapter or compatibility window.
 - The authoritative owner loop yields after each productive PTY read and caps
   the shared terminal-response and semantic-input backlog. A whole semantic
   input that exceeds the remaining bound receives a terminal failure and closes

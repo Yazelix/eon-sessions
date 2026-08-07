@@ -117,8 +117,8 @@ A later patch decoder can update the same model. Orbit remains the schema owner;
 Venus must not handwrite a second interpretation. The accepted `orbit-protocol`
 package owns ORBF v1 decoding and complete-frame reduction plus ORBS v1
 attachment, frame-envelope, lifecycle, semantic-input, paste, and resize. The
-approved ORBS v2 candidate replaces that session revision, retains those
-message families, and adds revision-bound selection and bounded copy.
+accepted ORBS v2 replaces that session revision, retains those message
+families, and adds revision-bound selection and bounded copy.
 Venus pins one accepted Orbit proof revision and uses those values directly.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
