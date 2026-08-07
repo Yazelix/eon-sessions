@@ -8,27 +8,27 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 ## Protocol import record
 
 - Source: `https://github.com/luccahuguet/starcompass`
-- Source commit: `95c29fa76a971726b65e1d1dc06c518d525c46a2`
+- Source commit: `c524d3c47592ce006b749d0c6db7fd0c3478ce63`
 - Profiles: `greenfield`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
 
 | Protocol | Version | SHA-256 |
 | --- | ---: | --- |
-| `AP-SCOPE-001` | 1 | `b3f7e012df0708d4baf8957e3c315878a9eb8cd7fddf637dfde1506609d08444` |
-| `AP-CONTRACT-001` | 2 | `f8a3b323f95816ee6d56d136c2ad19c691860155a4e58f57a62a4fb4dfc78cbb` |
-| `AP-REFERENCE-001` | 2 | `ecb28af3796a9964dd98c037463a33b7444d9c39a0365783fb0e9ae9fc007b9c` |
-| `AP-MINIMAL-001` | 2 | `3f4ebb1ab87f50ed5c9f041fb60d94cc7ded264ab04e56413fd1da343baa38f3` |
-| `AP-DEPENDENCY-001` | 1 | `a389ff9054708574c52ec5e5dd7fc3e2d13b125d2218c70062f50a86761981ca` |
-| `AP-OWNERSHIP-001` | 1 | `bdc09117f79b0d8dbe78e2dd8673a2463398aa31880fe27209fd6cc47f58bbf7` |
-| `AP-TEST-001` | 1 | `363da7c542521be22233a4cc3373c0d3c3c5a9a0cf37f633cd5029545f4a3bee` |
-| `AP-PROOF-001` | 1 | `1af235a56e9711d55362d869fa4057f1658d0aa7fe766030be0897ee5fd7c02b` |
-| `AP-PLAN-001` | 6 | `04b96c47978d49d2e6584f89626bca42b6cb39df537fa3e5abd6da0bdc2edfda` |
-| `AP-CI-001` | 1 | `78f1662259cd83f33d22ff4ddd0859ab0d4f704ba4f38756eef40a8b9b787bec` |
-| `AP-EXCEPTION-001` | 1 | `f66749229dbbc005e1c3103bfed86cf95169d7b32466c72fd8442e841cadb268` |
-| `AP-GIT-001` | 3 | `16d27b0df7ccc94880bb31020e822e32b37503f43c2cf7a69de333300cbfdacf` |
-| `AP-PORTABILITY-001` | 1 | `d2800376013bbe1ade3449f835daf8780e60d4c08a79a7f733d4a651c4d6d887` |
-| `AP-TERMINAL-001` | 1 | `a8632561b2ff959b1e0ee2abc07f4bce13af289e0a23574cc51aef740e3d9605` |
-| `AP-FAILURE-001` | 1 | `38df47dd773c7a85161309a1947dd97afcce93a5bdefc82f1c971475d228482e` |
+| `AP-SCOPE-001` | 3 | `cae30f9031beea4f831a89445f35807f50618e0f2cb0432f3b94bec40da9aeef` |
+| `AP-CONTRACT-001` | 4 | `cdf2e5d69cefd34ceeeaa6b7511b21f921e2be50c17d3c01b85120b20234cff7` |
+| `AP-REFERENCE-001` | 3 | `186fa74aa530c9c76ae507685461dff2b1506ecb5087230ded51f02cecb9231a` |
+| `AP-MINIMAL-001` | 4 | `612bc9c62a20adf7332724d4663af0a0e591d624de2a76b1c257a9ed428db1f6` |
+| `AP-DEPENDENCY-001` | 2 | `ded49add538b82de0a9c522bc8a34720f4ebbb47f39fc2f7ddb25e7aad1700d3` |
+| `AP-OWNERSHIP-001` | 2 | `d218a4e0625b659ec366284110bdfce02bd66cb229ab6ba07f2317092ea13053` |
+| `AP-TEST-001` | 3 | `58b5837cb679e958192b366bb15d6e34649f5a91ff9f4accdc7edb4ef5cdb873` |
+| `AP-PROOF-001` | 4 | `2762fdf80ba2a36bb1e8844a44959bea7a6309dcd7a5796029a06a7ad9c26692` |
+| `AP-PLAN-001` | 9 | `a1671c41d8a5c059a7138914ae4903b1d305473cf9681e293fa7d16c0b939b15` |
+| `AP-CI-001` | 3 | `c7cb65a81ce8434d02f2d19306bf93358f3624d0b77886bc91d4de93f7a779ba` |
+| `AP-EXCEPTION-001` | 2 | `2c4f00299922edac83286821af07ad485e5a630bca6acbbce918d87614abb395` |
+| `AP-GIT-001` | 5 | `f2c3254311de57a23a13aa382fe3285e65bb34e535ecd813d1be783ca79d4bf9` |
+| `AP-PORTABILITY-001` | 2 | `a2f5025bc7a10436b5c2f8f42c6002ccf1e361f05abbff3dea6507a3426394c0` |
+| `AP-TERMINAL-001` | 2 | `c1805e12ca5c41d3ed2a6b24739fcded2ad986758fda01fdfa3132c9f8351d9c` |
+| `AP-FAILURE-001` | 4 | `450e48b4e1532ff50a9a1da7faa49e3539450e0676f3c530f888d33b4b752e80` |
 
 ### Local exceptions
 
@@ -38,330 +38,200 @@ No local exceptions.
 
 ### AP-SCOPE-001 — User-owned scope
 
-The user decides product and project scope. An agent may inspect, explain, test,
-or make the smallest implementation needed for the chosen goal, but it must not
-silently create a feature, compatibility promise, public surface, migration,
-repository, or planning item outside that direction.
+The user owns scope. Inspection, audit, diagnosis, explanation, and
+recommendation authorize no implementation, external-state, or durable-planning
+write. Implement only a chosen outcome.
 
-Required practice:
-
-- Separate safe implementation details from choices that change product scope.
-- State consequential assumptions; stop when a missing choice would materially
-  change the result.
-- Treat a terminal instruction such as “finish” as persistence, not broader
-  authority.
-- Keep useful out-of-scope observations as findings unless the user has chosen
-  a durable planning destination for them.
+Do not silently add features, compatibility promises, public surfaces,
+migrations, repositories, or planning items. Preserve user-owned inputs and
+artifacts; replace or delete an exact target only when the outcome requires it.
+Otherwise write a distinct result. State consequential assumptions and stop
+when a missing scope choice would materially change the result. “Finish” adds
+persistence, not authority. Report out-of-scope findings unless the user chose
+a durable destination.
 
 ### AP-CONTRACT-001 — Contract-driven changes
 
-State the irreducible externally observable behavior before choosing the code
-shape. Give durable contracts stable identifiers when later code, tests, or
-repositories need to cite them.
+Before code shape, state the smallest observable contract: consumer, trigger,
+result, and important failures. Of the contracts consistent with the request
+and evidence, choose the fewest unsupported guarantees or restrictions; leave
+reasonable future behavior unspecified. Give it a stable ID only when later
+consumers need one.
 
-Required practice:
-
-- Among contracts that fit the user request and available evidence, choose the one
-  with the fewest unsupported guarantees or restrictions. Leave reasonable
-  future behavior unspecified unless the request or evidence requires a
-  commitment.
-- Name the consumer, trigger, observable result, and important failure behavior.
-- Identify the current sources of truth and decide which one owner survives.
-- Choose the cheapest check that can falsify the contract.
-- Implement the smallest vertical slice that satisfies it.
-- Update the contract first when an intentional behavior change is chosen.
-
-Do not turn implementation details into contracts unless another component must
-rely on them.
+Keep docs, help, examples, and configuration aligned with current commands,
+paths, flags, defaults, and availability; label planned, partial, or gated
+behavior. Choose one source-of-truth owner, the cheapest falsifying check, and
+the smallest complete vertical slice. Update the contract first for an
+intentional behavior change. Implementation details are not contracts unless a
+component must rely on them.
 
 ### AP-REFERENCE-001 — Evidence before code shape
 
-Review the relevant sources before deciding architecture or implementation
-shape. Memory, summaries, and reputation are discovery aids, not sufficient
-evidence for a consequential decision.
+Before a consequential code shape, read affected instructions, code, contracts,
+tests, and required subsystem references. Record the adopted, rejected, or
+unresolved mechanism; separate evidence from inference and revisit it after a
+material shape change. Memory, summaries, and reputation are discovery only.
 
-Required practice:
-
-- Read the affected local code, contracts, tests, and repository instructions.
-- Inspect designated external references at the subsystem named by local rules.
-- Record the concrete mechanism adopted, rejected, or left unresolved.
-- Distinguish direct source evidence from inference.
-- Revisit the evidence when the proposed shape changes materially.
-- Apply source-license wording to the actors, uses, and conditions it actually
-  names. Do not infer that an independent user or project acts on behalf of,
-  for the benefit of, or under the direction of an agent or tool provider
-  merely because the user selected that provider's service. Examples
-  introduced by words such as “including” remain scoped by the condition they
-  illustrate.
-- Distinguish inspecting public source for ideas from copying, adapting,
-  redistributing, selecting a dependency, or incorporating the source. A
-  restriction on one of those actions does not silently erase required source
-  inspection when the requested research itself remains permitted.
-- If license interpretation would exclude required evidence, identify the
-  exact clause, actor, beneficiary, direction, and requested use. Resolve a
-  material ambiguity with the user instead of broadening the restriction by
-  association or substituting reputation and secondary summaries for source.
-
-Reference review is a decision gate, not a requirement to copy the reference.
+Apply source-license terms to their exact actors, uses, conditions,
+beneficiaries, and direction. Choosing a provider does not make a user act for
+it; an “including” example remains scoped by its condition. Inspection is
+distinct from copying, adaptation, redistribution, dependency selection, and
+incorporation, so a restriction on one does not spread to another. If an
+interpretation would block required evidence, identify the exact clause and
+roles and resolve material ambiguity with the user. Review does not require
+reuse.
 
 ### AP-MINIMAL-001 — Minimum sufficient implementation
 
-Use the accepted contract and source evidence to identify the correct owner,
-affected flow, and necessary boundaries before minimizing code. Then use the
-first option that fully satisfies those constraints:
+After identifying the contract, evidence, owner, flow, and boundaries, take the
+first sufficient option: no change; existing owner, helper, or pattern;
+standard library or native platform; accepted dependency that owns the
+behavior; minimum correct local code.
 
-1. Make no change when the required behavior already exists.
-2. Reuse an existing correct owner, helper, or pattern in the repository.
-3. Use the standard library or a native platform capability.
-4. Use an already accepted dependency that owns the behavior.
-5. Implement the minimum local code that is correct and maintainable.
+Judge the whole lifecycle, including duplicate truth, coordination, coupling,
+migration and removal, portability, operations, proof, and agent context. Scope
+instructions narrowly; retain non-obvious constraints and reusable
+behavior-changing workflows, not generic or duplicated policy. Load details
+only when needed.
 
-Evaluate minimality across the accepted system and its lifecycle, not only the
-current patch. Lines, files, dependencies, and patch size are evidence, not
-objectives. Include duplicated truth, cross-owner coordination, coupling,
-migration and removal, portability, operations, and proof cost.
-
-A smaller patch is not minimal when it preserves a known misplaced or duplicate
-owner, patches a symptom below its shared cause, bypasses an accepted boundary,
-or increases downstream coordination. A necessary root-cause or ownership
-correction may be locally larger. Use patch size only as a tie-breaker among
-shapes that satisfy the same contract, ownership, lifecycle, and proof duties.
-
-Prefer deletion over addition, direct ownership over adapters, and fewer files
-over scaffolding. Minimalism must not remove required behavior, trust-boundary
+A patch is not minimal if it preserves a wrong or duplicate owner, treats a
+symptom below its shared cause, bypasses a boundary, or raises downstream cost.
+Prefer deletion, direct ownership, and fewer files; use patch size only between
+equally correct system shapes. Never remove required behavior, trust-boundary
 validation, data-loss protection, security, accessibility, or the cheapest
 runnable check for non-trivial logic.
 
-Ponytail is the adopted agent-side aid for this discipline when the host
-supports it; it is a fallible implementation bias, not an architectural
-authority. Apply its YAGNI, shortest-diff, standard-library, native, and
-one-line heuristics only after the constraints above. Repository contracts,
-ownership, evidence, dependency decisions, safety, accessibility, portability,
-proof obligations, and explicit user choices take precedence. Do not invoke
-Ponytail to avoid a necessary architectural or root-cause change.
-
-Use the upstream project directly rather than copying its rules or adapters.
-The reviewed source is
-[DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail/tree/16f29800fd2681bdf24f3eb4ccffe38be3baec6b).
-If Ponytail is unavailable or disabled, the self-contained requirements above
-still apply. Its instruction hooks improve consistency; they do not prove
-compliance.
+When available, use upstream
+[Ponytail](https://github.com/DietrichGebert/ponytail/tree/16f29800fd2681bdf24f3eb4ccffe38be3baec6b)
+as a fallible code-shape bias after these constraints. Its absence does not
+suspend them, and its hooks do not prove compliance.
 
 ### AP-DEPENDENCY-001 — Dependency gate
 
-Choose dependencies for architectural fit and net system simplicity, not name
-recognition or short-term convenience.
-
-Before adding a crate, package, framework, service, or embedded project:
-
-- State the capability and contract it would own.
-- Consider the standard library, owned code, and multiple credible candidates.
-- Compare maintenance, platform fit, correctness, transitive weight, licensing,
-  API stability, and the lines and complexity removed.
-- Record the chosen candidate, meaningful rejections, and replacement cost.
-- Pin deliberately and add the smallest check that proves the relied-on behavior.
-
-Remove a dependency when it no longer owns enough behavior to justify its cost.
+Before adding a dependency, name its capability and contract. Compare owned
+code, the standard library, and credible candidates for correctness,
+maintenance, platform and license fit, transitive weight, API stability, and
+net complexity. Record the choice, meaningful rejections, and replacement cost;
+pin it and prove the relied-on behavior. Remove it when its ownership no longer
+justifies its cost.
 
 ### AP-OWNERSHIP-001 — One owner per invariant
 
-Every invariant, state transition, and user-visible policy must have one clear
-owner. Other components may consume its output; they must not independently
-reconstruct or reinterpret the same truth.
-
-Required practice:
-
-- Name the owner before adding adapters or synchronization.
-- Prefer deleting duplicate owners over reconciling them.
-- Keep policy at the highest layer that has the necessary context and mechanism
-  at the lowest layer that can enforce it correctly.
-- Make cross-boundary data explicit and versioned when independently released
-  components depend on it.
+Give every invariant, state transition, and user-visible policy one owner;
+consumers must not reconstruct or reinterpret it. Name the owner before adapters
+or synchronization and delete duplicates. Put policy at the highest layer with
+enough context and enforcement at the lowest correct layer. Make cross-boundary
+data explicit and versioned for independently released consumers.
 
 ### AP-TEST-001 — Strong and few tests
 
-Tests exist to protect contracts, regressions, boundaries, and failure modes
-that matter to users or future agents. Prefer one strong test with meaningful
-setup and assertions over several thin tests.
+Protect meaningful contracts, regressions, boundaries, and failures with a few
+strong tests. Use TDD for deterministic helpers, parsers, protocol behavior,
+and regressions whose expected behavior is known first; use contract-first
+integration checks for layout, runtime, architecture, forks, and dogfood.
 
-Required practice:
-
-- Use TDD for deterministic helpers, parsers, protocol behavior, and regressions
-  when the expected behavior can be stated before implementation.
-- Choose contract-first integration checks for layout, runtime integration,
-  architecture choices, forks, and dogfooding surfaces.
-- Delete or merge tests that duplicate another proof, assert implementation
-  trivia, or preserve scaffolding.
-- Test observable effects rather than mirroring literals, defaults, or source
-  structure.
-- Add absence guards only when absence is itself a security, licensing, size,
-  ownership, or known-regression contract.
+For consequential agent-instruction, prompt, or skill changes, run isolated
+representative tasks without supplying the expected conclusion. Structural
+checks prove structure, not agent behavior. Test observable effects; delete
+duplicate proof, implementation trivia, and scaffolding. Guard absence only
+when absence is a security, licensing, size, ownership, or known-regression
+contract.
 
 ### AP-PROOF-001 — Explicit proof lifecycle
 
-Claims and proofs have a lifecycle. A passing check supports only the exact
-revision, environment, and surface it exercised.
+Proof supports only its recorded command or observation, revision, environment,
+result, and exercised surface. Distinguish proposed, implemented, mechanically
+verified, dogfooded, accepted, and promoted states; rerun stale proof and never
+widen its claim.
 
-Required practice:
+For performance claims, measure the bottleneck, compare the same representative
+workload and environment with a recorded baseline, retain a correctness oracle,
+and report a distribution or bound. Preserve constraining negative results.
 
-- Record the command or observation, relevant environment, revision, and result.
-- Distinguish proposed, implemented, mechanically verified, manually dogfooded,
-  accepted, and promoted states.
-- Re-run stale proof after relevant code, dependency, platform, or contract
-  changes.
-- Never promote a narrower check into a broader claim.
-- Preserve important negative results; they constrain the next valid design.
+A review or simplification pass that materially changes its subject invalidates
+completion. Repeat it on the revised state and declare convergence only after a
+full pass finds no actionable in-scope bugs or simplifications.
 
 ### AP-PLAN-001 — Durable planning state
 
-Keep the outcomes and constraints that later work needs in the project's
-durable planning system or canonical documentation. An issue represents a
-chosen goal, decision, material defect, or schedulable follow-up. Review and
-implementation methods belong to that issue.
+Keep later-needed outcomes and constraints in the designated planning system or
+canonical docs. Issues represent chosen goals, decisions, material defects, or
+schedulable follow-ups; methods stay in their owning issue.
 
-An agent run is one uninterrupted execution ending when control returns to the
-user, including automatic continuations. A run may inspect any planning state
-read-only. A run that writes planning state or implementation may use one of two
-issue-work shapes:
+A run includes automatic continuations and ends when control returns. Planning
+reads are unrestricted. A run that writes planning state or implementation uses
+one shape:
 
-1. Own at most one issue. The run may create, claim, update, implement, or close
-   that issue.
-2. Use a bounded planning-only batch with explicit user authorization over a
-   named or accepted issue set. The run may create, update, or close only that
-   set; it may not claim an issue or make implementation edits.
+1. Own at most one issue; create, claim, update, implement, or close only it.
+2. With explicit user authorization, create, update, or close a named or
+   accepted planning-only batch; claim nothing and edit no implementation.
 
 Do not combine these shapes in one run.
 
-Required practice:
+Bind implementation work to its issue before planning or code writes. When that
+issue completes, blocks, or hands off, return without starting another. Report
+unapproved findings; create separate issues only for material out-of-scope or
+independently schedulable work, and outside an authorized batch defer creation.
 
-- Bind an implementation run to its one owning issue before its first issue
-  write or implementation edit.
-- After the owning implementation issue is complete, blocked, or handed off,
-  stop and return control to the user. Do not begin another issue, including
-  work newly unblocked by the completion.
-- Leave unapproved follow-up findings as reported findings. A planning-only
-  batch may include only its named or accepted issue set.
-- After review, fresh-eyes, simplification, or verification of an owning issue,
-  update its editable fields to describe the accepted state instead of pass
-  chronology.
-- Create a separate issue only for a material finding outside the prior owning
-  scope or one worth scheduling on its own. Outside an authorized planning-only
-  batch, defer creation to a later run. Name it after the outcome or finding.
-- Record the contract, decision boundary, dependencies, acceptance evidence,
-  material negative results, and rejected alternatives that constrain later
-  work.
-- Reserve append-only comments and audit records for chronology needed as
-  evidence. Keep raw command logs and build transcripts with their proof. Omit
-  baseline hashes, failed attempts, and candidate scoring unless they constrain
-  later work.
-- Keep issue status honest: planned, active, blocked, and complete are distinct.
-- Model real prerequisites as dependencies; do not create decorative graphs.
-- Reconcile planning state with the repository before handoff.
-- Use the repository-designated issue tool and never edit its storage directly.
-
-Do not erase approvals, contract changes, material failures, or evidence needed
-to understand the accepted result.
+Keep editable fields at accepted current state after review, simplification, or
+verification; reserve append-only history for needed evidence. Preserve
+contracts, decisions, dependencies, acceptance evidence, material negative
+results and failures, constraining rejections, and approvals. Keep raw logs with
+their proof. Keep status honest, model only real prerequisites, and reconcile
+before handoff. Use the designated issue tool; never edit its storage directly.
 
 ### AP-CI-001 — Bounded continuous integration
 
-Hosted automation must buy enough confidence to justify its financial,
-latency, security, and maintenance cost.
-
-Before enabling CI:
-
-- Name the protected contract and why local verification is insufficient.
-- Bound triggers, job count, timeouts, permissions, artifacts, cache growth, and
-  concurrency.
-- Prefer one cheap deterministic job before matrices or scheduled runs.
-- Make fork and secret behavior explicit.
-- Record the evidence required to expand, reduce, or remove the workflow.
-
-Private-repository minutes and cache storage are product constraints, not an
-invisible externality.
+Before hosted automation, name its contract and why local proof is
+insufficient. Bound triggers, jobs, timeouts, permissions, artifacts, cache,
+concurrency; specify fork and secret behavior. Prefer one cheap deterministic
+job. Record when to expand, reduce, or remove. Confidence must justify its
+financial, latency, security, and maintenance costs, including private minutes
+and storage.
 
 ### AP-EXCEPTION-001 — Explicit local exceptions
 
-A local rule may narrow, replace, or suspend an imported protocol only through
-an explicit exception approved by the user or named project authority.
-
-Each exception records:
-
-- the protocol ID;
-- its exact scope;
-- the reason the canonical rule does not fit;
-- who approved it and when;
-- an expiry or review condition when the exception is temporary.
-
-Unrecorded conflicts are drift. A local rule that merely adds detail without
-changing the canonical requirement is an overlay, not an exception.
+Only an exception approved by the user or named authority may narrow, replace,
+or suspend an import. Record protocol ID, exact scope, reason, approver, date,
+and any expiry or review condition. Unrecorded conflicts are drift; additive
+detail is an overlay.
 
 ### AP-GIT-001 — Safe repository history
 
-Repository history is shared user state. Preserve unrelated work, follow the
-local branch and promotion model, and use the least destructive operation that
-achieves the requested result.
+Repository history is shared user state. Inspect status and local policy;
+preserve unrelated or concurrent work and use the least destructive sufficient
+operation.
 
-Required practice:
-
-- Inspect status and repository instructions before editing.
-- Treat existing and concurrent changes as user-owned unless proven otherwise.
-- Fold a correction into the current task's unpublished commit when it belongs
-  to the same unit of work. Refresh and reverify dependent local commits and
-  generated artifacts.
-- Use a follow-up commit after a push, promotion, release, external pin, or any
-  other point where someone outside the current local work can rely on the
-  revision.
-- Do not reset, discard, force-push, rewrite published history, or create a
-  branch without authority from the user or repository policy.
-- Verify the intended diff before committing and the remote state after pushing.
-- Make rollbacks additive through a reviewed revert unless policy says otherwise.
+Amend the unpublished task commit for same-task corrections; refresh downstream
+commits and generated artifacts. After external reliance (push, promotion,
+release, or pin), commit corrections separately. Never reset, discard,
+force-push, rewrite published history, or create a branch without authority.
+Verify intended diff before commit and remote state after push. Roll back with a
+reviewed revert unless local policy says otherwise.
 
 ### AP-PORTABILITY-001 — Portable core with explicit platform seams
 
-Do not let one operating system's APIs, process model, paths, packaging, or
-event facilities become an accidental foundation when supported targets are
-broader.
-
-Required practice:
-
-- Keep platform-neutral contracts and state in the core.
-- Isolate OS-specific code behind the smallest meaningful seam.
-- Evaluate Linux and macOS implications before adopting foundational runtime,
-  process, graphics, filesystem, or transport dependencies.
-- Prove platform behavior on the platform; compilation alone is narrower
-  evidence.
-- Record intentionally unsupported platforms rather than implying portability.
+Keep multi-OS contracts and state neutral; isolate system APIs, processes,
+paths, packaging, and events. Evaluate targets before foundational runtime,
+graphics, filesystem, or transport choices. Prove behavior on each platform,
+not by compilation; name unsupported targets.
 
 ### AP-TERMINAL-001 — Terminal state authority
 
-One component must be authoritative for terminal semantic state. Renderers,
-transports, and clients consume versioned projections; they must not invent a
-second emulator state machine.
-
-Required practice:
-
-- Define ownership of parsing, grid state, modes, scrollback, selection,
-  graphics, title, and process attachment.
-- Specify whether clients receive raw bytes, checkpoints plus tails, structured
-  frames, or another explicit replication contract.
-- Treat reconnect, resize, alternate-screen state, partial parser input, and
-  slow consumers as contract cases.
-- Test semantic equivalence at attachment boundaries, not only visual similarity.
+One component owns terminal parsing, grid, modes, scrollback, selection,
+graphics, title, and process attachment; others consume versioned projections,
+never a second emulator. Define replication as raw bytes, checkpoints plus
+tails, structured frames, or another contract. Cover reconnect, resize,
+alternate screen, partial input, and slow consumers; test semantic attachment
+equivalence, not visuals alone.
 
 ### AP-FAILURE-001 — Designed lifecycle and failure semantics
 
-Long-lived sessions and services must define lifecycle, recovery, and pressure
-behavior before happy-path feature breadth.
-
-Required practice:
-
-- Name state transitions for start, attach, detach, crash, restart, shutdown,
-  version mismatch, and abandoned resources.
-- Bound queues, memory, retries, timeouts, and slow-consumer behavior.
-- Make cancellation ownership and cleanup idempotent.
-- Preserve enough durable state to meet the recovery contract and no more.
-- Test failures deterministically where possible and dogfood the remaining
-  process and platform interactions.
+Long-lived sessions and services define start, attach/detach, crash/restart,
+shutdown, version mismatch, abandonment; bound queues, memory, retries,
+timeouts, and slow-consumer impact. Own cancellation and idempotent cleanup;
+persist only required recovery state. Test deterministic failures when
+practical; dogfood other process/platform cases.
 
 ## Repository-local rules
 

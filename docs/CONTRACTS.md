@@ -66,8 +66,8 @@ explicit user decision.
 ORBS v1, ORBF v1, and their canonical `orbit-protocol` package were accepted at
 `838b67652c4df1979e599b9c401ee664ffac66bd`. Venus still consumes the package at
 `c905bf9610581747f1b07565814b501ca66cfaa6`; that revision is an ancestor of
-`838b67652c4df1979e599b9c401ee664ffac66bd` and the current runtime proof
-`8e3ba0beeb18157dc5a48c68c38812fa8d8fb779`. The protocol package, root
+`838b67652c4df1979e599b9c401ee664ffac66bd` and the final ORBS v1 proof
+`840a67c0cb32b334ed54888321d5ca77e58117b0`. The protocol package, root
 manifest, and lockfile are byte-identical across those revisions. The
 intervening Orbit changes are compatible runtime resource-lifetime,
 transport-pressure, lifecycle, and terminal-authority hardening, so they
