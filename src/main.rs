@@ -4,7 +4,9 @@ mod platform;
 mod presentation;
 
 use libghostty_vt::{
-    Terminal, TerminalOptions, focus,
+    Terminal, TerminalOptions,
+    fmt::Format,
+    focus,
     key::{
         Action as GhosttyKeyAction, Encoder as KeyEncoder, Event as GhosttyKeyEvent, Key,
         Mods as GhosttyModifiers,
@@ -15,11 +17,13 @@ use libghostty_vt::{
     },
     paste,
     screen::Screen,
-    terminal::{Mode, ScrollViewport},
+    selection::{FormatOptions, Selection},
+    terminal::{Mode, Point, PointCoordinate, ScrollViewport},
 };
 use orbit_protocol::session::{
     self, ClientMessage, Failure, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers,
-    MouseAction, MouseButton, PhysicalKey, ServerMessage, SurfaceSize,
+    MouseAction, MouseButton, PhysicalKey, SelectionAction, ServerMessage, SurfaceSize,
+    ViewportCell,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -61,6 +65,13 @@ struct Client {
     output: OutputQueue,
     close_after_flush: bool,
     negotiation_deadline: Option<Instant>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SelectionState {
+    anchor: Option<ViewportCell>,
+    copied: Option<String>,
+    visible: bool,
 }
 
 impl Client {
@@ -145,6 +156,7 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
     let mut extractor = Extractor::new()?;
     let mut revision = 0;
     let mut client: Option<Client> = None;
+    let mut selection = SelectionState::default();
     let mut pty_open = true;
     loop {
         if platform::termination_requested() {
@@ -152,11 +164,14 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
         }
         if let Some(status) = pty.try_wait()? {
             pty.stop_and_reap();
-            let changed = drain_exited_pty(&mut pty, &mut terminal)?;
+            let changed = clear_selection(&terminal, &mut selection, true)?
+                | drain_exited_pty(&mut pty, &mut terminal, &mut selection)?;
             fail_on_pty_write_overflow(&response_overflow)?;
             if changed {
                 revision = next_revision(revision)?;
-                publish_frame(&mut client, &mut extractor, revision, &terminal)?;
+                if !publish_frame(&mut client, &mut extractor, revision, &terminal)? {
+                    disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+                }
             }
             let code = status.code().unwrap_or(1);
             if let Some(client) = &mut client {
@@ -169,7 +184,7 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             .and_then(|client| client.negotiation_deadline)
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
-            client = None;
+            disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
         }
 
         let readiness = platform::poll(
@@ -186,12 +201,14 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             accept_clients(&listener, &mut client)?;
         }
         if readiness.pty_read {
-            let (open, changed) = read_pty_turn(&mut pty, &mut terminal)?;
+            let (open, changed) = read_pty_turn(&mut pty, &mut terminal, &mut selection)?;
             fail_on_pty_write_overflow(&response_overflow)?;
             pty_open = open;
             if changed {
                 revision = next_revision(revision)?;
-                publish_frame(&mut client, &mut extractor, revision, &terminal)?;
+                if !publish_frame(&mut client, &mut extractor, revision, &terminal)? {
+                    disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+                }
             }
         }
         if readiness.pty_write && pty_open {
@@ -209,16 +226,16 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
                 &writes,
                 &mut extractor,
                 &mut revision,
+                &mut selection,
             )?
         {
-            client = None;
+            disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
         }
         if let Some(active) = &mut client {
-            match active.output.flush(&mut active.stream) {
-                Ok(true) if active.close_after_flush && active.output.is_empty() => client = None,
-                Ok(true) => {}
-                Ok(false) => client = None,
-                Err(error) => return Err(error.into()),
+            let disconnect = !active.output.flush(&mut active.stream)?
+                || active.close_after_flush && active.output.is_empty();
+            if disconnect {
+                disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
             }
         }
     }
@@ -327,6 +344,7 @@ fn print_server_message(message: &ServerMessage) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_client(
     client: &mut Client,
     terminal: &mut Terminal<'static, '_>,
@@ -335,6 +353,7 @@ fn read_client(
     writes: &RefCell<VecDeque<u8>>,
     extractor: &mut Extractor,
     revision: &mut u64,
+    selection: &mut SelectionState,
 ) -> Result<bool> {
     if client.close_after_flush {
         return Ok(true);
@@ -372,7 +391,7 @@ fn read_client(
         };
         drop(client.input.drain(..length));
         let keep = handle_client_message(
-            client, message, terminal, pty, size, writes, extractor, revision,
+            client, message, terminal, pty, size, writes, extractor, revision, selection,
         )?;
         if !keep {
             return Ok(false);
@@ -393,6 +412,7 @@ fn handle_client_message(
     writes: &RefCell<VecDeque<u8>>,
     extractor: &mut Extractor,
     revision: &mut u64,
+    selection: &mut SelectionState,
 ) -> Result<bool> {
     if client.negotiation_deadline.is_some() {
         return match message {
@@ -440,8 +460,14 @@ fn handle_client_message(
     let Some(pty) = pty else {
         return queue_failure(client, FailureCode::Terminal, "PTY is closed".into());
     };
+    if let ClientMessage::Selection(action) = message {
+        return handle_selection(
+            client, action, terminal, *size, extractor, revision, selection,
+        );
+    }
     let message = match message {
         ClientMessage::Resize(surface) => {
+            clear_selection(terminal, selection, true)?;
             pty.resize(surface)?;
             terminal.resize(
                 surface.cols,
@@ -484,6 +510,7 @@ fn handle_client_message(
                     unshifted_codepoint: None,
                 })
             } else {
+                clear_selection(terminal, selection, false)?;
                 terminal.scroll_viewport(ScrollViewport::Delta(delta));
                 *revision = next_revision(*revision)?;
                 if !client.output.push_message(&ServerMessage::Accepted)? {
@@ -513,6 +540,7 @@ fn handle_client_message(
         if return_live && !encoded.is_empty() && terminal.active_screen()? == Screen::Primary {
             let scrollbar = terminal.scrollbar()?;
             if scrollbar.offset.saturating_add(scrollbar.len) < scrollbar.total {
+                clear_selection(terminal, selection, false)?;
                 terminal.scroll_viewport(ScrollViewport::Bottom);
                 *revision = next_revision(*revision)?;
                 true
@@ -529,6 +557,181 @@ fn handle_client_message(
         return queue_frame(client, extractor, *revision, terminal, false);
     }
     Ok(true)
+}
+
+fn handle_selection(
+    client: &mut Client,
+    action: SelectionAction,
+    terminal: &Terminal<'static, '_>,
+    size: SurfaceSize,
+    extractor: &mut Extractor,
+    revision: &mut u64,
+    state: &mut SelectionState,
+) -> Result<bool> {
+    let (anchor, cell, finish) = match action {
+        SelectionAction::Begin {
+            frame_revision,
+            cell,
+        } => {
+            if frame_revision != *revision {
+                return queue_failure(
+                    client,
+                    FailureCode::InvalidInput,
+                    "selection frame revision is stale".into(),
+                );
+            }
+            (cell, cell, false)
+        }
+        SelectionAction::Update { cell } => {
+            let Some(anchor) = state.anchor else {
+                return queue_failure(
+                    client,
+                    FailureCode::InvalidInput,
+                    "selection update has no active selection".into(),
+                );
+            };
+            (anchor, cell, false)
+        }
+        SelectionAction::Finish { cell } => {
+            let Some(anchor) = state.anchor else {
+                return queue_failure(
+                    client,
+                    FailureCode::InvalidInput,
+                    "selection finish has no active selection".into(),
+                );
+            };
+            (anchor, cell, true)
+        }
+        SelectionAction::Copy => {
+            return match &state.copied {
+                Some(text) => client
+                    .output
+                    .push_message(&ServerMessage::CopiedText(text.clone())),
+                None => queue_failure(
+                    client,
+                    FailureCode::InvalidInput,
+                    "no finished selection to copy".into(),
+                ),
+            };
+        }
+    };
+    if cell.x >= size.cols || cell.y >= size.rows {
+        return queue_failure(
+            client,
+            FailureCode::InvalidInput,
+            "selection cell is outside the current viewport".into(),
+        );
+    }
+    if !client.output.can_push_result_frame() {
+        return queue_failure(
+            client,
+            FailureCode::Terminal,
+            "client output queue cannot admit selection frame".into(),
+        );
+    }
+    let next = match next_revision(*revision) {
+        Ok(next) => next,
+        Err(error) => return queue_failure(client, FailureCode::Terminal, error.to_string()),
+    };
+
+    let selected = match viewport_selection(terminal, anchor, cell) {
+        Ok(selected) => selected,
+        Err(error) => return queue_failure(client, FailureCode::Terminal, error.to_string()),
+    };
+    let copied = if finish {
+        match format_selection(terminal, &selected) {
+            Ok(text) => Some(text),
+            Err(error) => {
+                return queue_failure(client, FailureCode::Terminal, error.to_string());
+            }
+        }
+    } else {
+        None
+    };
+    if let Err(error) = terminal.set_selection(Some(&selected)) {
+        return queue_failure(client, FailureCode::Terminal, error.to_string());
+    }
+
+    state.anchor = (!finish).then_some(anchor);
+    if finish || matches!(action, SelectionAction::Begin { .. }) {
+        state.copied = copied;
+    }
+    state.visible = true;
+    *revision = next;
+    if !client.output.push_message(&ServerMessage::Accepted)? {
+        return Ok(false);
+    }
+    queue_frame(client, extractor, *revision, terminal, false)
+}
+
+fn viewport_selection<'terminal>(
+    terminal: &'terminal Terminal<'_, '_>,
+    start: ViewportCell,
+    end: ViewportCell,
+) -> Result<Selection<'terminal>> {
+    let point = |cell: ViewportCell| {
+        terminal.grid_ref(Point::Viewport(PointCoordinate {
+            x: cell.x,
+            y: u32::from(cell.y),
+        }))
+    };
+    Ok(Selection::new(point(start)?, point(end)?, false))
+}
+
+fn format_selection(terminal: &Terminal<'_, '_>, selected: &Selection<'_>) -> Result<String> {
+    let options = || {
+        FormatOptions::new()
+            .with_emit_format(Format::Plain)
+            .with_unwrap(true)
+            .with_trim(true)
+            .with_selection(selected)
+    };
+    let required = match terminal.format_selection_buf(options(), &mut []) {
+        Ok(Some(written)) => written,
+        Ok(None) => return Err("terminal returned no selection text".into()),
+        Err(libghostty_vt::error::Error::OutOfSpace { required }) => required,
+        Err(error) => return Err(error.into()),
+    };
+    if required > session::MAX_COPY_BYTES {
+        return Err("selection text exceeds the copy limit".into());
+    }
+    let mut bytes = vec![0; required];
+    let Some(written) = terminal.format_selection_buf(options(), &mut bytes)? else {
+        return Err("terminal returned no selection text".into());
+    };
+    bytes.truncate(written);
+    Ok(String::from_utf8(bytes)?)
+}
+
+fn clear_selection(
+    terminal: &Terminal<'_, '_>,
+    state: &mut SelectionState,
+    forget_copy: bool,
+) -> Result<bool> {
+    let changed = state.visible;
+    if changed {
+        terminal.set_selection(None)?;
+    }
+    state.anchor = None;
+    state.visible = false;
+    if forget_copy {
+        state.copied = None;
+    }
+    Ok(changed)
+}
+
+fn apply_pty_output(
+    terminal: &mut Terminal<'_, '_>,
+    state: &mut SelectionState,
+    bytes: &[u8],
+) -> Result {
+    let screen = terminal.active_screen()?;
+    clear_selection(terminal, state, false)?;
+    terminal.vt_write(bytes);
+    if terminal.active_screen()? != screen {
+        state.copied = None;
+    }
+    Ok(())
 }
 
 fn queue_failure(client: &mut Client, code: FailureCode, mut detail: String) -> Result<bool> {
@@ -619,7 +822,7 @@ fn encode_input(
             output.truncate(written);
             Ok(output)
         }
-        ClientMessage::Hello { .. } | ClientMessage::Resize(_) => {
+        ClientMessage::Hello { .. } | ClientMessage::Resize(_) | ClientMessage::Selection(_) => {
             Err("message is not terminal input".into())
         }
     }
@@ -659,10 +862,14 @@ fn ghostty_mouse_button(button: MouseButton) -> GhosttyMouseButton {
     }
 }
 
-fn drain_exited_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<bool> {
+fn drain_exited_pty(
+    pty: &mut Pty,
+    terminal: &mut Terminal<'_, '_>,
+    selection: &mut SelectionState,
+) -> Result<bool> {
     let mut changed = false;
     for _ in 0..MAX_EXIT_PTY_READS {
-        let (open, read) = read_pty_turn(pty, terminal)?;
+        let (open, read) = read_pty_turn(pty, terminal, selection)?;
         changed |= read;
         if !open || !read {
             break;
@@ -671,12 +878,16 @@ fn drain_exited_pty(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<bo
     Ok(changed)
 }
 
-fn read_pty_turn(pty: &mut Pty, terminal: &mut Terminal<'_, '_>) -> Result<(bool, bool)> {
+fn read_pty_turn(
+    pty: &mut Pty,
+    terminal: &mut Terminal<'_, '_>,
+    selection: &mut SelectionState,
+) -> Result<(bool, bool)> {
     let mut bytes = [0; 8192];
     match pty.read(&mut bytes)? {
         PtyIo::Ready(0) | PtyIo::Closed => Ok((false, false)),
         PtyIo::Ready(read) => {
-            terminal.vt_write(&bytes[..read]);
+            apply_pty_output(terminal, selection, &bytes[..read])?;
             Ok((true, true))
         }
         PtyIo::Blocked => Ok((true, false)),
@@ -730,20 +941,33 @@ fn next_revision(revision: u64) -> Result<u64> {
         .ok_or_else(|| "presentation revision exhausted".into())
 }
 
+fn disconnect_client(
+    client: &mut Option<Client>,
+    terminal: &Terminal<'_, '_>,
+    selection: &mut SelectionState,
+    revision: &mut u64,
+) -> Result {
+    *client = None;
+    if clear_selection(terminal, selection, true)? {
+        *revision = next_revision(*revision)?;
+    }
+    Ok(())
+}
+
 fn publish_frame(
     active: &mut Option<Client>,
     extractor: &mut Extractor,
     revision: u64,
     terminal: &Terminal<'static, '_>,
-) -> Result {
+) -> Result<bool> {
     if let Some(client) = active
         .as_mut()
         .filter(|client| client.negotiation_deadline.is_none() && !client.close_after_flush)
         && !queue_frame(client, extractor, revision, terminal, false)?
     {
-        *active = None;
+        return Ok(false);
     }
-    Ok(())
+    Ok(true)
 }
 
 fn queue_frame(
@@ -840,6 +1064,174 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_selection_rejects_stale_input_and_freezes_copy() -> Result {
+        let mut text = terminal_with_scrollback(100)?;
+        text.vt_write(b"A\r\n\r\nZ\r\nB\x1b[3;1H\x1b[X");
+        let cell = |(x, y)| ViewportCell { x, y };
+        for (start, end, expected) in [
+            ((0, 0), (0, 0), "A"),
+            ((0, 0), (0, 3), "A\n\n\nB"),
+            ((0, 3), (0, 0), "A\n\n\nB"),
+            ((0, 1), (0, 1), ""),
+            ((0, 2), (0, 2), ""),
+        ] {
+            let selected = viewport_selection(&text, cell(start), cell(end))?;
+            assert_eq!(format_selection(&text, &selected)?, expected);
+        }
+
+        for line in 0..30 {
+            text.vt_write(format!("history-{line:02}\r\n").as_bytes());
+        }
+        text.scroll_viewport(ScrollViewport::Top);
+        let history = text.scrollbar()?;
+        assert_eq!(history.offset, 0);
+        assert!(history.offset + history.len < history.total);
+        let retained = viewport_selection(&text, cell((0, 0)), cell((0, 0)))?;
+        assert_eq!(format_selection(&text, &retained)?, "A");
+
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let mut terminal = terminal()?;
+        terminal.vt_write("alpha 界\r\n".as_bytes());
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut extractor = Extractor::new()?;
+        let mut revision = 1;
+        let mut selection = SelectionState::default();
+
+        macro_rules! reject {
+            ($action:expr) => {{
+                let unchanged = revision;
+                assert!(handle_client_message(
+                    &mut client,
+                    ClientMessage::Selection($action),
+                    &mut terminal,
+                    Some(&pty),
+                    &mut size,
+                    &writes,
+                    &mut extractor,
+                    &mut revision,
+                    &mut selection,
+                )?);
+                assert_eq!(revision, unchanged);
+                assert_eq!(selection, SelectionState::default());
+                assert!(matches!(
+                    flush_message(&mut client, &mut peer)?,
+                    ServerMessage::Failure(Failure {
+                        code: FailureCode::InvalidInput,
+                        ..
+                    })
+                ));
+            }};
+        }
+        macro_rules! select {
+            ($action:expr) => {{
+                assert!(handle_client_message(
+                    &mut client,
+                    ClientMessage::Selection($action),
+                    &mut terminal,
+                    Some(&pty),
+                    &mut size,
+                    &writes,
+                    &mut extractor,
+                    &mut revision,
+                    &mut selection,
+                )?);
+                assert_eq!(
+                    flush_message(&mut client, &mut peer)?,
+                    ServerMessage::Accepted
+                );
+                let ServerMessage::Frame(frame) = flush_message(&mut client, &mut peer)? else {
+                    return Err("selection did not publish a frame".into());
+                };
+                assert_eq!(frame.revision, revision);
+                assert!(frame.rows[0].cells[0].style.selected);
+            }};
+        }
+        reject!(session::SelectionAction::Begin {
+            frame_revision: 0,
+            cell: session::ViewportCell { x: 0, y: 0 },
+        });
+        reject!(session::SelectionAction::Update {
+            cell: session::ViewportCell { x: 0, y: 0 },
+        });
+        reject!(session::SelectionAction::Begin {
+            frame_revision: revision,
+            cell: session::ViewportCell { x: size.cols, y: 0 },
+        });
+
+        select!(session::SelectionAction::Begin {
+            frame_revision: revision,
+            cell: session::ViewportCell { x: 0, y: 0 },
+        });
+        apply_pty_output(&mut terminal, &mut selection, b"!")?;
+        assert_eq!(selection, SelectionState::default());
+        reject!(session::SelectionAction::Finish {
+            cell: session::ViewportCell { x: 6, y: 0 },
+        });
+
+        select!(session::SelectionAction::Begin {
+            frame_revision: revision,
+            cell: session::ViewportCell { x: 0, y: 0 },
+        });
+        select!(session::SelectionAction::Update {
+            cell: session::ViewportCell { x: 6, y: 0 },
+        });
+        select!(session::SelectionAction::Finish {
+            cell: session::ViewportCell { x: 6, y: 0 },
+        });
+
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Selection(session::SelectionAction::Copy),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+            &mut selection,
+        )?);
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::CopiedText("alpha 界".into())
+        );
+
+        apply_pty_output(&mut terminal, &mut selection, b"later")?;
+        assert!(
+            !Extractor::new()?.frame(revision + 1, &terminal)?.rows[0]
+                .cells
+                .iter()
+                .any(|cell| cell.style.selected)
+        );
+        assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
+
+        let (mut blocked, _) = attached_client()?;
+        fill_output(&mut blocked.output)?;
+        let stable_revision = revision;
+        assert!(!handle_client_message(
+            &mut blocked,
+            ClientMessage::Selection(session::SelectionAction::Begin {
+                frame_revision: revision,
+                cell: session::ViewportCell { x: 1, y: 0 },
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut extractor,
+            &mut revision,
+            &mut selection,
+        )?);
+        assert_eq!(revision, stable_revision);
+        assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
+
+        apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1049h")?;
+        assert_eq!(selection, SelectionState::default());
+        Ok(())
+    }
+
+    #[test]
     fn authoritative_viewport_routes_wheel_and_key_from_terminal_state() -> Result {
         let (mut client, mut peer) = attached_client()?;
         let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
@@ -851,6 +1243,7 @@ mod tests {
         let writes = RefCell::new(VecDeque::new());
         let mut extractor = Extractor::new()?;
         let mut revision = 0;
+        let mut selection = SelectionState::default();
         macro_rules! accept {
             ($message:expr, $frame:expr) => {{
                 let previous_revision = revision;
@@ -863,6 +1256,7 @@ mod tests {
                     &writes,
                     &mut extractor,
                     &mut revision,
+                    &mut selection,
                 )?);
                 assert_eq!(revision, previous_revision + u64::from($frame));
                 assert_eq!(
@@ -981,6 +1375,7 @@ mod tests {
             &writes,
             &mut extractor,
             &mut revision,
+            &mut selection,
         )?);
         assert_eq!(terminal.scrollbar()?.offset, before_empty.offset);
         assert_eq!(revision, 6);
@@ -1009,6 +1404,7 @@ mod tests {
             &writes,
             &mut extractor,
             &mut revision,
+            &mut selection,
         )?);
         assert_eq!(size, resized);
         assert_eq!(revision, 7);
@@ -1064,6 +1460,7 @@ mod tests {
         let writes = RefCell::new(VecDeque::new());
         let mut extractor = Extractor::new()?;
         let mut revision = 0;
+        let mut selection = SelectionState::default();
 
         assert!(read_client(
             &mut client,
@@ -1073,6 +1470,7 @@ mod tests {
             &writes,
             &mut extractor,
             &mut revision,
+            &mut selection,
         )?);
         assert!(writes.borrow().is_empty());
         Ok(())
@@ -1097,6 +1495,7 @@ mod tests {
         let writes = RefCell::new(VecDeque::new());
         let mut extractor = Extractor::new()?;
         let mut revision = 0;
+        let mut selection = SelectionState::default();
 
         assert!(read_client(
             &mut client,
@@ -1106,6 +1505,7 @@ mod tests {
             &writes,
             &mut extractor,
             &mut revision,
+            &mut selection,
         )?);
         assert!(client.close_after_flush);
         assert!(client.input.is_empty());
@@ -1134,6 +1534,7 @@ mod tests {
         ));
         let mut extractor = Extractor::new()?;
         let mut revision = 0;
+        let mut selection = SelectionState::default();
 
         assert!(handle_client_message(
             &mut client,
@@ -1144,6 +1545,7 @@ mod tests {
             &writes,
             &mut extractor,
             &mut revision,
+            &mut selection,
         )?);
         assert_eq!(writes.borrow().len(), MAX_PTY_WRITE_BYTES);
         assert!(client.close_after_flush);
@@ -1174,6 +1576,7 @@ mod tests {
         let writes = RefCell::new(queued);
         let mut extractor = Extractor::new()?;
         let mut revision = 0;
+        let mut selection = SelectionState::default();
 
         discard_pty_writes(&writes);
         assert!(writes.borrow().is_empty());
@@ -1187,6 +1590,7 @@ mod tests {
             &writes,
             &mut extractor,
             &mut revision,
+            &mut selection,
         )?);
         assert!(writes.borrow().is_empty());
         assert!(client.output.flush(&mut client.stream)?);
@@ -1245,12 +1649,13 @@ mod tests {
         ];
         let mut pty = Pty::spawn(&command, size)?;
         let mut terminal = terminal()?;
+        let mut selection = SelectionState::default();
         let deadline = Instant::now() + std::time::Duration::from_secs(2);
 
         let status = loop {
             if let Some(status) = pty.try_wait()? {
                 pty.stop_and_reap();
-                drain_exited_pty(&mut pty, &mut terminal)?;
+                drain_exited_pty(&mut pty, &mut terminal, &mut selection)?;
                 break status;
             }
             if Instant::now() >= deadline {

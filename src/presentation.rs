@@ -252,6 +252,12 @@ pub(crate) struct OutputQueue {
 }
 
 impl OutputQueue {
+    pub(crate) fn can_push_result_frame(&self) -> bool {
+        self.bytes
+            .saturating_add(MAX_FRAME_BYTES + 2 * HEADER_BYTES)
+            <= MAX_OUTPUT_BYTES
+    }
+
     pub(crate) fn push_message(&mut self, message: &ServerMessage) -> Result<bool> {
         Ok(self.push(encode_server_message(message)?, false))
     }

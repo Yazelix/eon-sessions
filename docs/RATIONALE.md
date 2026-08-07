@@ -115,14 +115,17 @@ time under shells, Neovim, Yazi, resize storms, and high-volume output.
 Venus should decode ORBF v1 into persistent presentation state before drawing.
 A later patch decoder can update the same model. Orbit remains the schema owner;
 Venus must not handwrite a second interpretation. The accepted `orbit-protocol`
-package owns ORBF v1 decoding and complete-frame reduction plus the ORBS v1
-attachment, frame-envelope, lifecycle, semantic-input, paste, and resize codec.
+package owns ORBF v1 decoding and complete-frame reduction plus ORBS v1
+attachment, frame-envelope, lifecycle, semantic-input, paste, and resize. The
+approved ORBS v2 candidate replaces that session revision, retains those
+message families, and adds revision-bound selection and bounded copy.
 Venus pins one accepted Orbit proof revision and uses those values directly.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
-row contents, and stable anchors. A future Venus may own ephemeral viewport
-position and selection gestures over materialized rows. Orbit retains copy
-extraction and content semantics. Agent observation or durable session history
+row contents, and stable anchors. Venus may own ephemeral pointer gestures over
+materialized rows, but sends their revision and current-viewport cells to Orbit;
+Orbit owns selection resolution, selected presentation, copy extraction, and
+content semantics. Agent observation or durable session history
 needs a separate Eon or Orbit observer contract; the presentation stream is
 not a durable event log.
 

@@ -19,7 +19,8 @@ use orbit_protocol::{
     Frame, Screen,
     session::{
         self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, PhysicalKey,
-        ServerMessage, SurfaceSize, decode_server_message, encode_client_message,
+        SelectionAction, ServerMessage, SurfaceSize, ViewportCell, decode_server_message,
+        encode_client_message,
     },
 };
 
@@ -193,6 +194,25 @@ impl Client {
             x: 1.0,
             y: 1.0,
         }))
+    }
+
+    fn select(&mut self, action: SelectionAction) -> TestResult {
+        self.request_frame(&ClientMessage::Selection(action))
+    }
+
+    fn copy(&mut self) -> TestResult<Result<String, FailureCode>> {
+        write_message(
+            self.reader.get_mut(),
+            &ClientMessage::Selection(SelectionAction::Copy),
+        )?;
+        loop {
+            match read_message(&mut self.reader)? {
+                ServerMessage::CopiedText(text) => return Ok(Ok(text)),
+                ServerMessage::Frame(frame) => self.frame = *frame,
+                ServerMessage::Failure(failure) => return Ok(Err(failure.code)),
+                message => return Err(format!("unexpected copy response: {message:?}").into()),
+            }
+        }
     }
 
     fn wait_title(&mut self, expected: &str) -> TestResult {
@@ -567,6 +587,122 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
     assert!(wait_bounded(&mut server)?.success());
     assert!(!socket.exists());
     wait_process_gone(shell_pid)?;
+    Ok(())
+}
+
+#[test]
+fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
+    let dir = TestDir::new("selection")?;
+    let socket = dir.0.join("orbit.sock");
+    let release = dir.0.join("release");
+    let activity = dir.0.join("activity");
+    let stop = dir.0.join("stop");
+    let script = format!(
+        "stty -echo; \
+         while [ ! -e '{release}' ]; do sleep 0.01; done; \
+         printf 'first-界-é-second'; printf '\\033]2;selection-ready\\033\\\\'; \
+         while [ ! -e '{activity}' ]; do sleep 0.01; done; \
+         printf '\\033]2;selection-activity\\033\\\\'; \
+         while [ ! -e '{stop}' ]; do sleep 0.01; done",
+        release = release.display(),
+        activity = activity.display(),
+        stop = stop.display(),
+    );
+    let mut server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .spawn()?,
+    );
+
+    let mut first = Client::attach(&socket)?;
+    let surface = SurfaceSize {
+        cols: 12,
+        rows: 4,
+        cell_width: 8,
+        cell_height: 16,
+        screen_width: 96,
+        screen_height: 64,
+        padding_top: 0,
+        padding_bottom: 0,
+        padding_left: 0,
+        padding_right: 0,
+    };
+    first.request_frame(&ClientMessage::Resize(surface))?;
+    fs::write(&release, b"release")?;
+    first.wait_title("selection-ready")?;
+
+    first.select(SelectionAction::Begin {
+        frame_revision: first.frame.revision,
+        cell: ViewportCell { x: 4, y: 1 },
+    })?;
+    first.select(SelectionAction::Update {
+        cell: ViewportCell { x: 0, y: 0 },
+    })?;
+    first.select(SelectionAction::Finish {
+        cell: ViewportCell { x: 0, y: 0 },
+    })?;
+    assert!(
+        first
+            .frame
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .any(|cell| cell.style.selected)
+    );
+    assert_eq!(first.copy()?, Ok("first-界-é-second".into()));
+
+    let selected = first.frame.clone();
+    drop(first);
+    let mut second = Client::attach(&socket)?;
+    assert!(second.frame.revision > selected.revision);
+    assert_eq!(frame_text(&second.frame), frame_text(&selected));
+    assert!(
+        !second
+            .frame
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .any(|cell| cell.style.selected)
+    );
+    assert_eq!(second.copy()?, Err(FailureCode::InvalidInput));
+
+    second.select(SelectionAction::Begin {
+        frame_revision: second.frame.revision,
+        cell: ViewportCell { x: 4, y: 1 },
+    })?;
+    second.select(SelectionAction::Update {
+        cell: ViewportCell { x: 0, y: 0 },
+    })?;
+    second.select(SelectionAction::Finish {
+        cell: ViewportCell { x: 0, y: 0 },
+    })?;
+    fs::write(&activity, b"activity")?;
+    second.wait_title("selection-activity")?;
+    assert!(
+        !second
+            .frame
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .any(|cell| cell.style.selected)
+    );
+    assert_eq!(second.copy()?, Ok("first-界-é-second".into()));
+
+    second.request_frame(&ClientMessage::Resize(SurfaceSize {
+        cols: 13,
+        screen_width: 104,
+        ..surface
+    }))?;
+    assert_eq!(second.copy()?, Err(FailureCode::InvalidInput));
+
+    fs::write(&stop, b"stop")?;
+    drop(second);
+    assert!(wait_bounded(&mut server)?.success());
+    assert!(!socket.exists());
     Ok(())
 }
 

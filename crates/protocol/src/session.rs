@@ -7,13 +7,15 @@ use crate::{Frame, MAX_CELLS, MAX_FRAME_BYTES, MIN_FRAME_BYTES, decode_frame, en
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
 pub const MAX_PAYLOAD_BYTES: usize = MAX_FRAME_BYTES;
 /// Largest paste accepted as one semantic event.
 pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
+/// Largest copied plain text returned as one semantic result.
+pub const MAX_COPY_BYTES: usize = 1024 * 1024;
 /// Largest text associated with one key event.
 pub const MAX_KEY_TEXT_BYTES: usize = 4096;
 /// Largest client-visible failure detail.
@@ -25,6 +27,7 @@ const CLIENT_MOUSE: u8 = 3;
 const CLIENT_FOCUS: u8 = 4;
 const CLIENT_PASTE: u8 = 5;
 const CLIENT_RESIZE: u8 = 6;
+const CLIENT_SELECTION: u8 = 7;
 const SERVER_ATTACHED: u8 = 129;
 const SERVER_BUSY: u8 = 130;
 const SERVER_INCOMPATIBLE: u8 = 131;
@@ -32,6 +35,12 @@ const SERVER_FRAME: u8 = 132;
 const SERVER_ACCEPTED: u8 = 133;
 const SERVER_FAILURE: u8 = 134;
 const SERVER_EXITED: u8 = 135;
+const SERVER_COPIED_TEXT: u8 = 136;
+
+const SELECTION_BEGIN: u8 = 0;
+const SELECTION_UPDATE: u8 = 1;
+const SELECTION_FINISH: u8 = 2;
+const SELECTION_COPY: u8 = 3;
 
 /// A local-session validation or framing failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +155,8 @@ pub enum ClientMessage {
     Paste(Vec<u8>),
     /// A requested terminal and drawing-surface size.
     Resize(SurfaceSize),
+    /// One authoritative current-viewport selection or copy action.
+    Selection(SelectionAction),
 }
 
 /// An Orbit-to-client session message.
@@ -168,6 +179,8 @@ pub enum ServerMessage {
     Failure(Failure),
     /// The authoritative child process exited.
     Exited { code: i32 },
+    /// One complete bounded plain-text copy result.
+    CopiedText(String),
 }
 
 /// Physical key action.
@@ -494,6 +507,29 @@ pub struct SurfaceSize {
     pub padding_right: u32,
 }
 
+/// One cell in the current authoritative viewport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewportCell {
+    pub x: u16,
+    pub y: u16,
+}
+
+/// Cell-granular host selection and explicit copy actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionAction {
+    /// Start against the exact complete frame the client used for hit testing.
+    Begin {
+        frame_revision: u64,
+        cell: ViewportCell,
+    },
+    /// Move the active selection endpoint.
+    Update { cell: ViewportCell },
+    /// Freeze the selection and its bounded plain text.
+    Finish { cell: ViewportCell },
+    /// Request the last successfully frozen plain text.
+    Copy,
+}
+
 /// Stable class of client-visible failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureCode {
@@ -555,6 +591,7 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
         CLIENT_FOCUS => Ok((1, 1)),
         CLIENT_PASTE => Ok((0, MAX_PASTE_BYTES)),
         CLIENT_RESIZE => Ok((36, 36)),
+        CLIENT_SELECTION => Ok((1, 13)),
         value => Err(Error::InvalidTag {
             field: "client message",
             value,
@@ -569,6 +606,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
         SERVER_INCOMPATIBLE | SERVER_EXITED => Ok((4, 4)),
         SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_PAYLOAD_BYTES)),
         SERVER_FAILURE => Ok((5, 5 + MAX_FAILURE_BYTES)),
+        SERVER_COPIED_TEXT => Ok((0, MAX_COPY_BYTES)),
         value => Err(Error::InvalidTag {
             field: "server message",
             value,
@@ -576,7 +614,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v1 header.
+/// Encodes one client message with an ORBS v2 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -645,6 +683,31 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
                 put_u32(&mut payload, value);
             }
             CLIENT_RESIZE
+        }
+        ClientMessage::Selection(action) => {
+            match action {
+                SelectionAction::Begin {
+                    frame_revision,
+                    cell,
+                } => {
+                    payload.push(SELECTION_BEGIN);
+                    payload.extend_from_slice(&frame_revision.to_le_bytes());
+                    put_u16(&mut payload, cell.x);
+                    put_u16(&mut payload, cell.y);
+                }
+                SelectionAction::Update { cell } => {
+                    payload.push(SELECTION_UPDATE);
+                    put_u16(&mut payload, cell.x);
+                    put_u16(&mut payload, cell.y);
+                }
+                SelectionAction::Finish { cell } => {
+                    payload.push(SELECTION_FINISH);
+                    put_u16(&mut payload, cell.x);
+                    put_u16(&mut payload, cell.y);
+                }
+                SelectionAction::Copy => payload.push(SELECTION_COPY),
+            }
+            CLIENT_SELECTION
         }
     };
     frame_message(kind, payload)
@@ -744,6 +807,34 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
             validate_surface_size(&size)?;
             ClientMessage::Resize(size)
         }
+        CLIENT_SELECTION => ClientMessage::Selection(match reader.u8()? {
+            SELECTION_BEGIN => SelectionAction::Begin {
+                frame_revision: u64::from_le_bytes(reader.array()?),
+                cell: ViewportCell {
+                    x: reader.u16()?,
+                    y: reader.u16()?,
+                },
+            },
+            SELECTION_UPDATE => SelectionAction::Update {
+                cell: ViewportCell {
+                    x: reader.u16()?,
+                    y: reader.u16()?,
+                },
+            },
+            SELECTION_FINISH => SelectionAction::Finish {
+                cell: ViewportCell {
+                    x: reader.u16()?,
+                    y: reader.u16()?,
+                },
+            },
+            SELECTION_COPY => SelectionAction::Copy,
+            value => {
+                return Err(Error::InvalidTag {
+                    field: "selection action",
+                    value,
+                });
+            }
+        }),
         value => {
             return Err(Error::InvalidTag {
                 field: "client message",
@@ -755,7 +846,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v1 header.
+/// Encodes one server message with an ORBS v2 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -789,6 +880,11 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
         ServerMessage::Exited { code } => {
             payload.extend_from_slice(&code.to_le_bytes());
             SERVER_EXITED
+        }
+        ServerMessage::CopiedText(text) => {
+            validate_bound(text.len(), MAX_COPY_BYTES)?;
+            payload.extend_from_slice(text.as_bytes());
+            SERVER_COPIED_TEXT
         }
     };
     frame_message(kind, payload)
@@ -828,6 +924,15 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
         SERVER_EXITED => ServerMessage::Exited {
             code: i32::from_le_bytes(reader.array()?),
         },
+        SERVER_COPIED_TEXT => {
+            let text = str::from_utf8(payload)
+                .map_err(|_| Error::InvalidUtf8 {
+                    field: "copied text",
+                })?
+                .to_owned();
+            reader.take_remaining();
+            ServerMessage::CopiedText(text)
+        }
         value => {
             return Err(Error::InvalidTag {
                 field: "server message",
@@ -1283,6 +1388,17 @@ mod tests {
                 padding_left: 10,
                 padding_right: 10,
             }),
+            ClientMessage::Selection(SelectionAction::Begin {
+                frame_revision: 42,
+                cell: ViewportCell { x: 3, y: 4 },
+            }),
+            ClientMessage::Selection(SelectionAction::Update {
+                cell: ViewportCell { x: 5, y: 6 },
+            }),
+            ClientMessage::Selection(SelectionAction::Finish {
+                cell: ViewportCell { x: 7, y: 8 },
+            }),
+            ClientMessage::Selection(SelectionAction::Copy),
         ];
 
         for message in messages {
@@ -1307,6 +1423,7 @@ mod tests {
                 code: FailureCode::InvalidInput,
                 detail: "bad key".into(),
             }),
+            ServerMessage::CopiedText("first\n界e\u{301}".into()),
             ServerMessage::Exited { code: 17 },
         ];
 
@@ -1411,6 +1528,7 @@ mod tests {
 
     #[test]
     fn framing_is_incremental_strict_and_bounded() {
+        assert_eq!(VERSION, 2);
         let encoded = encode_client_message(&ClientMessage::Hello {
             minimum_version: VERSION,
             maximum_version: VERSION,
@@ -1433,7 +1551,9 @@ mod tests {
         corrupt[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
         assert_eq!(
             client_message_len(&corrupt),
-            Err(Error::UnsupportedVersion { version: 2 })
+            Err(Error::UnsupportedVersion {
+                version: VERSION + 1,
+            })
         );
         corrupt = encoded.clone();
         corrupt[7] = 1;
@@ -1531,6 +1651,15 @@ mod tests {
             Err(Error::PayloadTooLarge {
                 size: MAX_PASTE_BYTES + 1,
                 maximum: MAX_PASTE_BYTES,
+            })
+        );
+
+        let oversized = ServerMessage::CopiedText("x".repeat(MAX_COPY_BYTES + 1));
+        assert_eq!(
+            encode_server_message(&oversized),
+            Err(Error::PayloadTooLarge {
+                size: MAX_COPY_BYTES + 1,
+                maximum: MAX_COPY_BYTES,
             })
         );
 
@@ -1730,5 +1859,37 @@ mod tests {
                 ..
             })
         ));
+
+        let mut selection =
+            encode_client_message(&ClientMessage::Selection(SelectionAction::Begin {
+                frame_revision: 1,
+                cell: ViewportCell { x: 0, y: 0 },
+            }))
+            .unwrap();
+        selection[HEADER_BYTES] = u8::MAX;
+        assert_eq!(
+            decode_client_message(&selection),
+            Err(Error::InvalidTag {
+                field: "selection action",
+                value: u8::MAX,
+            })
+        );
+
+        let mut copied = encode_server_message(&ServerMessage::CopiedText("text".into())).unwrap();
+        copied[HEADER_BYTES] = 0xff;
+        assert_eq!(
+            decode_server_message(&copied),
+            Err(Error::InvalidUtf8 {
+                field: "copied text"
+            })
+        );
+
+        assert_eq!(
+            server_message_len(&header(SERVER_COPIED_TEXT, MAX_COPY_BYTES + 1)),
+            Err(Error::PayloadTooLarge {
+                size: MAX_COPY_BYTES + 1,
+                maximum: MAX_COPY_BYTES,
+            })
+        );
     }
 }
