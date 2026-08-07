@@ -294,7 +294,23 @@ fn wait_file_text_matching(path: &Path, ready: impl Fn(&str) -> bool) -> TestRes
 }
 
 fn server_command() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_yazelix-orbit"));
+    let binary = env!("CARGO_BIN_EXE_yazelix-orbit");
+    let mut command = if let Some(valgrind) = std::env::var_os("ORBIT_MEMCHECK") {
+        let mut command = Command::new(valgrind);
+        command.args([
+            "--tool=memcheck",
+            "--leak-check=full",
+            "--show-leak-kinds=all",
+            "--errors-for-leak-kinds=definite,indirect",
+            "--track-fds=yes",
+            "--error-exitcode=97",
+            "--log-file=target/orbit-memcheck.%p.log",
+            binary,
+        ]);
+        command
+    } else {
+        Command::new(binary)
+    };
     command
         .arg("serve")
         .env("PS1", "")
@@ -600,6 +616,7 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
     let script = format!(
         "stty -echo; \
          while [ ! -e '{release}' ]; do sleep 0.01; done; \
+         i=0; while [ \"$i\" -lt 6 ]; do printf 'history-%02d\\n' \"$i\"; i=$((i + 1)); done; \
          printf 'first-界-é-second'; printf '\\033]2;selection-ready\\033\\\\'; \
          while [ ! -e '{activity}' ]; do sleep 0.01; done; \
          printf '\\033[?1049hhidden\\033[?1049l\\033]2;selection-activity\\033\\\\'; \
@@ -620,11 +637,11 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
 
     let mut first = Client::attach(&socket)?;
     let surface = SurfaceSize {
-        cols: 12,
+        cols: 20,
         rows: 4,
         cell_width: 8,
         cell_height: 16,
-        screen_width: 96,
+        screen_width: 160,
         screen_height: 64,
         padding_top: 0,
         padding_bottom: 0,
@@ -634,16 +651,21 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
     first.request_frame(&ClientMessage::Resize(surface))?;
     fs::write(&release, b"release")?;
     first.wait_title("selection-ready")?;
+    let live = first.frame.clone();
+    first.wheel(session::MouseButton::Four)?;
+    assert_ne!(first.frame.rows, live.rows);
+    first.wheel(session::MouseButton::Five)?;
+    assert_eq!(first.frame.rows, live.rows);
 
     first.select(SelectionAction::Begin {
         frame_revision: first.frame.revision,
-        cell: ViewportCell { x: 4, y: 1 },
+        cell: ViewportCell { x: 16, y: 3 },
     })?;
     first.select(SelectionAction::Update {
-        cell: ViewportCell { x: 0, y: 0 },
+        cell: ViewportCell { x: 0, y: 3 },
     })?;
     first.select(SelectionAction::Finish {
-        cell: ViewportCell { x: 0, y: 0 },
+        cell: ViewportCell { x: 0, y: 3 },
     })?;
     assert!(
         first
@@ -672,13 +694,13 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
 
     second.select(SelectionAction::Begin {
         frame_revision: second.frame.revision,
-        cell: ViewportCell { x: 4, y: 1 },
+        cell: ViewportCell { x: 16, y: 3 },
     })?;
     second.select(SelectionAction::Update {
-        cell: ViewportCell { x: 0, y: 0 },
+        cell: ViewportCell { x: 0, y: 3 },
     })?;
     second.select(SelectionAction::Finish {
-        cell: ViewportCell { x: 0, y: 0 },
+        cell: ViewportCell { x: 0, y: 3 },
     })?;
     fs::write(&activity, b"activity")?;
     second.wait_title("selection-activity")?;
@@ -693,8 +715,8 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
     assert_eq!(second.copy()?, Ok("first-界-é-second".into()));
 
     second.request_frame(&ClientMessage::Resize(SurfaceSize {
-        cols: 13,
-        screen_width: 104,
+        cols: 21,
+        screen_width: 168,
         ..surface
     }))?;
     assert_eq!(second.copy()?, Ok("first-界-é-second".into()));

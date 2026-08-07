@@ -334,6 +334,6 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 7,161 |
+| Product Rust source and tests | 7,183 |
 | Governance Rust tool and tests | 765 |
-| **Total owned Rust** | **7,926** |
+| **Total owned Rust** | **7,948** |
