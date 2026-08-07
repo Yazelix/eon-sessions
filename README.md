@@ -24,6 +24,8 @@ replaces that session revision, retains those messages, and adds selection and
 copy for Orbit's server and diagnostic client. It resolves selection from the
 exact complete-frame revision and current viewport, publishes selected cells
 through normal frames, and returns only bounded plain text frozen at Finish.
+That frozen value survives later terminal output, resize or reflow, and active-
+screen transitions; a new selection, client loss, or exit clears it.
 Its canonical key validation rejects C0,
 DEL, and macOS function-key PUA values as associated text before they reach the
 terminal encoder; clients represent those inputs with semantic key identity.
@@ -330,6 +332,6 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 7,162 |
+| Product Rust source and tests | 7,161 |
 | Governance Rust tool and tests | 765 |
-| **Total owned Rust** | **7,927** |
+| **Total owned Rust** | **7,926** |

@@ -125,7 +125,10 @@ Orbit owns history because the authoritative terminal supplies wrap metadata,
 row contents, and stable anchors. Venus may own ephemeral pointer gestures over
 materialized rows, but sends their revision and current-viewport cells to Orbit;
 Orbit owns selection resolution, selected presentation, copy extraction, and
-content semantics. Agent observation or durable session history
+content semantics. Once extraction succeeds, Orbit keeps that bounded frozen
+text independent of later terminal output, resize or reflow, and active-screen
+transitions until a new selection or client-lifecycle boundary clears it. Agent
+observation or durable session history
 needs a separate Eon or Orbit observer contract; the presentation stream is
 not a durable event log.
 

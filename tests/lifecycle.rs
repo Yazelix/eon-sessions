@@ -602,7 +602,7 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
          while [ ! -e '{release}' ]; do sleep 0.01; done; \
          printf 'first-界-é-second'; printf '\\033]2;selection-ready\\033\\\\'; \
          while [ ! -e '{activity}' ]; do sleep 0.01; done; \
-         printf '\\033]2;selection-activity\\033\\\\'; \
+         printf '\\033[?1049hhidden\\033[?1049l\\033]2;selection-activity\\033\\\\'; \
          while [ ! -e '{stop}' ]; do sleep 0.01; done",
         release = release.display(),
         activity = activity.display(),
@@ -697,7 +697,7 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
         screen_width: 104,
         ..surface
     }))?;
-    assert_eq!(second.copy()?, Err(FailureCode::InvalidInput));
+    assert_eq!(second.copy()?, Ok("first-界-é-second".into()));
 
     fs::write(&stop, b"stop")?;
     drop(second);

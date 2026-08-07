@@ -467,7 +467,7 @@ fn handle_client_message(
     }
     let message = match message {
         ClientMessage::Resize(surface) => {
-            clear_selection(terminal, selection, true)?;
+            clear_selection(terminal, selection, false)?;
             pty.resize(surface)?;
             terminal.resize(
                 surface.cols,
@@ -725,12 +725,8 @@ fn apply_pty_output(
     state: &mut SelectionState,
     bytes: &[u8],
 ) -> Result {
-    let screen = terminal.active_screen()?;
     clear_selection(terminal, state, false)?;
     terminal.vt_write(bytes);
-    if terminal.active_screen()? != screen {
-        state.copied = None;
-    }
     Ok(())
 }
 
@@ -1227,7 +1223,10 @@ mod tests {
         assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
 
         apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1049h")?;
-        assert_eq!(selection, SelectionState::default());
+        assert_eq!(terminal.active_screen()?, Screen::Alternate);
+        assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
+        assert!(selection.anchor.is_none());
+        assert!(!selection.visible);
         Ok(())
     }
 
