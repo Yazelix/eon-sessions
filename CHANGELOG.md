@@ -15,6 +15,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 - Attachment begins with a bounded, versioned, complete structured
   presentation frame followed by ordered revisions. Frames carry rich terminal
   presentation state and explicitly declare Kitty graphics unsupported.
+- The accepted `840a67c0cb32b334ed54888321d5ca77e58117b0` proof adds
+  `ORB-C8`: Orbit owns the libghostty viewport across client disconnection,
+  routes vertical wheel input through authoritative mouse and alternate-screen
+  modes or retained history, and returns scrolled primary output to the live
+  area after terminal-producing key input.
 - ORBF v1 has one dependency-free canonical Rust package for Orbit and pinned
   consumers, with owned frame values, strict bounded decoding and encoding,
   and rejection of stale or duplicate complete-frame revisions.
