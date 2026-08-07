@@ -139,9 +139,14 @@ interpreting them again and adds no dependency.
 The Linux-only proof uses one foreground binary for both roles:
 
 ```sh
+tic -x terminfo/eon.terminfo
 cargo run -- serve
 cargo run -- client
 ```
+
+The first command installs Orbit's `eon` terminal identity in the current
+user's terminfo database. Eon distribution remains responsible for installing
+the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
@@ -336,4 +341,6 @@ and protocol remain platform-neutral.
 | --- | ---: |
 | Product Rust source and tests | 7,183 |
 | Governance Rust tool and tests | 765 |
+| Eon terminfo source | 2 |
 | **Total owned Rust** | **7,948** |
+| **Total owned implementation source** | **7,950** |

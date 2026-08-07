@@ -65,7 +65,7 @@ impl Pty {
             .stdin(Stdio::from(stdin))
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(slave))
-            .env("TERM", "xterm-ghostty")
+            .env("TERM", "eon")
             .env("COLORTERM", "truecolor");
         unsafe {
             child_command.pre_exec(|| {

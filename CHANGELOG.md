@@ -6,6 +6,9 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Orbit PTY children advertise `TERM=eon`. The repository-owned terminfo entry
+  inherits the conservative `xterm-256color` baseline and is installed with
+  standard `tic` before source-run sessions.
 - Orbit owns one real Linux PTY shell and the sole authoritative libghostty
   terminal state in a foreground process.
 - The bounded local client can detach and reattach to the same live shell,
