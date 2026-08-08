@@ -27,8 +27,8 @@ system must preserve.
 | `ORB-C6` | The presentation boundary carries rich terminal state or explicitly declares unsupported capabilities; it never silently collapses the contract to plain text | Orbit authoritative extraction plus canonical `orbit-protocol` values and codecs | Proved | `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` | `orb-bi4.1` Formatter counterexamples; the real-terminal corpus in [`src/presentation.rs`](../src/presentation.rs) checks exact default and palette colors, complete cell style, combining and wide graphemes, erased-cell background, cursor, title, working directory, screen, capabilities, resize, and equal reattachment; strict canonical ORBF-in-ORBS codec coverage; canonical Rust verification suite | Version 1 explicitly leaves Kitty graphics unsupported; expanding that capability requires a later user decision |
 | `ORB-C7` | A slow, broken, or disconnected client cannot block authoritative PTY processing or cause unbounded buffering or frame history | Orbit authoritative owner loop (attachment transport) | Proved | `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` | Fixed protocol and PTY-write bounds, whole-input pressure failure and client closure, resized-state revision retention under full client output, one-read steady-state fairness, terminal-response overflow failure, 4 MiB stopped-reader convergence, bounded silent-peer release, deterministic simultaneous rejection, one-shot process-group cleanup, four-read post-exit work bound, and writing-descendant shutdown checks | The proof is limited to the accepted local one-client boundary |
 | `ORB-C8` | On a healthy attachment, Orbit routes each vertical-wheel message from authoritative libghostty state. Active mouse tracking sends only mouse input to the PTY; otherwise an active alternate screen with DEC private mode 1007 sends only terminal-aware cursor input; otherwise Orbit applies one row of native viewport movement. Primary movement clamps within retained history and no-history movement is an accepted no-op. Every host-owned wheel action queues Accepted followed by a strictly newer complete frame of the resulting authoritative viewport. A successful semantic key event that emits PTY bytes returns a scrolled primary viewport to the live area and queues its resulting complete frame. Client disconnection does not transfer, reconstruct, or reset viewport ownership; reattachment begins with one coherent frame of the current Orbit-owned viewport. Rejected or malformed input cannot mutate terminal state, and viewport interaction cannot block authoritative PTY processing. | Orbit authoritative owner loop with libghostty native viewport and canonical semantic input | Proved | `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` | [`authoritative_viewport_routes_wheel_and_key_from_terminal_state`](../src/main.rs) checks native one-row movement and clamps, mouse reporting, DEC 1007 and DECCKM routing, accepted alternate-screen no-op framing, key return-live, empty key input, and PTY-pressure rejection; [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs) checks pinned output, exact coherent reattachment, key return-live, clear/prune/resize/reflow convergence, rapid wheel input, stopped-reader release, and final PTY convergence; canonical Rust and governance verification suite | Selection, copy, search, effects, graphics, and restart persistence remain outside this contract |
-| `ORB-C9` | On a healthy ORBS v2 attachment, a client may begin one linear cell selection against the exact current complete-frame revision, update and finish it with ordered current-viewport cells, then request the frozen bounded plain text. Orbit rejects stale revisions, invalid coordinates, invalid phase order, formatting overflow, and pressure without partially changing accepted state or returning partial text. Orbit alone resolves and owns selection, selected presentation, and copied text. A non-selection terminal mutation cancels an active selection and clears selected presentation before mutation. Once Finish succeeds, later terminal output, resize or reflow, and active-screen transitions cannot reinterpret or erase the immutable frozen candidate. A newer valid Begin, client loss, or exit clears it without resetting the ORB-C8 viewport. Selection and copy work and buffering remain bounded and cannot block authoritative PTY processing or cleanup. | Orbit authoritative owner loop with libghostty current-viewport selection and canonical ORBS v2 | Proved | `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` | `orb-j0m.3` focused codec, owner-state, pressure, and real-PTY lifecycle checks, including frozen-copy retention through alternate-screen output and resize; canonical Rust, governance, clippy, and consumer-import suites passed at the exact proof revision | Venus must update separately through `ven-4sn`; native clipboard effects, richer selection gestures, search, graphics, and restart persistence remain outside this contract |
-| `ORB-C10` | Every Orbit-owned PTY child advertises `TERM=eon` and `COLORTERM=truecolor`; the accepted launch environment supplies the repository-owned compiled `eon` terminfo entry, whose initial capability profile inherits `xterm-256color`, so terminfo lookup and the accepted `clear` workflow succeed | Orbit platform PTY seam and [`terminfo/eon.terminfo`](../terminfo/eon.terminfo); Eon distribution installs the entry | Proved | `292b2451c9a1d99390334771a681c7f481c996f2` | `orb-j0m.6` isolated `tic`, `infocmp`, and real-PTY `TERM`, `clear`, and post-clear marker checks; canonical Rust and governance verification suite | Installation by the future Eon runtime closure remains distribution work; the source-run workflow is proved |
+| `ORB-C9` | On a healthy ORBS v2 attachment, a client may begin one linear cell selection against the exact current complete-frame revision, update and finish it with ordered current-viewport cells, then request the frozen bounded plain text. Orbit rejects stale revisions, invalid coordinates, invalid phase order, formatting overflow, and pressure without partially changing accepted state or returning partial text. Orbit alone resolves and owns selection, selected presentation, and copied text. A non-selection terminal mutation cancels an active selection and clears selected presentation before mutation. Once Finish succeeds, later terminal output, resize or reflow, and active-screen transitions cannot reinterpret or erase the immutable frozen candidate. A newer valid Begin, client loss, or exit clears it without resetting the ORB-C8 viewport. Selection and copy work and buffering remain bounded and cannot block authoritative PTY processing or cleanup. | Orbit authoritative owner loop with libghostty current-viewport selection and canonical ORBS v2 | Proved | `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` | `orb-j0m.3` focused codec, owner-state, pressure, and real-PTY lifecycle checks, including frozen-copy retention through alternate-screen output and resize; canonical Rust, governance, clippy, and consumer-import suites passed at the exact proof revision | Native clipboard effects, richer selection gestures, search, graphics, and restart persistence remain outside this contract |
+| `ORB-C10` | Every Orbit-owned PTY child advertises `TERM=eon` and `COLORTERM=truecolor`; the accepted launch environment supplies the repository-owned compiled `eon` terminfo entry, whose initial capability profile inherits `xterm-256color`, so terminfo lookup and the accepted `clear` workflow succeed | Orbit platform PTY seam and [`terminfo/eon.terminfo`](../terminfo/eon.terminfo); Eon distribution installs the entry | Proved | `292b2451c9a1d99390334771a681c7f481c996f2` | `orb-j0m.6` isolated `tic`, `infocmp`, and real-PTY `TERM`, `clear`, and post-clear marker checks; canonical Rust and governance verification suite; Eon `EON-C3` and `EON-C4` composition proof `eae70e8d3ed4348b389f320dfd49d7db29478546` installs the entry with the accepted Orbit revision | No known Nix alpha distribution gap; other distribution formats remain outside the accepted scope |
 
 Commit `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757` is the accepted proof for
 `ORB-C1` through `ORB-C9`. It preserves ORBF v1 while replacing the runtime
@@ -63,29 +63,15 @@ breaking and name affected consumers and update order. A client does not hide a
 server-contract gap behind an adapter or second source of authority without an
 explicit user decision.
 
-ORBS v1, ORBF v1, and their canonical `orbit-protocol` package were accepted at
-`838b67652c4df1979e599b9c401ee664ffac66bd`. Venus still consumes the package at
-`c905bf9610581747f1b07565814b501ca66cfaa6`; that revision is an ancestor of
-`838b67652c4df1979e599b9c401ee664ffac66bd` and the final ORBS v1 proof
-`840a67c0cb32b334ed54888321d5ca77e58117b0`. The protocol package, root
-manifest, and lockfile are byte-identical across those revisions. The
-intervening Orbit changes are compatible runtime resource-lifetime,
-transport-pressure, lifecycle, and terminal-authority hardening, so they
-require no Venus manifest migration.
-Venus records the minimum accepted consumer relationship at
-`8149002c7275a00db1c08fded171e09f249dd977`. Its current product proof
-`8929c9f9d151641a343813ddeb6005cb9c771286` preserves that boundary and the
-exact `orbit-protocol` dependency while adding bounded complete-frame
-replacement and cheaper ASCII shaping. Against Orbit
-`847cab1ca37495c5cd45454623bd81909b488564`, the accepted Linux/Xwayland
-workload reached combined CPU p95 167 percent under the predeclared 200 percent
-ceiling, preserved coherent resize and final convergence, and reattached to the
-surviving PTY. Later boundary changes require an explicit compatible-or-breaking
-classification and coordinated update order; a Venus adapter or second decoder
-does not substitute for updating the shared owner. Orbit accepts ORBF v1 and
-the breaking ORBS v2 replacement at
-`9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`. The current Venus pin is
-intentionally incompatible until `ven-4sn` consumes that exact proof.
+Orbit accepts ORBF v1 and the breaking ORBS v2 replacement at
+`9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`. Venus revision
+`2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832` consumes that exact canonical
+package and preserves the native pair accepted by `orb-j0m.4`. Eon composition
+proof `eae70e8d3ed4348b389f320dfd49d7db29478546` pins Orbit
+`00b136318bea13e3f08d490468f069de6f6b9bd2` and that Venus revision. Later
+boundary changes require an explicit compatible-or-breaking classification and
+coordinated update order; an adapter or second decoder does not substitute for
+updating the shared owner and every known consumer.
 
 `Complete` in `ORB-C4` means the entire ORBF v1 presentation payload for its
 revision. Version 1 carries the current visible presentation and its metadata;
@@ -98,16 +84,13 @@ independent release surface.
 The ORBS v1 lineage intentionally and atomically replaced Orbit's private,
 unaccepted line-oriented diagnostic syntax before Venus implementation. No
 accepted external consumer used that syntax. Orbit's server, diagnostic client,
-output queue, and tests moved together, and Venus pins the canonical package at
-`c905bf9610581747f1b07565814b501ca66cfaa6`. The user selected no adapter,
+output queue, and tests moved together. The user selected no adapter,
 compatibility window, or support for the removed syntax.
 
 The user accepted `ORB-C9` as an owner-first breaking replacement of ORBS v1
-with ORBS v2. Orbit proved v2 first; Venus next updates its exact
-`orbit-protocol` pin through `ven-4sn`, and `orb-j0m.4` accepts the real pair.
-There is no dual-version support, adapter, feature probe, or compatibility
-window. ORBS v1 remains only the last Venus-compatible session revision until
-that separately owned consumer update.
+with ORBS v2. Orbit proved v2 first, Venus consumed it through `ven-4sn`, and
+`orb-j0m.4` accepted the real pair. There is no dual-version support, adapter,
+feature probe, or compatibility window.
 
 ## Outside the initial index
 
