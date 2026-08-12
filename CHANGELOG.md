@@ -6,6 +6,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `26b4b9465b3f0e74f091a0aae93fddc61412b893` proof hardens
+  `ORB-C4` and `ORB-C6`: Orbit honors authoritative DEC 2026 synchronized
+  output, continuing terminal parsing, replies, and ordered effects while
+  holding intermediate frames. Normal completion publishes the latest complete
+  frame; a one-second watchdog releases abandoned holds, and a new client's
+  initial frame waits for completion or timeout. ORBF v1 and ORBS v3 are
+  unchanged.
 - Orbit accepts one optional, versioned 16-color ANSI palette from its
   component launcher before PTY startup. The supplied defaults appear in the
   existing ORBS frames and remain the target of OSC 104 resets; standalone
