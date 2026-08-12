@@ -18,6 +18,7 @@ use libghostty_vt::{
     paste,
     screen::Screen,
     selection::{FormatOptions, Selection},
+    style::RgbColor,
     terminal::{ClipboardWrite, ClipboardWriteError, Mode, Point, PointCoordinate, ScrollViewport},
 };
 use orbit_protocol::session::{
@@ -46,6 +47,7 @@ const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 const MAX_EXIT_PTY_READS: usize = 4;
 const MAX_PENDING_CLIPBOARD_WRITES: usize = 64;
 const CLIENT_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
+const ANSI_PALETTE_ARGUMENT: &str = "--ansi-palette-v1";
 
 const INITIAL_SIZE: SurfaceSize = SurfaceSize {
     cols: 80,
@@ -182,6 +184,7 @@ fn run() -> Result<i32> {
     match arguments.next().as_deref() {
         Some("serve") => {
             let mut arguments: Vec<String> = arguments.collect();
+            let ansi_palette = take_ansi_palette(&mut arguments)?;
             let socket = if arguments.first().is_some_and(|value| value != "--") {
                 PathBuf::from(arguments.remove(0))
             } else {
@@ -193,7 +196,7 @@ fn run() -> Result<i32> {
             if arguments.is_empty() {
                 arguments.push(env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()));
             }
-            run_server(&socket, &arguments)
+            run_server(&socket, &arguments, ansi_palette)
         }
         Some("client") => {
             let socket = arguments
@@ -202,11 +205,73 @@ fn run() -> Result<i32> {
                 .map_or_else(|| platform::default_socket_path(), Ok)?;
             run_client(&socket)
         }
-        _ => Err("usage: yazelix-orbit serve [SOCKET] [-- COMMAND ...] | client [SOCKET]".into()),
+        _ => Err("usage: yazelix-orbit serve [SOCKET] [--ansi-palette-v1 RGB,...] [-- COMMAND ...] | client [SOCKET]".into()),
     }
 }
 
-fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
+fn take_ansi_palette(arguments: &mut Vec<String>) -> Result<Option<[RgbColor; 16]>> {
+    let launch_end = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .unwrap_or(arguments.len());
+    let mut positions = arguments[..launch_end]
+        .iter()
+        .enumerate()
+        .filter_map(|(index, argument)| (argument == ANSI_PALETTE_ARGUMENT).then_some(index));
+    let Some(index) = positions.next() else {
+        return Ok(None);
+    };
+    if positions.next().is_some() {
+        return Err("duplicate --ansi-palette-v1 argument".into());
+    }
+    if launch_end.saturating_sub(2) > 1 {
+        return Err("unexpected argument before the command separator".into());
+    }
+    let value = arguments
+        .get(index + 1)
+        .filter(|_| index + 1 < launch_end)
+        .ok_or("missing --ansi-palette-v1 value")?;
+    let colors = parse_ansi_palette(value)?;
+    arguments.drain(index..=index + 1);
+    Ok(Some(colors))
+}
+
+fn parse_ansi_palette(value: &str) -> Result<[RgbColor; 16]> {
+    let mut entries = value.split(',');
+    let mut colors = [RgbColor::default(); 16];
+    for color in &mut colors {
+        let entry = entries
+            .next()
+            .ok_or("ANSI palette must contain exactly 16 colors")?;
+        if entry.len() != 6 || !entry.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("ANSI palette colors must be six hexadecimal digits".into());
+        }
+        *color = RgbColor {
+            r: u8::from_str_radix(&entry[..2], 16)?,
+            g: u8::from_str_radix(&entry[2..4], 16)?,
+            b: u8::from_str_radix(&entry[4..], 16)?,
+        };
+    }
+    if entries.next().is_some() {
+        return Err("ANSI palette must contain exactly 16 colors".into());
+    }
+    Ok(colors)
+}
+
+fn install_ansi_palette(terminal: &mut Terminal<'_, '_>, colors: Option<[RgbColor; 16]>) -> Result {
+    if let Some(colors) = colors {
+        let mut palette = terminal.default_color_palette()?;
+        palette.0[..16].copy_from_slice(&colors);
+        terminal.set_default_color_palette(Some(palette))?;
+    }
+    Ok(())
+}
+
+fn run_server(
+    socket: &Path,
+    command: &[String],
+    ansi_palette: Option<[RgbColor; 16]>,
+) -> Result<i32> {
     platform::install_shutdown_signals()?;
     let (listener, _socket_guard) = platform::create_listener(socket)?;
     let mut size = INITIAL_SIZE;
@@ -222,6 +287,7 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
         rows: size.rows,
         max_scrollback: 1_000,
     })?;
+    install_ansi_palette(&mut terminal, ansi_palette)?;
     terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
     terminal.on_pty_write(move |_, bytes| {
         if !queue_pty_write(&mut response_sink.borrow_mut(), bytes) {
@@ -1117,7 +1183,10 @@ fn queue_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libghostty_vt::style::RgbColor;
     use std::{thread, time::Instant};
+
+    const TEST_ANSI_PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
 
     fn terminal() -> Result<Terminal<'static, 'static>> {
         terminal_with_scrollback(0)
@@ -1132,6 +1201,94 @@ mod tests {
         })?;
         terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
         Ok(terminal)
+    }
+
+    #[test]
+    fn ansi_palette_is_bounded_and_resets_to_supplied_defaults() -> Result {
+        let mut arguments = vec![
+            "/tmp/orbit.sock".into(),
+            "--ansi-palette-v1".into(),
+            TEST_ANSI_PALETTE.into(),
+            "--".into(),
+            "/bin/sh".into(),
+        ];
+        let colors = take_ansi_palette(&mut arguments)?.expect("palette option");
+        assert_eq!(
+            arguments,
+            ["/tmp/orbit.sock", "--", "/bin/sh"].map(String::from)
+        );
+        assert_eq!(
+            colors[0],
+            RgbColor {
+                r: 0x00,
+                g: 0x01,
+                b: 0x02
+            }
+        );
+        assert_eq!(
+            colors[15],
+            RgbColor {
+                r: 0xf0,
+                g: 0xf1,
+                b: 0xf2
+            }
+        );
+
+        for value in [
+            "",
+            "000000",
+            "00000g",
+            "000000,",
+            TEST_ANSI_PALETTE.trim_end_matches("f0f1f2"),
+        ] {
+            let mut arguments = vec!["--ansi-palette-v1".into(), value.into()];
+            assert!(
+                take_ansi_palette(&mut arguments).is_err(),
+                "accepted {value:?}"
+            );
+        }
+        assert!(take_ansi_palette(&mut vec!["--ansi-palette-v1".into()]).is_err());
+        assert!(
+            take_ansi_palette(&mut vec![
+                "/tmp/orbit.sock".into(),
+                "trailing".into(),
+                "--ansi-palette-v1".into(),
+                TEST_ANSI_PALETTE.into(),
+                "--".into(),
+            ])
+            .is_err()
+        );
+        let mut duplicate = vec![
+            "--ansi-palette-v1".into(),
+            TEST_ANSI_PALETTE.into(),
+            "--ansi-palette-v1".into(),
+            TEST_ANSI_PALETTE.into(),
+        ];
+        assert!(take_ansi_palette(&mut duplicate).is_err());
+        let mut child_arguments = vec![
+            "--".into(),
+            "--ansi-palette-v1".into(),
+            "child-value".into(),
+        ];
+        assert!(take_ansi_palette(&mut child_arguments)?.is_none());
+
+        let mut terminal = terminal()?;
+        let original = terminal.color_palette()?;
+        install_ansi_palette(&mut terminal, Some(colors))?;
+        assert_eq!(&terminal.default_color_palette()?.0[..16], &colors);
+        assert_eq!(&terminal.color_palette()?.0[..16], &colors);
+        assert_eq!(&terminal.color_palette()?.0[16..], &original.0[16..]);
+
+        terminal.vt_write(b"\x1b]4;1;rgb:01/02/03\x1b\\");
+        assert_ne!(terminal.color_palette()?.0[1], colors[1]);
+        assert_eq!(terminal.default_color_palette()?.0[1], colors[1]);
+        terminal.vt_write(b"\x1b]104;1\x1b\\");
+        assert_eq!(terminal.color_palette()?.0[1], colors[1]);
+
+        terminal.vt_write(b"\x1b]4;0;rgb:01/02/03;1;rgb:04/05/06\x1b\\");
+        terminal.vt_write(b"\x1b]104\x1b\\");
+        assert_eq!(&terminal.color_palette()?.0[..16], &colors);
+        Ok(())
     }
 
     fn attached_client() -> Result<(Client, UnixStream)> {

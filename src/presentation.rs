@@ -368,7 +368,7 @@ mod tests {
     impl Server {
         fn start(socket: PathBuf, command: Vec<String>, stop: PathBuf) -> Self {
             let thread = thread::spawn(move || {
-                assert_eq!(crate::run_server(&socket, &command).unwrap(), 0);
+                assert_eq!(crate::run_server(&socket, &command, None).unwrap(), 0);
             });
             Self {
                 thread: Some(thread),
