@@ -395,6 +395,9 @@ fn frame_text(frame: &Frame) -> String {
 #[test]
 fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
     const PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
+    const fn rgb(r: u8, g: u8, b: u8) -> Rgb {
+        Rgb { r, g, b }
+    }
 
     let dir = TestDir::new("ansi-palette")?;
     let socket = dir.0.join("orbit.sock");
@@ -408,42 +411,21 @@ fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
             .spawn()?,
     );
     let first = Client::attach(&socket)?;
-    assert_eq!(first.frame.colors.palette[0], Rgb { r: 0, g: 1, b: 2 });
-    assert_eq!(
-        first.frame.colors.palette[15],
-        Rgb {
-            r: 0xf0,
-            g: 0xf1,
-            b: 0xf2
-        }
-    );
+    assert_eq!(first.frame.colors.palette[0], rgb(0, 1, 2));
+    assert_eq!(first.frame.colors.palette[15], rgb(0xf0, 0xf1, 0xf2));
     assert_eq!(first.frame.colors.palette[16], Rgb::BLACK);
     drop(first);
 
     let mut second = Client::attach(&socket)?;
-    assert_eq!(
-        second.frame.colors.palette[1],
-        Rgb {
-            r: 0x10,
-            g: 0x11,
-            b: 0x12
-        }
-    );
+    assert_eq!(second.frame.colors.palette[1], rgb(0x10, 0x11, 0x12));
     second.paste("printf '\\033]4;1;rgb:01/02/03\\033\\\\'; printf '\\033]2;override\\033\\\\'")?;
     second.enter()?;
     second.wait_title("override")?;
-    assert_eq!(second.frame.colors.palette[1], Rgb { r: 1, g: 2, b: 3 });
+    assert_eq!(second.frame.colors.palette[1], rgb(1, 2, 3));
     second.paste("printf '\\033]104;1\\033\\\\'; printf '\\033]2;reset\\033\\\\'")?;
     second.enter()?;
     second.wait_title("reset")?;
-    assert_eq!(
-        second.frame.colors.palette[1],
-        Rgb {
-            r: 0x10,
-            g: 0x11,
-            b: 0x12
-        }
-    );
+    assert_eq!(second.frame.colors.palette[1], rgb(0x10, 0x11, 0x12));
     drop(second);
     assert!(server.shutdown()?.success());
 

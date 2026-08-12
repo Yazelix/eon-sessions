@@ -224,7 +224,7 @@ fn take_ansi_palette(arguments: &mut Vec<String>) -> Result<Option<[RgbColor; 16
     if positions.next().is_some() {
         return Err("duplicate --ansi-palette-v1 argument".into());
     }
-    if launch_end.saturating_sub(2) > 1 {
+    if launch_end > 3 {
         return Err("unexpected argument before the command separator".into());
     }
     let value = arguments
@@ -1183,7 +1183,6 @@ fn queue_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libghostty_vt::style::RgbColor;
     use std::{thread, time::Instant};
 
     const TEST_ANSI_PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
@@ -1207,7 +1206,7 @@ mod tests {
     fn ansi_palette_is_bounded_and_resets_to_supplied_defaults() -> Result {
         let mut arguments = vec![
             "/tmp/orbit.sock".into(),
-            "--ansi-palette-v1".into(),
+            ANSI_PALETTE_ARGUMENT.into(),
             TEST_ANSI_PALETTE.into(),
             "--".into(),
             "/bin/sh".into(),
@@ -1217,51 +1216,35 @@ mod tests {
             arguments,
             ["/tmp/orbit.sock", "--", "/bin/sh"].map(String::from)
         );
-        assert_eq!(
-            colors[0],
-            RgbColor {
-                r: 0x00,
-                g: 0x01,
-                b: 0x02
-            }
-        );
-        assert_eq!(
-            colors[15],
-            RgbColor {
-                r: 0xf0,
-                g: 0xf1,
-                b: 0xf2
-            }
-        );
 
         for value in [
             "",
             "000000",
             "00000g",
             "000000,",
-            TEST_ANSI_PALETTE.trim_end_matches("f0f1f2"),
+            TEST_ANSI_PALETTE.trim_end_matches(",f0f1f2"),
         ] {
-            let mut arguments = vec!["--ansi-palette-v1".into(), value.into()];
+            let mut arguments = vec![ANSI_PALETTE_ARGUMENT.into(), value.into()];
             assert!(
                 take_ansi_palette(&mut arguments).is_err(),
                 "accepted {value:?}"
             );
         }
-        assert!(take_ansi_palette(&mut vec!["--ansi-palette-v1".into()]).is_err());
+        assert!(take_ansi_palette(&mut vec![ANSI_PALETTE_ARGUMENT.into()]).is_err());
         assert!(
             take_ansi_palette(&mut vec![
                 "/tmp/orbit.sock".into(),
                 "trailing".into(),
-                "--ansi-palette-v1".into(),
+                ANSI_PALETTE_ARGUMENT.into(),
                 TEST_ANSI_PALETTE.into(),
                 "--".into(),
             ])
             .is_err()
         );
         let mut duplicate = vec![
-            "--ansi-palette-v1".into(),
+            ANSI_PALETTE_ARGUMENT.into(),
             TEST_ANSI_PALETTE.into(),
-            "--ansi-palette-v1".into(),
+            ANSI_PALETTE_ARGUMENT.into(),
             TEST_ANSI_PALETTE.into(),
         ];
         assert!(take_ansi_palette(&mut duplicate).is_err());
@@ -1286,6 +1269,9 @@ mod tests {
         assert_eq!(terminal.color_palette()?.0[1], colors[1]);
 
         terminal.vt_write(b"\x1b]4;0;rgb:01/02/03;1;rgb:04/05/06\x1b\\");
+        let overridden = terminal.color_palette()?;
+        assert_ne!(overridden.0[0], colors[0]);
+        assert_ne!(overridden.0[1], colors[1]);
         terminal.vt_write(b"\x1b]104\x1b\\");
         assert_eq!(&terminal.color_palette()?.0[..16], &colors);
         Ok(())
