@@ -47,6 +47,7 @@ const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 const MAX_EXIT_PTY_READS: usize = 4;
 const MAX_PENDING_CLIPBOARD_WRITES: usize = 64;
 const CLIENT_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
+const SYNCHRONIZED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(1);
 const ANSI_PALETTE_ARGUMENT: &str = "--ansi-palette-v1";
 
 const INITIAL_SIZE: SurfaceSize = SurfaceSize {
@@ -68,6 +69,97 @@ struct Client {
     output: OutputQueue,
     close_after_flush: bool,
     negotiation_deadline: Option<Instant>,
+    initial_frame_pending: bool,
+}
+
+struct Presentation {
+    extractor: Extractor,
+    revision: u64,
+    synchronized_until: Option<Instant>,
+}
+
+impl Presentation {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            extractor: Extractor::new()?,
+            revision: 0,
+            synchronized_until: None,
+        })
+    }
+
+    fn advance(&mut self) -> Result {
+        self.revision = next_revision(self.revision)?;
+        Ok(())
+    }
+
+    fn publish_change(
+        &mut self,
+        client: Option<&mut Client>,
+        terminal: &Terminal<'static, '_>,
+    ) -> Result<bool> {
+        if self.synchronized_until.is_none() {
+            self.advance()?;
+        }
+        self.publish(client, terminal)
+    }
+
+    fn publish(
+        &mut self,
+        client: Option<&mut Client>,
+        terminal: &Terminal<'static, '_>,
+    ) -> Result<bool> {
+        if terminal.mode(Mode::SYNC_OUTPUT)? {
+            self.synchronized_until
+                .get_or_insert_with(|| Instant::now() + SYNCHRONIZED_OUTPUT_TIMEOUT);
+            return Ok(true);
+        }
+        self.synchronized_until = None;
+        let Some(client) = client
+            .filter(|client| client.negotiation_deadline.is_none() && !client.close_after_flush)
+        else {
+            return Ok(true);
+        };
+        let frame = match self.extractor.frame(self.revision, terminal) {
+            Ok(frame) => frame,
+            Err(error) => {
+                eprintln!("orbit: presentation client disconnected: {error}");
+                return Ok(false);
+            }
+        };
+        let queued = if client.initial_frame_pending {
+            client.output.push_initial_frame(frame)
+        } else {
+            client.output.push_frame(frame)
+        }?;
+        if queued {
+            client.initial_frame_pending = false;
+        }
+        Ok(queued)
+    }
+
+    fn release_if_expired(
+        &mut self,
+        client: Option<&mut Client>,
+        terminal: &mut Terminal<'static, '_>,
+        now: Instant,
+    ) -> Result<bool> {
+        match self.synchronized_until {
+            Some(deadline) if now >= deadline => self.release(client, terminal),
+            _ => Ok(true),
+        }
+    }
+
+    fn release(
+        &mut self,
+        client: Option<&mut Client>,
+        terminal: &mut Terminal<'static, '_>,
+    ) -> Result<bool> {
+        if self.synchronized_until.is_none() {
+            return Ok(true);
+        }
+        terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
+        self.publish(client, terminal)
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -298,8 +390,7 @@ fn run_server(
     let clipboard_sink = Rc::clone(&clipboard_writes);
     terminal.on_clipboard_write(move |_, write| clipboard_sink.borrow_mut().capture(write))?;
 
-    let mut extractor = Extractor::new()?;
-    let mut revision = 0;
+    let mut presentation = Presentation::new()?;
     let mut client: Option<Client> = None;
     let mut selection = SelectionState::default();
     let mut pty_open = true;
@@ -316,13 +407,13 @@ fn run_server(
                 | drain_exited_pty(&mut pty, &mut terminal, &mut selection)?;
             fail_on_pty_write_overflow(&response_overflow)?;
             if !publish_clipboard_writes(&mut client, &clipboard_writes)? {
-                disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+                disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
-            if changed {
-                revision = next_revision(revision)?;
-                if !publish_frame(&mut client, &mut extractor, revision, &terminal)? {
-                    disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
-                }
+            if changed && !presentation.publish_change(client.as_mut(), &terminal)? {
+                disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
+            }
+            if !presentation.release(client.as_mut(), &mut terminal)? {
+                disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
             let code = status.code().unwrap_or(1);
             if let Some(client) = &mut client {
@@ -335,7 +426,10 @@ fn run_server(
             .and_then(|client| client.negotiation_deadline)
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
-            disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+            disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
+        }
+        if !presentation.release_if_expired(client.as_mut(), &mut terminal, Instant::now())? {
+            disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
         }
 
         let readiness = platform::poll(
@@ -356,13 +450,10 @@ fn run_server(
             fail_on_pty_write_overflow(&response_overflow)?;
             pty_open = open;
             if !publish_clipboard_writes(&mut client, &clipboard_writes)? {
-                disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+                disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
-            if changed {
-                revision = next_revision(revision)?;
-                if !publish_frame(&mut client, &mut extractor, revision, &terminal)? {
-                    disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
-                }
+            if changed && !presentation.publish_change(client.as_mut(), &terminal)? {
+                disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
         }
         if readiness.pty_write && pty_open {
@@ -378,18 +469,17 @@ fn run_server(
                 pty_open.then_some(&pty),
                 &mut size,
                 &writes,
-                &mut extractor,
-                &mut revision,
+                &mut presentation,
                 &mut selection,
             )?
         {
-            disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+            disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
         }
         if let Some(active) = &mut client {
             let disconnect = !active.output.flush(&mut active.stream)?
                 || active.close_after_flush && active.output.is_empty();
             if disconnect {
-                disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+                disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
         }
     }
@@ -537,15 +627,13 @@ fn print_server_message(message: &ServerMessage) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn read_client(
     client: &mut Client,
     terminal: &mut Terminal<'static, '_>,
     pty: Option<&Pty>,
     size: &mut SurfaceSize,
     writes: &RefCell<VecDeque<u8>>,
-    extractor: &mut Extractor,
-    revision: &mut u64,
+    presentation: &mut Presentation,
     selection: &mut SelectionState,
 ) -> Result<bool> {
     if client.close_after_flush {
@@ -584,7 +672,14 @@ fn read_client(
         };
         drop(client.input.drain(..length));
         let keep = handle_client_message(
-            client, message, terminal, pty, size, writes, extractor, revision, selection,
+            client,
+            message,
+            terminal,
+            pty,
+            size,
+            writes,
+            presentation,
+            selection,
         )?;
         if !keep {
             return Ok(false);
@@ -603,8 +698,7 @@ fn handle_client_message(
     pty: Option<&Pty>,
     size: &mut SurfaceSize,
     writes: &RefCell<VecDeque<u8>>,
-    extractor: &mut Extractor,
-    revision: &mut u64,
+    presentation: &mut Presentation,
     selection: &mut SelectionState,
 ) -> Result<bool> {
     if client.negotiation_deadline.is_some() {
@@ -619,7 +713,8 @@ fn handle_client_message(
                 })? {
                     return Ok(false);
                 }
-                queue_frame(client, extractor, *revision, terminal, true)
+                client.initial_frame_pending = true;
+                presentation.publish(Some(client), terminal)
             }
             ClientMessage::Hello { .. } => {
                 let queued = client.output.push_message(&ServerMessage::Incompatible {
@@ -654,9 +749,7 @@ fn handle_client_message(
         return queue_failure(client, FailureCode::Terminal, "PTY is closed".into());
     };
     if let ClientMessage::Selection(action) = message {
-        return handle_selection(
-            client, action, terminal, *size, extractor, revision, selection,
-        );
+        return handle_selection(client, action, terminal, *size, presentation, selection);
     }
     let message = match message {
         ClientMessage::Resize(surface) => {
@@ -669,11 +762,11 @@ fn handle_client_message(
                 surface.cell_height,
             )?;
             *size = surface;
-            *revision = next_revision(*revision)?;
+            presentation.advance()?;
             if !client.output.push_message(&ServerMessage::Accepted)? {
                 return Ok(false);
             }
-            return queue_frame(client, extractor, *revision, terminal, false);
+            return presentation.publish(Some(client), terminal);
         }
         message => message,
     };
@@ -705,11 +798,11 @@ fn handle_client_message(
             } else {
                 clear_selection(terminal, selection, false)?;
                 terminal.scroll_viewport(ScrollViewport::Delta(delta));
-                *revision = next_revision(*revision)?;
+                presentation.advance()?;
                 if !client.output.push_message(&ServerMessage::Accepted)? {
                     return Ok(false);
                 }
-                return queue_frame(client, extractor, *revision, terminal, false);
+                return presentation.publish(Some(client), terminal);
             }
         }
         message => message,
@@ -735,7 +828,7 @@ fn handle_client_message(
             if scrollbar.offset.saturating_add(scrollbar.len) < scrollbar.total {
                 clear_selection(terminal, selection, false)?;
                 terminal.scroll_viewport(ScrollViewport::Bottom);
-                *revision = next_revision(*revision)?;
+                presentation.advance()?;
                 true
             } else {
                 false
@@ -747,7 +840,7 @@ fn handle_client_message(
         return Ok(false);
     }
     if returned_live {
-        return queue_frame(client, extractor, *revision, terminal, false);
+        return presentation.publish(Some(client), terminal);
     }
     Ok(true)
 }
@@ -757,8 +850,7 @@ fn handle_selection(
     action: SelectionAction,
     terminal: &Terminal<'static, '_>,
     size: SurfaceSize,
-    extractor: &mut Extractor,
-    revision: &mut u64,
+    presentation: &mut Presentation,
     state: &mut SelectionState,
 ) -> Result<bool> {
     let (anchor, cell, finish) = match action {
@@ -766,7 +858,7 @@ fn handle_selection(
             frame_revision,
             cell,
         } => {
-            if frame_revision != *revision {
+            if frame_revision != presentation.revision {
                 return queue_failure(
                     client,
                     FailureCode::InvalidInput,
@@ -822,7 +914,7 @@ fn handle_selection(
             "client output queue cannot admit selection frame".into(),
         );
     }
-    let next = match next_revision(*revision) {
+    let next = match next_revision(presentation.revision) {
         Ok(next) => next,
         Err(error) => return queue_failure(client, FailureCode::Terminal, error.to_string()),
     };
@@ -850,11 +942,11 @@ fn handle_selection(
         state.copied = copied;
     }
     state.visible = true;
-    *revision = next;
+    presentation.revision = next;
     if !client.output.push_message(&ServerMessage::Accepted)? {
         return Ok(false);
     }
-    queue_frame(client, extractor, *revision, terminal, false)
+    presentation.publish(Some(client), terminal)
 }
 
 fn viewport_selection<'terminal>(
@@ -1115,6 +1207,7 @@ fn accept_clients(listener: &UnixListener, active: &mut Option<Client>) -> Resul
                     output: OutputQueue::default(),
                     close_after_flush: false,
                     negotiation_deadline: Some(Instant::now() + CLIENT_NEGOTIATION_TIMEOUT),
+                    initial_frame_pending: false,
                 });
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -1134,50 +1227,13 @@ fn disconnect_client(
     client: &mut Option<Client>,
     terminal: &Terminal<'_, '_>,
     selection: &mut SelectionState,
-    revision: &mut u64,
+    presentation: &mut Presentation,
 ) -> Result {
     *client = None;
     if clear_selection(terminal, selection, true)? {
-        *revision = next_revision(*revision)?;
+        presentation.advance()?;
     }
     Ok(())
-}
-
-fn publish_frame(
-    active: &mut Option<Client>,
-    extractor: &mut Extractor,
-    revision: u64,
-    terminal: &Terminal<'static, '_>,
-) -> Result<bool> {
-    if let Some(client) = active
-        .as_mut()
-        .filter(|client| client.negotiation_deadline.is_none() && !client.close_after_flush)
-        && !queue_frame(client, extractor, revision, terminal, false)?
-    {
-        return Ok(false);
-    }
-    Ok(true)
-}
-
-fn queue_frame(
-    client: &mut Client,
-    extractor: &mut Extractor,
-    revision: u64,
-    terminal: &Terminal<'static, '_>,
-    initial: bool,
-) -> Result<bool> {
-    let frame = match extractor.frame(revision, terminal) {
-        Ok(frame) => frame,
-        Err(error) => {
-            eprintln!("orbit: presentation client disconnected: {error}");
-            return Ok(false);
-        }
-    };
-    if initial {
-        client.output.push_initial_frame(frame)
-    } else {
-        client.output.push_frame(frame)
-    }
 }
 
 #[cfg(test)]
@@ -1287,6 +1343,7 @@ mod tests {
                 output: OutputQueue::default(),
                 close_after_flush: false,
                 negotiation_deadline: None,
+                initial_frame_pending: false,
             },
             peer,
         ))
@@ -1319,6 +1376,19 @@ mod tests {
         read_server_message(peer)?.ok_or_else(|| "client output closed".into())
     }
 
+    fn expect_frame(
+        client: &mut Client,
+        peer: &mut UnixStream,
+        revision: u64,
+        title: &str,
+    ) -> Result {
+        let ServerMessage::Frame(frame) = flush_message(client, peer)? else {
+            return Err("client output was not a frame".into());
+        };
+        assert_eq!((frame.revision, frame.title.as_str()), (revision, title));
+        Ok(())
+    }
+
     fn fill_output(output: &mut OutputQueue) -> Result {
         let failure = ServerMessage::Failure(Failure {
             code: FailureCode::Terminal,
@@ -1326,6 +1396,92 @@ mod tests {
         });
         while output.push_message(&failure)? {}
         while output.push_message(&ServerMessage::Accepted)? {}
+        Ok(())
+    }
+
+    #[test]
+    fn synchronized_presentation_coalesces_defers_and_times_out() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let mut terminal = terminal()?;
+        let mut presentation = Presentation::new()?;
+
+        terminal.vt_write(b"ordinary");
+        assert!(presentation.publish_change(Some(&mut client), &terminal)?);
+        expect_frame(&mut client, &mut peer, 1, "")?;
+
+        terminal.vt_write(b"\x1b[?2026h\x1b]2;held-one\x1b\\");
+        assert!(presentation.publish_change(Some(&mut client), &terminal)?);
+        terminal.vt_write(b"\x1b]2;held-two\x1b\\");
+        assert!(presentation.publish_change(Some(&mut client), &terminal)?);
+        assert_eq!(presentation.revision, 2);
+        assert!(client.output.is_empty());
+
+        terminal.vt_write(b"\x1b[?2026l");
+        assert!(presentation.publish_change(Some(&mut client), &terminal)?);
+        expect_frame(&mut client, &mut peer, 2, "held-two")?;
+
+        terminal.vt_write(b"\x1b[?2026h\x1b]2;single-read\x1b\\\x1b[?2026l");
+        assert!(presentation.publish_change(Some(&mut client), &terminal)?);
+        expect_frame(&mut client, &mut peer, 3, "single-read")?;
+
+        terminal.vt_write(b"\x1b[?2026h\x1b]2;deferred-initial\x1b\\");
+        assert!(presentation.publish_change(None, &terminal)?);
+        let deadline = presentation
+            .synchronized_until
+            .expect("synchronized output has a deadline");
+        let (mut attaching, mut attaching_peer) = attached_client()?;
+        attaching.negotiation_deadline = Some(deadline);
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut selection = SelectionState::default();
+        assert!(handle_client_message(
+            &mut attaching,
+            ClientMessage::Hello {
+                minimum_version: session::VERSION,
+                maximum_version: session::VERSION,
+            },
+            &mut terminal,
+            None,
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut attaching, &mut attaching_peer)?,
+            ServerMessage::Attached { version } if version == session::VERSION
+        ));
+        assert!(attaching.output.is_empty());
+        assert!(presentation.release_if_expired(
+            Some(&mut attaching),
+            &mut terminal,
+            deadline - Duration::from_millis(1),
+        )?);
+        assert!(attaching.output.is_empty());
+        assert!(terminal.mode(Mode::SYNC_OUTPUT)?);
+        assert!(presentation.release_if_expired(Some(&mut attaching), &mut terminal, deadline)?);
+        assert!(!terminal.mode(Mode::SYNC_OUTPUT)?);
+        assert!(!attaching.initial_frame_pending);
+
+        terminal.vt_write(b"\x1b]2;live-after-timeout\x1b\\");
+        assert!(presentation.publish_change(Some(&mut attaching), &terminal)?);
+        expect_frame(&mut attaching, &mut attaching_peer, 4, "deferred-initial")?;
+        expect_frame(&mut attaching, &mut attaching_peer, 5, "live-after-timeout")?;
+
+        terminal.vt_write(b"\x1b[?2026h\x1b]2;exit-release\x1b\\");
+        assert!(presentation.publish_change(Some(&mut attaching), &terminal)?);
+        assert!(attaching.output.is_empty());
+        assert!(presentation.release(Some(&mut attaching), &mut terminal)?);
+        assert!(!terminal.mode(Mode::SYNC_OUTPUT)?);
+        expect_frame(&mut attaching, &mut attaching_peer, 6, "exit-release")?;
+
+        let (mut blocked, _) = attached_client()?;
+        fill_output(&mut blocked.output)?;
+        terminal.vt_write(b"\x1b[?2026hpressure");
+        assert!(presentation.publish_change(Some(&mut blocked), &terminal)?);
+        terminal.vt_write(b"\x1b[?2026l");
+        assert!(!presentation.publish_change(Some(&mut blocked), &terminal)?);
+        assert_eq!(presentation.revision, 7);
         Ok(())
     }
 
@@ -1444,13 +1600,13 @@ mod tests {
         terminal.vt_write("alpha 界\r\n".as_bytes());
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
-        let mut extractor = Extractor::new()?;
-        let mut revision = 1;
+        let mut presentation = Presentation::new()?;
+        presentation.revision = 1;
         let mut selection = SelectionState::default();
 
         macro_rules! reject {
             ($action:expr) => {{
-                let unchanged = revision;
+                let unchanged = presentation.revision;
                 assert!(handle_client_message(
                     &mut client,
                     ClientMessage::Selection($action),
@@ -1458,11 +1614,10 @@ mod tests {
                     Some(&pty),
                     &mut size,
                     &writes,
-                    &mut extractor,
-                    &mut revision,
+                    &mut presentation,
                     &mut selection,
                 )?);
-                assert_eq!(revision, unchanged);
+                assert_eq!(presentation.revision, unchanged);
                 assert_eq!(selection, SelectionState::default());
                 assert!(matches!(
                     flush_message(&mut client, &mut peer)?,
@@ -1482,8 +1637,7 @@ mod tests {
                     Some(&pty),
                     &mut size,
                     &writes,
-                    &mut extractor,
-                    &mut revision,
+                    &mut presentation,
                     &mut selection,
                 )?);
                 assert_eq!(
@@ -1493,7 +1647,7 @@ mod tests {
                 let ServerMessage::Frame(frame) = flush_message(&mut client, &mut peer)? else {
                     return Err("selection did not publish a frame".into());
                 };
-                assert_eq!(frame.revision, revision);
+                assert_eq!(frame.revision, presentation.revision);
                 assert!(frame.rows[0].cells[0].style.selected);
             }};
         }
@@ -1505,12 +1659,12 @@ mod tests {
             cell: session::ViewportCell { x: 0, y: 0 },
         });
         reject!(session::SelectionAction::Begin {
-            frame_revision: revision,
+            frame_revision: presentation.revision,
             cell: session::ViewportCell { x: size.cols, y: 0 },
         });
 
         select!(session::SelectionAction::Begin {
-            frame_revision: revision,
+            frame_revision: presentation.revision,
             cell: session::ViewportCell { x: 0, y: 0 },
         });
         apply_pty_output(&mut terminal, &mut selection, b"!")?;
@@ -1520,7 +1674,7 @@ mod tests {
         });
 
         select!(session::SelectionAction::Begin {
-            frame_revision: revision,
+            frame_revision: presentation.revision,
             cell: session::ViewportCell { x: 0, y: 0 },
         });
         select!(session::SelectionAction::Update {
@@ -1537,8 +1691,7 @@ mod tests {
             Some(&pty),
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
         assert_eq!(
@@ -1548,7 +1701,9 @@ mod tests {
 
         apply_pty_output(&mut terminal, &mut selection, b"later")?;
         assert!(
-            !Extractor::new()?.frame(revision + 1, &terminal)?.rows[0]
+            !Extractor::new()?
+                .frame(presentation.revision + 1, &terminal)?
+                .rows[0]
                 .cells
                 .iter()
                 .any(|cell| cell.style.selected)
@@ -1557,22 +1712,21 @@ mod tests {
 
         let (mut blocked, _) = attached_client()?;
         fill_output(&mut blocked.output)?;
-        let stable_revision = revision;
+        let stable_revision = presentation.revision;
         assert!(!handle_client_message(
             &mut blocked,
             ClientMessage::Selection(session::SelectionAction::Begin {
-                frame_revision: revision,
+                frame_revision: presentation.revision,
                 cell: session::ViewportCell { x: 1, y: 0 },
             }),
             &mut terminal,
             Some(&pty),
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
-        assert_eq!(revision, stable_revision);
+        assert_eq!(presentation.revision, stable_revision);
         assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
 
         apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1049h")?;
@@ -1593,12 +1747,11 @@ mod tests {
         }
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
-        let mut extractor = Extractor::new()?;
-        let mut revision = 0;
+        let mut presentation = Presentation::new()?;
         let mut selection = SelectionState::default();
         macro_rules! accept {
             ($message:expr, $frame:expr) => {{
-                let previous_revision = revision;
+                let previous_revision = presentation.revision;
                 assert!(handle_client_message(
                     &mut client,
                     $message,
@@ -1606,11 +1759,13 @@ mod tests {
                     Some(&pty),
                     &mut size,
                     &writes,
-                    &mut extractor,
-                    &mut revision,
+                    &mut presentation,
                     &mut selection,
                 )?);
-                assert_eq!(revision, previous_revision + u64::from($frame));
+                assert_eq!(
+                    presentation.revision,
+                    previous_revision + u64::from($frame)
+                );
                 assert_eq!(
                     flush_message(&mut client, &mut peer)?,
                     ServerMessage::Accepted
@@ -1618,7 +1773,7 @@ mod tests {
                 if $frame {
                     assert!(matches!(
                         flush_message(&mut client, &mut peer)?,
-                        ServerMessage::Frame(frame) if frame.revision == revision
+                        ServerMessage::Frame(frame) if frame.revision == presentation.revision
                     ));
                 }
             }};
@@ -1725,12 +1880,11 @@ mod tests {
             Some(&pty),
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
         assert_eq!(terminal.scrollbar()?.offset, before_empty.offset);
-        assert_eq!(revision, 6);
+        assert_eq!(presentation.revision, 6);
         assert!(client.close_after_flush);
         assert!(matches!(
             flush_message(&mut client, &mut peer)?,
@@ -1754,12 +1908,11 @@ mod tests {
             Some(&pty),
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
         assert_eq!(size, resized);
-        assert_eq!(revision, 7);
+        assert_eq!(presentation.revision, 7);
         Ok(())
     }
 
@@ -1810,8 +1963,7 @@ mod tests {
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
-        let mut extractor = Extractor::new()?;
-        let mut revision = 0;
+        let mut presentation = Presentation::new()?;
         let mut selection = SelectionState::default();
 
         assert!(read_client(
@@ -1820,8 +1972,7 @@ mod tests {
             Some(&pty),
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
         assert!(writes.borrow().is_empty());
@@ -1845,8 +1996,7 @@ mod tests {
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
-        let mut extractor = Extractor::new()?;
-        let mut revision = 0;
+        let mut presentation = Presentation::new()?;
         let mut selection = SelectionState::default();
 
         assert!(read_client(
@@ -1855,8 +2005,7 @@ mod tests {
             None,
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
         assert!(client.close_after_flush);
@@ -1884,8 +2033,7 @@ mod tests {
             &mut writes.borrow_mut(),
             &vec![b'x'; MAX_PTY_WRITE_BYTES],
         ));
-        let mut extractor = Extractor::new()?;
-        let mut revision = 0;
+        let mut presentation = Presentation::new()?;
         let mut selection = SelectionState::default();
 
         assert!(handle_client_message(
@@ -1895,8 +2043,7 @@ mod tests {
             Some(&pty),
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
         assert_eq!(writes.borrow().len(), MAX_PTY_WRITE_BYTES);
@@ -1926,8 +2073,7 @@ mod tests {
         let mut queued = VecDeque::with_capacity(1_024);
         queued.extend(b"queued before closure");
         let writes = RefCell::new(queued);
-        let mut extractor = Extractor::new()?;
-        let mut revision = 0;
+        let mut presentation = Presentation::new()?;
         let mut selection = SelectionState::default();
 
         discard_pty_writes(&writes);
@@ -1940,8 +2086,7 @@ mod tests {
             None,
             &mut size,
             &writes,
-            &mut extractor,
-            &mut revision,
+            &mut presentation,
             &mut selection,
         )?);
         assert!(writes.borrow().is_empty());
@@ -1961,9 +2106,10 @@ mod tests {
         let (client, mut peer, expected) = closing_client()?;
         let mut active = Some(client);
         let terminal = terminal()?;
-        let mut extractor = Extractor::new()?;
+        let mut presentation = Presentation::new()?;
+        presentation.revision = 1;
 
-        publish_frame(&mut active, &mut extractor, 1, &terminal)?;
+        presentation.publish(active.as_mut(), &terminal)?;
         let client = active
             .as_mut()
             .expect("closing client remains while draining");

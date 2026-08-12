@@ -103,9 +103,14 @@ and declares Kitty graphics unsupported.
 Each frame has a 4 MiB and 100,000-cell bound. Nonblocking client output retains
 the initial frame and at most one coalesced latest frame when no non-frame
 session message separates them; total queued output is bounded. The owner loop
-processes one PTY read per readiness turn, and the shared terminal-response and
-semantic-input backlog has a fixed byte bound. Pressure rejects a whole new
-semantic input and closes that client instead of retaining or partially
+honors libghostty's authoritative DEC 2026 synchronized-output mode: PTY
+parsing, replies, and ordered effects continue while complete frames are held,
+then one latest frame is published when the mode ends. A one-second watchdog
+clears an abandoned mode. A new client's initial frame is deferred until the
+hold ends or times out. The owner loop processes one PTY read per readiness
+turn, and the shared terminal-response and semantic-input backlog has a fixed
+byte bound. Pressure rejects a whole new semantic input and closes that client
+instead of retaining or partially
 delivering unbounded data. The co-located real-PTY proof in
 [`src/presentation.rs`](src/presentation.rs) covers output before attach,
 ordered revisions, alternate-screen rich state, restoration of an inactive
@@ -348,8 +353,8 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 7,761 |
+| Product Rust source and tests | 7,990 |
 | Governance Rust tool and tests | 765 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **8,526** |
-| **Total owned implementation source** | **8,528** |
+| **Total owned Rust** | **8,755** |
+| **Total owned implementation source** | **8,757** |

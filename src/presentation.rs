@@ -330,7 +330,10 @@ mod tests {
         io::{BufReader, Read, Write},
         os::unix::{fs::PermissionsExt, net::UnixStream},
         path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            Mutex, MutexGuard,
+            atomic::{AtomicU64, Ordering},
+        },
         thread,
         time::{Duration, Instant},
     };
@@ -338,6 +341,8 @@ mod tests {
     type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
     static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+    // ponytail: serialize three process-heavy PTY tests; split only if their runtime matters.
+    static REAL_PTY_TEST: Mutex<()> = Mutex::new(());
 
     struct TestDir(PathBuf);
 
@@ -363,16 +368,21 @@ mod tests {
     struct Server {
         thread: Option<thread::JoinHandle<()>>,
         stop: PathBuf,
+        _serial: MutexGuard<'static, ()>,
     }
 
     impl Server {
         fn start(socket: PathBuf, command: Vec<String>, stop: PathBuf) -> Self {
+            let serial = REAL_PTY_TEST
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let thread = thread::spawn(move || {
                 assert_eq!(crate::run_server(&socket, &command, None).unwrap(), 0);
             });
             Self {
                 thread: Some(thread),
                 stop,
+                _serial: serial,
             }
         }
 
@@ -514,6 +524,79 @@ mod tests {
             return Err("clipboard write was not followed by its frame".into());
         };
         assert!(frame.revision > initial.revision);
+
+        server.finish()?;
+        assert_eq!(
+            crate::read_server_message(&mut reader)?,
+            Some(ServerMessage::Exited { code: 0 })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn real_pty_synchronized_output_holds_split_large_update() -> TestResult {
+        let directory = TestDir::new()?;
+        let socket = directory.0.join("orbit.sock");
+        let begin = directory.0.join("begin");
+        let parsed = directory.0.join("parsed");
+        let payload = directory.0.join("payload");
+        let emitted = directory.0.join("emitted");
+        let end = directory.0.join("end");
+        let stop = directory.0.join("stop");
+        let script = format!(
+            "stty raw -echo; while [ ! -e '{begin}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?2026h\\033[6n'; dd bs=1 count=6 of=/dev/null 2>/dev/null; : > '{parsed}'; while [ ! -e '{payload}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033]52;c;c3luY2VkIGNvcHk=\\033\\\\'; dd if=/dev/zero bs=16384 count=1 2>/dev/null | tr '\\000' X; printf '\\033]2;sync-final\\033\\\\'; : > '{emitted}'; while [ ! -e '{end}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?2026l'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
+            begin = begin.display(),
+            parsed = parsed.display(),
+            payload = payload.display(),
+            emitted = emitted.display(),
+            end = end.display(),
+            stop = stop.display(),
+        );
+        let server = Server::start(
+            socket.clone(),
+            vec!["/bin/sh".into(), "-c".into(), script],
+            stop,
+        );
+
+        let (mut reader, initial) = attach(&socket)?;
+        fs::write(&begin, b"begin")?;
+        wait_file(&parsed)?;
+        reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(100)))?;
+        match crate::read_server_message(&mut reader) {
+            Err(error)
+                if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    )
+                }) => {}
+            Ok(Some(ServerMessage::Frame(_))) => {
+                return Err("synchronized output published an intermediate frame".into());
+            }
+            result => return Err(format!("unexpected held-output result: {result:?}").into()),
+        }
+
+        reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(2)))?;
+        fs::write(&payload, b"payload")?;
+        wait_file(&emitted)?;
+        assert_eq!(
+            crate::read_server_message(&mut reader)?,
+            Some(ServerMessage::ClipboardWrite {
+                location: session::ClipboardLocation::Standard,
+                text: "synced copy".into(),
+            })
+        );
+        fs::write(&end, b"end")?;
+        let Some(ServerMessage::Frame(frame)) = crate::read_server_message(&mut reader)? else {
+            return Err("synchronized output did not finish with one frame".into());
+        };
+        assert_eq!(frame.revision, initial.revision + 1);
+        assert_eq!(frame.title, "sync-final");
+        assert!(cells(&frame).any(|cell| cell.text == "X"));
 
         server.finish()?;
         assert_eq!(
