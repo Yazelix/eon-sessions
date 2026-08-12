@@ -203,15 +203,18 @@ The feasibility and convergence work address these risks before UI polish.
 
 ## Why Orbit is a separate process
 
-[Canario](https://rapha.land/canario/) at Rio commit
-[`3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario)
-is the strongest compact counterexample to the Orbit boundary. It combines a
-native SwiftUI/AppKit workspace with librio surfaces in one application. The
-frontend can pull materialized terminal state directly and ship spaces, splits,
-a command palette, CWD routing, a quick terminal, and on-demand previews without
-an independently versioned session protocol. That is an excellent shape when
-restarting shells and restoring workspace presentation meets the product
-contract.
+[Canario](https://rioterm.com/canario) keeps its application source private and
+distributes signed builds through
+[`canarioterm/releases`](https://github.com/canarioterm/releases/tree/fcadcfeea7e337114d28beec0e0cbe89493a654d).
+Rio commit
+[`ff8efcc4ad03`](https://github.com/raphamorim/rio/tree/ff8efcc4ad0359889de44b1baacea7014cdada30/frontends/canario),
+the final public Canario tree before its extraction, is the strongest
+inspectable compact counterexample to the Orbit boundary. It combines a native
+SwiftUI/AppKit workspace with librio surfaces in one application. The frontend
+can pull materialized terminal state and ship spaces, splits, a command palette,
+CWD routing, a quick terminal, and on-demand previews without a separate
+versioned session protocol. That shape fits a product contract where restarting
+shells and restoring workspace presentation is sufficient.
 
 It does not meet Orbit's contract. At the inspected revision, librio owns each
 PTY inside the application process. Canario's persistence path starts fresh

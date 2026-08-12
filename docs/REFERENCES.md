@@ -299,20 +299,28 @@ prerequisite for the current single-session architecture.
   terminals in a Rust client/server multiplexer. Orbit studies its user-visible
   detach and reattach behavior while excluding layouts, remote access,
   multiplayer, and agent-management policy.
-- [Canario](https://rapha.land/canario/) at Rio commit
-  [`3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario)
-  is comparison evidence for a browser-inspired native terminal workspace:
-  spaces, splits, a command palette, CWD-based filing, a global quick terminal,
-  and on-demand live pane previews. Its SwiftUI/AppKit frontend owns those
-  policies around same-process librio surfaces. The
-  [session store](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario/Sources/SessionStore.swift)
+- [Canario](https://rioterm.com/canario) publishes signed builds through
+  [`canarioterm/releases`](https://github.com/canarioterm/releases/tree/fcadcfeea7e337114d28beec0e0cbe89493a654d).
+  That repository identifies the application source as private, and release
+  [`v2026.08.07.15`](https://github.com/canarioterm/releases/releases/tag/v2026.08.07.15)
+  records a build from private revision `canario@af91699`. Rio commit
+  [`ff8efcc4ad03`](https://github.com/raphamorim/rio/tree/ff8efcc4ad0359889de44b1baacea7014cdada30/frontends/canario),
+  the final public tree before
+  [Canario's extraction](https://github.com/raphamorim/rio/commit/e69b5fffef25abd5e649bf4ac205636551e54482),
+  remains the inspectable comparison for a browser-inspired native terminal
+  workspace: spaces, splits, a command palette, CWD-based filing, a global
+  quick terminal, and on-demand live pane previews. Its SwiftUI/AppKit frontend
+  owns those policies around same-process librio surfaces. The
+  [session store](https://github.com/raphamorim/rio/blob/ff8efcc4ad0359889de44b1baacea7014cdada30/frontends/canario/Sources/SessionStore.swift)
   persists layout, CWD, title, and plain-text scrollback;
-  [RioEngine](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario/Sources/RioEngine.swift)
+  [RioEngine](https://github.com/raphamorim/rio/blob/ff8efcc4ad0359889de44b1baacea7014cdada30/frontends/canario/Sources/RioEngine.swift)
   starts a fresh shell and replays that text into a new display rather than
-  preserving the process.
-  Eon may study the workspace interaction, especially command-driven
-  navigation and on-demand previews. Orbit rejects same-process UI/PTY lifetime
-  and textual restoration as substitutes for `ORB-C1` detach survival.
+  preserving the process. The feature page retains Rio source and download
+  links, so Orbit uses the pinned `canarioterm/releases` revision as distribution
+  evidence and the final public Rio tree as mechanism evidence. Eon may study
+  command-driven navigation and on-demand previews. Orbit rejects same-process
+  UI/PTY lifetime and textual restoration as substitutes for `ORB-C1` detach
+  survival.
 - The [Superlogical terminal multiplexer](https://www.superlogical.com/) is the
   company's published first product; Mitchell Hashimoto's
   [company announcement](https://mitchellh.com/writing/superlogical),
