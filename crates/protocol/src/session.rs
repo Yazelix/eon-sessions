@@ -7,7 +7,7 @@ use crate::{Frame, MAX_CELLS, MAX_FRAME_BYTES, MIN_FRAME_BYTES, decode_frame, en
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
@@ -36,6 +36,7 @@ const SERVER_ACCEPTED: u8 = 133;
 const SERVER_FAILURE: u8 = 134;
 const SERVER_EXITED: u8 = 135;
 const SERVER_COPIED_TEXT: u8 = 136;
+const SERVER_CLIPBOARD_WRITE: u8 = 137;
 
 const SELECTION_BEGIN: u8 = 0;
 const SELECTION_UPDATE: u8 = 1;
@@ -181,6 +182,19 @@ pub enum ServerMessage {
     Exited { code: i32 },
     /// One complete bounded plain-text copy result.
     CopiedText(String),
+    /// One ordered terminal-emitted plain-text clipboard write.
+    ClipboardWrite {
+        location: ClipboardLocation,
+        text: String,
+    },
+}
+
+/// Platform-neutral destination of a terminal-emitted clipboard write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipboardLocation {
+    Standard,
+    Selection,
+    Primary,
 }
 
 /// Physical key action.
@@ -607,6 +621,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
         SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_PAYLOAD_BYTES)),
         SERVER_FAILURE => Ok((5, 5 + MAX_FAILURE_BYTES)),
         SERVER_COPIED_TEXT => Ok((0, MAX_COPY_BYTES)),
+        SERVER_CLIPBOARD_WRITE => Ok((2, 1 + MAX_COPY_BYTES)),
         value => Err(Error::InvalidTag {
             field: "server message",
             value,
@@ -614,7 +629,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v2 header.
+/// Encodes one client message with an ORBS v3 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -846,7 +861,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v2 header.
+/// Encodes one server message with an ORBS v3 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -885,6 +900,12 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             validate_bound(text.len(), MAX_COPY_BYTES)?;
             payload.extend_from_slice(text.as_bytes());
             SERVER_COPIED_TEXT
+        }
+        ServerMessage::ClipboardWrite { location, text } => {
+            validate_clipboard_text(text)?;
+            payload.push(clipboard_location_tag(*location));
+            payload.extend_from_slice(text.as_bytes());
+            SERVER_CLIPBOARD_WRITE
         }
     };
     frame_message(kind, payload)
@@ -932,6 +953,18 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
                 .to_owned();
             reader.take_remaining();
             ServerMessage::CopiedText(text)
+        }
+        SERVER_CLIPBOARD_WRITE => {
+            let location = decode_clipboard_location(reader.u8()?)?;
+            let text = str::from_utf8(&payload[1..]).map_err(|_| Error::InvalidUtf8 {
+                field: "clipboard text",
+            })?;
+            validate_clipboard_text(text)?;
+            reader.take_remaining();
+            ServerMessage::ClipboardWrite {
+                location,
+                text: text.to_owned(),
+            }
         }
         value => {
             return Err(Error::InvalidTag {
@@ -985,6 +1018,17 @@ fn validate_version_range(minimum: u16, maximum: u16) -> Result<()> {
 fn validate_bound(size: usize, maximum: usize) -> Result<()> {
     if size > maximum {
         Err(Error::PayloadTooLarge { size, maximum })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_clipboard_text(text: &str) -> Result<()> {
+    validate_bound(text.len(), MAX_COPY_BYTES)?;
+    if text.is_empty() || text.contains('\0') {
+        Err(Error::InvalidValue {
+            field: "clipboard text",
+        })
     } else {
         Ok(())
     }
@@ -1145,6 +1189,26 @@ fn failure_code_tag(code: FailureCode) -> u8 {
         FailureCode::InvalidInput => 0,
         FailureCode::Protocol => 1,
         FailureCode::Terminal => 2,
+    }
+}
+
+fn clipboard_location_tag(location: ClipboardLocation) -> u8 {
+    match location {
+        ClipboardLocation::Standard => 0,
+        ClipboardLocation::Selection => 1,
+        ClipboardLocation::Primary => 2,
+    }
+}
+
+fn decode_clipboard_location(value: u8) -> Result<ClipboardLocation> {
+    match value {
+        0 => Ok(ClipboardLocation::Standard),
+        1 => Ok(ClipboardLocation::Selection),
+        2 => Ok(ClipboardLocation::Primary),
+        value => Err(Error::InvalidTag {
+            field: "clipboard location",
+            value,
+        }),
     }
 }
 
@@ -1424,6 +1488,10 @@ mod tests {
                 detail: "bad key".into(),
             }),
             ServerMessage::CopiedText("first\n界e\u{301}".into()),
+            ServerMessage::ClipboardWrite {
+                location: ClipboardLocation::Primary,
+                text: "copied by zellij".into(),
+            },
             ServerMessage::Exited { code: 17 },
         ];
 
@@ -1528,7 +1596,7 @@ mod tests {
 
     #[test]
     fn framing_is_incremental_strict_and_bounded() {
-        assert_eq!(VERSION, 2);
+        assert_eq!(VERSION, 3);
         let encoded = encode_client_message(&ClientMessage::Hello {
             minimum_version: VERSION,
             maximum_version: VERSION,
@@ -1655,6 +1723,36 @@ mod tests {
         );
 
         let oversized = ServerMessage::CopiedText("x".repeat(MAX_COPY_BYTES + 1));
+        assert_eq!(
+            encode_server_message(&oversized),
+            Err(Error::PayloadTooLarge {
+                size: MAX_COPY_BYTES + 1,
+                maximum: MAX_COPY_BYTES,
+            })
+        );
+
+        for invalid in [
+            ServerMessage::ClipboardWrite {
+                location: ClipboardLocation::Standard,
+                text: String::new(),
+            },
+            ServerMessage::ClipboardWrite {
+                location: ClipboardLocation::Selection,
+                text: "contains\0nul".into(),
+            },
+        ] {
+            assert_eq!(
+                encode_server_message(&invalid),
+                Err(Error::InvalidValue {
+                    field: "clipboard text",
+                })
+            );
+        }
+
+        let oversized = ServerMessage::ClipboardWrite {
+            location: ClipboardLocation::Primary,
+            text: "x".repeat(MAX_COPY_BYTES + 1),
+        };
         assert_eq!(
             encode_server_message(&oversized),
             Err(Error::PayloadTooLarge {
@@ -1884,11 +1982,41 @@ mod tests {
             })
         );
 
+        let clipboard = ServerMessage::ClipboardWrite {
+            location: ClipboardLocation::Standard,
+            text: "text".into(),
+        };
+        let mut invalid = encode_server_message(&clipboard).unwrap();
+        invalid[HEADER_BYTES] = u8::MAX;
+        assert_eq!(
+            decode_server_message(&invalid),
+            Err(Error::InvalidTag {
+                field: "clipboard location",
+                value: u8::MAX,
+            })
+        );
+
+        let mut invalid = encode_server_message(&clipboard).unwrap();
+        invalid[HEADER_BYTES + 1] = 0xff;
+        assert_eq!(
+            decode_server_message(&invalid),
+            Err(Error::InvalidUtf8 {
+                field: "clipboard text",
+            })
+        );
+
         assert_eq!(
             server_message_len(&header(SERVER_COPIED_TEXT, MAX_COPY_BYTES + 1)),
             Err(Error::PayloadTooLarge {
                 size: MAX_COPY_BYTES + 1,
                 maximum: MAX_COPY_BYTES,
+            })
+        );
+        assert_eq!(
+            server_message_len(&header(SERVER_CLIPBOARD_WRITE, MAX_COPY_BYTES + 2)),
+            Err(Error::PayloadTooLarge {
+                size: MAX_COPY_BYTES + 2,
+                maximum: MAX_COPY_BYTES + 1,
             })
         );
     }

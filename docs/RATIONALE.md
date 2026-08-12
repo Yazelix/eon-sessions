@@ -118,7 +118,9 @@ Venus must not handwrite a second interpretation. The accepted `orbit-protocol`
 package owns ORBF v1 decoding and complete-frame reduction plus ORBS v1
 attachment, frame-envelope, lifecycle, semantic-input, paste, and resize. The
 accepted ORBS v2 replaces that session revision, retains those message
-families, and adds revision-bound selection and bounded copy.
+families, and adds revision-bound selection and bounded copy. The ORBS v3
+candidate retains those values and carries bounded normalized clipboard writes
+as ordered effects outside replaceable presentation frames.
 Venus pins one accepted Orbit proof revision and uses those values directly.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,

@@ -4,7 +4,7 @@ mod platform;
 mod presentation;
 
 use libghostty_vt::{
-    Terminal, TerminalOptions,
+    Terminal, TerminalOptions, ffi,
     fmt::Format,
     focus,
     key::{
@@ -18,11 +18,11 @@ use libghostty_vt::{
     paste,
     screen::Screen,
     selection::{FormatOptions, Selection},
-    terminal::{Mode, Point, PointCoordinate, ScrollViewport},
+    terminal::{ClipboardWrite, ClipboardWriteError, Mode, Point, PointCoordinate, ScrollViewport},
 };
 use orbit_protocol::session::{
-    self, ClientMessage, Failure, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers,
-    MouseAction, MouseButton, PhysicalKey, SelectionAction, ServerMessage, SurfaceSize,
+    self, ClientMessage, ClipboardLocation, Failure, FailureCode, FocusEvent, KeyAction, KeyEvent,
+    Modifiers, MouseAction, MouseButton, PhysicalKey, SelectionAction, ServerMessage, SurfaceSize,
     ViewportCell,
 };
 use std::{
@@ -44,6 +44,7 @@ type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
 const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 const MAX_EXIT_PTY_READS: usize = 4;
+const MAX_PENDING_CLIPBOARD_WRITES: usize = 64;
 const CLIENT_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
 
 const INITIAL_SIZE: SurfaceSize = SurfaceSize {
@@ -72,6 +73,81 @@ struct SelectionState {
     anchor: Option<ViewportCell>,
     copied: Option<String>,
     visible: bool,
+}
+
+#[derive(Default)]
+struct PendingClipboardWrites {
+    enabled: bool,
+    writes: VecDeque<(ClipboardLocation, String)>,
+    overflowed: bool,
+}
+
+impl PendingClipboardWrites {
+    fn capture(
+        &mut self,
+        write: ClipboardWrite<'_>,
+    ) -> std::result::Result<(), ClipboardWriteError> {
+        if !self.enabled {
+            return Err(ClipboardWriteError::Denied);
+        }
+        if self.overflowed {
+            return Err(ClipboardWriteError::Busy);
+        }
+        let write = raw_clipboard_write(&write);
+        let location = clipboard_location_raw(write.location)?;
+        if write.contents_len != 1 || write.contents.is_null() {
+            return Err(ClipboardWriteError::Unsupported);
+        }
+        // SAFETY: libghostty guarantees one live entry for the callback when
+        // contents_len is one.
+        let content = unsafe { &*write.contents };
+        if content.mime.len != b"text/plain".len() || content.mime.ptr.is_null() {
+            return Err(ClipboardWriteError::Unsupported);
+        }
+        // SAFETY: libghostty owns this bounded callback-borrowed MIME string.
+        let mime = unsafe { std::slice::from_raw_parts(content.mime.ptr, content.mime.len) };
+        if mime != b"text/plain" {
+            return Err(ClipboardWriteError::Unsupported);
+        }
+        if content.data.len == 0
+            || content.data.len > session::MAX_COPY_BYTES
+            || content.data.ptr.is_null()
+        {
+            return Err(ClipboardWriteError::InvalidData);
+        }
+        // SAFETY: libghostty owns this bounded callback-borrowed data string.
+        let data = unsafe { std::slice::from_raw_parts(content.data.ptr, content.data.len) };
+        let text = std::str::from_utf8(data).map_err(|_| ClipboardWriteError::InvalidData)?;
+        if text.contains('\0') {
+            return Err(ClipboardWriteError::InvalidData);
+        }
+        let bytes = self
+            .writes
+            .iter()
+            .map(|(_, text)| text.len())
+            .sum::<usize>();
+        if self.writes.len() >= MAX_PENDING_CLIPBOARD_WRITES
+            || bytes + text.len() > session::MAX_COPY_BYTES
+        {
+            self.overflowed = true;
+            return Err(ClipboardWriteError::Busy);
+        }
+        self.writes.push_back((location, text.to_owned()));
+        Ok(())
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+fn raw_clipboard_write<'a>(write: &'a ClipboardWrite<'_>) -> &'a ffi::ClipboardWrite {
+    // SAFETY: In pinned libghostty-vt 0.2.1 ClipboardWrite is exactly one
+    // raw-pointer field plus PhantomData. Transmute enforces pointer size, and
+    // the callback guarantees that the pointed-to C request is live.
+    let raw: *const ffi::ClipboardWrite = unsafe { std::mem::transmute(write.clone()) };
+    // SAFETY: The callback owns a valid request for its full duration.
+    unsafe { &*raw }
 }
 
 impl Client {
@@ -152,6 +228,9 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             overflow_sink.set(true);
         }
     })?;
+    let clipboard_writes = Rc::new(RefCell::new(PendingClipboardWrites::default()));
+    let clipboard_sink = Rc::clone(&clipboard_writes);
+    terminal.on_clipboard_write(move |_, write| clipboard_sink.borrow_mut().capture(write))?;
 
     let mut extractor = Extractor::new()?;
     let mut revision = 0;
@@ -159,6 +238,9 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
     let mut selection = SelectionState::default();
     let mut pty_open = true;
     loop {
+        clipboard_writes.borrow_mut().enabled = client.as_ref().is_some_and(|client| {
+            client.negotiation_deadline.is_none() && !client.close_after_flush
+        });
         if platform::termination_requested() {
             return Ok(0);
         }
@@ -167,6 +249,9 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             let changed = clear_selection(&terminal, &mut selection, true)?
                 | drain_exited_pty(&mut pty, &mut terminal, &mut selection)?;
             fail_on_pty_write_overflow(&response_overflow)?;
+            if !publish_clipboard_writes(&mut client, &clipboard_writes)? {
+                disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+            }
             if changed {
                 revision = next_revision(revision)?;
                 if !publish_frame(&mut client, &mut extractor, revision, &terminal)? {
@@ -204,6 +289,9 @@ fn run_server(socket: &Path, command: &[String]) -> Result<i32> {
             let (open, changed) = read_pty_turn(&mut pty, &mut terminal, &mut selection)?;
             fail_on_pty_write_overflow(&response_overflow)?;
             pty_open = open;
+            if !publish_clipboard_writes(&mut client, &clipboard_writes)? {
+                disconnect_client(&mut client, &terminal, &mut selection, &mut revision)?;
+            }
             if changed {
                 revision = next_revision(revision)?;
                 if !publish_frame(&mut client, &mut extractor, revision, &terminal)? {
@@ -258,6 +346,45 @@ fn fail_on_pty_write_overflow(overflow: &Cell<bool>) -> Result {
         return Err("PTY response exceeded the bounded write queue".into());
     }
     Ok(())
+}
+
+fn clipboard_location_raw(
+    location: ffi::ClipboardLocation::Type,
+) -> std::result::Result<ClipboardLocation, ClipboardWriteError> {
+    match location {
+        ffi::ClipboardLocation::STANDARD => Ok(ClipboardLocation::Standard),
+        ffi::ClipboardLocation::SELECTION => Ok(ClipboardLocation::Selection),
+        ffi::ClipboardLocation::PRIMARY => Ok(ClipboardLocation::Primary),
+        _ => Err(ClipboardWriteError::Unsupported),
+    }
+}
+
+fn publish_clipboard_writes(
+    active: &mut Option<Client>,
+    pending: &RefCell<PendingClipboardWrites>,
+) -> Result<bool> {
+    let mut pending = pending.borrow_mut();
+    let Some(client) = active
+        .as_mut()
+        .filter(|client| client.negotiation_deadline.is_none() && !client.close_after_flush)
+    else {
+        pending.clear();
+        return Ok(true);
+    };
+    if pending.overflowed {
+        pending.clear();
+        return Ok(false);
+    }
+    while let Some((location, text)) = pending.writes.pop_front() {
+        if !client
+            .output
+            .push_message(&ServerMessage::ClipboardWrite { location, text })?
+        {
+            pending.clear();
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn run_client(socket: &Path) -> Result<i32> {
@@ -1056,6 +1183,89 @@ mod tests {
         });
         while output.push_message(&failure)? {}
         while output.push_message(&ServerMessage::Accepted)? {}
+        Ok(())
+    }
+
+    #[test]
+    fn clipboard_capture_is_attached_typed_and_bounded() -> Result {
+        let pending = Rc::new(RefCell::new(PendingClipboardWrites::default()));
+        let sink = Rc::clone(&pending);
+        let last_error = Rc::new(Cell::new(None));
+        let error_sink = Rc::clone(&last_error);
+        let mut terminal = terminal()?;
+        terminal.on_clipboard_write(move |_, write| {
+            let result = sink.borrow_mut().capture(write);
+            error_sink.set(result.err());
+            result
+        })?;
+
+        terminal.vt_write(b"\x1b]52;c;ZGV0YWNoZWQ=\x1b\\");
+        assert!(pending.borrow().writes.is_empty());
+
+        pending.borrow_mut().enabled = true;
+        terminal.vt_write(
+            b"\x1b]52;c;\x1b\\\x1b]52;c;YQBi\x1b\\\x1b]52;c;/w==\x1b\\\x1b]52;c;b25l\x1b\\\x1b]52;s;dHdv\x1b\\\x1b]52;p;dGhyZWU=\x1b\\",
+        );
+        assert_eq!(
+            pending.borrow().writes,
+            VecDeque::from([
+                (ClipboardLocation::Standard, "one".into()),
+                (ClipboardLocation::Selection, "two".into()),
+                (ClipboardLocation::Primary, "three".into()),
+            ])
+        );
+
+        let mut oversized = b"\x1b]52;c;".to_vec();
+        oversized.extend_from_slice(&b"eHh4".repeat(session::MAX_COPY_BYTES / 3));
+        oversized.extend_from_slice(b"eHg=\x1b\\");
+        terminal.vt_write(&oversized);
+        assert_eq!(last_error.get(), Some(ClipboardWriteError::InvalidData));
+        assert_eq!(pending.borrow().writes.len(), 3);
+        assert_eq!(
+            clipboard_location_raw(u32::MAX),
+            Err(ClipboardWriteError::Unsupported)
+        );
+
+        let captured = pending.borrow().writes.len();
+        for _ in captured..=MAX_PENDING_CLIPBOARD_WRITES {
+            terminal.vt_write(b"\x1b]52;c;eA==\x1b\\");
+        }
+        assert!(pending.borrow().overflowed);
+
+        pending.borrow_mut().clear();
+        {
+            let mut pending = pending.borrow_mut();
+            pending.enabled = true;
+            pending.writes.push_back((
+                ClipboardLocation::Standard,
+                "x".repeat(session::MAX_COPY_BYTES - 1),
+            ));
+        }
+        terminal.vt_write(b"\x1b]52;c;eHg=\x1b\\\x1b]52;c;eA==\x1b\\");
+        assert_eq!(last_error.get(), Some(ClipboardWriteError::Busy));
+        assert_eq!(pending.borrow().writes.len(), 1);
+        assert!(pending.borrow().overflowed);
+
+        pending.borrow_mut().clear();
+        terminal.vt_write(b"\x1b]52;p;bm90LXJlcGxheWVk\x1b\\");
+        assert_eq!(last_error.get(), Some(ClipboardWriteError::Denied));
+        assert!(pending.borrow().writes.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn clipboard_output_pressure_disconnects_without_retaining_effects() -> Result {
+        let (mut client, _peer) = attached_client()?;
+        fill_output(&mut client.output)?;
+        let pending = RefCell::new(PendingClipboardWrites {
+            enabled: true,
+            writes: VecDeque::from([(ClipboardLocation::Standard, "copy".into())]),
+            overflowed: false,
+        });
+        let mut active = Some(client);
+
+        assert!(!publish_clipboard_writes(&mut active, &pending)?);
+        assert!(pending.borrow().writes.is_empty());
         Ok(())
     }
 

@@ -481,6 +481,49 @@ mod tests {
     }
 
     #[test]
+    fn real_pty_clipboard_write_precedes_its_frame() -> TestResult {
+        let directory = TestDir::new()?;
+        let socket = directory.0.join("orbit.sock");
+        let emit = directory.0.join("emit");
+        let emitted = directory.0.join("emitted");
+        let stop = directory.0.join("stop");
+        let script = format!(
+            "while [ ! -e '{emit}' ]; do sleep 0.01; done; printf '\\033]52;c;emVsbGlqIGNvcHk=\\033\\\\after'; : > '{emitted}'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
+            emit = emit.display(),
+            emitted = emitted.display(),
+            stop = stop.display(),
+        );
+        let server = Server::start(
+            socket.clone(),
+            vec!["/bin/sh".into(), "-c".into(), script],
+            stop,
+        );
+
+        let (mut reader, initial) = attach(&socket)?;
+        fs::write(&emit, b"emit")?;
+        wait_file(&emitted)?;
+
+        assert_eq!(
+            crate::read_server_message(&mut reader)?,
+            Some(ServerMessage::ClipboardWrite {
+                location: session::ClipboardLocation::Standard,
+                text: "zellij copy".into(),
+            })
+        );
+        let Some(ServerMessage::Frame(frame)) = crate::read_server_message(&mut reader)? else {
+            return Err("clipboard write was not followed by its frame".into());
+        };
+        assert!(frame.revision > initial.revision);
+
+        server.finish()?;
+        assert_eq!(
+            crate::read_server_message(&mut reader)?,
+            Some(ServerMessage::Exited { code: 0 })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn real_pty_reattach_converges_through_complete_ordered_frames() -> TestResult {
         let directory = TestDir::new()?;
         let socket = directory.0.join("orbit.sock");
