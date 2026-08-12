@@ -6,6 +6,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Orbit accepts one optional, versioned 16-color ANSI palette from its
+  component launcher before PTY startup. The supplied defaults appear in the
+  existing ORBS frames and remain the target of OSC 104 resets; standalone
+  launches retain libghostty defaults.
 - Orbit PTY children advertise `TERM=eon`. The repository-owned terminfo entry
   inherits the conservative `xterm-256color` baseline and is installed with
   standard `tic` before source-run sessions.

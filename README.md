@@ -90,7 +90,11 @@ replay fallback, PTY, socket, or protocol implementation in this slice.
 Orbit keeps the sole authoritative terminal state and supplies clients with
 host-authored structured presentation frames. It does not export a checkpoint,
 replicate raw PTY tails, or run another terminal emulator in the client. The
-`orb-bi4.3` proof uses `RenderState::update` and its public row and cell
+optional `serve --ansi-palette-v1 RGB,...` component input accepts exactly 16
+six-digit sRGB entries before the command separator. It replaces only
+libghostty palette indices 0 through 15 for that process; omission retains the
+built-in defaults, and ordinary OSC overrides and resets remain terminal-owned.
+The `orb-bi4.3` proof uses `RenderState::update` and its public row and cell
 iterators to encode a complete versioned frame containing geometry, styled
 graphemes, colors and palette, cursor state, active screen, title, working
 directory, and hyperlinks. Version 1 explicitly advertises hyperlink support
@@ -344,8 +348,8 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 7,564 |
+| Product Rust source and tests | 7,793 |
 | Governance Rust tool and tests | 765 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **8,329** |
-| **Total owned implementation source** | **8,331** |
+| **Total owned Rust** | **8,558** |
+| **Total owned implementation source** | **8,560** |
