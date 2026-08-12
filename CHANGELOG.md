@@ -57,8 +57,14 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   selection, authoritative selected presentation, and bounded plain-text copy.
   A successful Finish freezes one immutable client-scoped value that survives
   later terminal output, resize or reflow, and active-screen transitions; a
-  newer selection, client loss, or exit clears it. Venus updates separately
+  newer selection, client loss, or exit clears it. Venus consumes ORBS v2
   through `ven-4sn` without a v1 adapter or compatibility window.
+- The accepted `3ee7c80005f3d2bbe81e539799327803716f6174` proof replaces
+  the Orbit producer boundary with ORBS v3 and adds `ORB-C11`: bounded,
+  normalized terminal clipboard writes are delivered once and in order to the
+  attached client before the frame from the same PTY turn. Invalid, unsupported,
+  detached, or pressured writes fail closed. Venus native delivery updates
+  separately without a v2 adapter or compatibility window.
 - The authoritative owner loop yields after each productive PTY read and caps
   the shared terminal-response and semantic-input backlog. A whole semantic
   input that exceeds the remaining bound receives a terminal failure and closes

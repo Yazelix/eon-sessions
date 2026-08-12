@@ -19,10 +19,11 @@ exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
 The same package owns the accepted ORBS v2 attachment, frame, lifecycle, key,
-mouse, focus, paste, resize, selection, and copy messages. The ORBS v3 candidate
-retains those messages and adds bounded terminal-emitted clipboard writes as a
-distinct ordered effect; Venus still consumes v2 until its separate native
-delivery proof. Orbit's server and diagnostic client use the canonical values.
+mouse, focus, paste, resize, selection, and copy messages. The accepted ORBS v3
+producer retains those messages and adds bounded terminal-emitted clipboard
+writes as a distinct ordered effect; Venus still consumes v2 until its separate
+native delivery proof. Orbit's server and diagnostic client use the canonical
+values.
 Orbit resolves selection from the exact complete-frame revision and current
 viewport, publishes selected cells through normal frames, and returns only
 bounded plain text frozen at Finish.
@@ -120,7 +121,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The ORBS v3 candidate uses a 12-byte explicit
+The accepted ORBS v3 producer uses a 12-byte explicit
 little-endian header with `ORBS` magic, one exact revision, a typed message
 kind, zero reserved flags, and a bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -210,9 +211,9 @@ Venus revision `2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832` consumes canonical
 ORBF v1 frames over ORBS v2 at accepted Orbit proof
 `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`. Orbit provides authoritative
 selection and bounded copy through that boundary without dual-version support.
-The ORBS v3 candidate transports bounded normalized terminal clipboard writes;
-it is intentionally incompatible until a separate Venus consumer proof adopts
-the exact Orbit revision.
+The accepted ORBS v3 producer transports bounded normalized terminal clipboard
+writes; it is intentionally incompatible until a separate Venus consumer proof
+adopts the exact Orbit revision.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches

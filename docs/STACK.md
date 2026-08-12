@@ -50,10 +50,10 @@ Orbit owns the wire schema and its state-transition rules. The accepted
 complete-frame reduction, and ORBS v1 negotiation, attachment, frame,
 lifecycle, semantic-input, paste, and resize messages. The accepted ORBS v2
 revision replaces that session revision, retains those message families, and
-adds selection and bounded copy. The ORBS v3 candidate adds bounded normalized
-clipboard-write effects without changing ORBF. Venus must record each consumed
-contract's proof revision and pin the exact package revision instead of
-mirroring the schema.
+adds selection and bounded copy. The accepted ORBS v3 producer adds bounded
+normalized clipboard-write effects without changing ORBF. Venus must record
+each consumed contract's proof revision and pin the exact package revision
+instead of mirroring the schema.
 
 ## Two distinct WebAssembly roles
 
