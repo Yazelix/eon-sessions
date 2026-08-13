@@ -372,6 +372,17 @@ fn wait_process_gone(pid: u32) -> TestResult {
     }
 }
 
+fn process_cpu_ticks(pid: u32) -> TestResult<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let (_, fields) = stat
+        .rsplit_once(") ")
+        .ok_or("process stat is missing its command terminator")?;
+    let mut fields = fields.split_whitespace();
+    let user = fields.nth(11).ok_or("process stat is missing user CPU")?;
+    let system = fields.next().ok_or("process stat is missing system CPU")?;
+    Ok(user.parse::<u64>()? + system.parse::<u64>()?)
+}
+
 fn terminate(server: &Server) -> std::io::Result<()> {
     match unsafe { libc::kill(server.0.id() as libc::pid_t, libc::SIGTERM) } {
         0 => Ok(()),
@@ -533,38 +544,55 @@ fn pty_pressure_disconnect_ignores_stale_client_readiness() -> TestResult {
 }
 
 #[test]
-fn closed_pty_rejects_input_while_child_remains_alive() -> TestResult {
-    let dir = TestDir::new("closed-pty")?;
+fn transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal() -> TestResult {
+    let dir = TestDir::new("transient-pty-eio")?;
     let socket = dir.0.join("orbit.sock");
-    let marker = dir.0.join("closed");
+    let marker = dir.0.join("lifecycle");
+    let input = dir.0.join("input");
+    let release = dir.0.join("release");
     let mut server = Server(
         server_command()
             .arg(&socket)
             .arg("--")
             .arg("/bin/sh")
             .arg("-c")
-            .arg("exec 3>\"$ORBIT_MARKER\"; exec 0<&- 1>&- 2>&-; printf ready >&3; sleep 60")
+            .arg(
+                "exec 3>\"$ORBIT_MARKER\"; exec 0<&- 1>&- 2>&-; printf closed >&3; \
+                 while [ ! -e \"$ORBIT_RELEASE\" ]; do sleep 0.01; done; sleep 1; \
+                 exec 0<>/dev/tty 1>&0 2>&0; printf ',reopened' >&3; \
+                 printf '\\033]2;reopened\\033\\\\'; IFS= read -r input; printf '%s' \"$input\" > \"$ORBIT_INPUT\"",
+            )
             .env("ORBIT_MARKER", &marker)
+            .env("ORBIT_INPUT", &input)
+            .env("ORBIT_RELEASE", &release)
             .spawn()?,
     );
 
-    assert_eq!(wait_file_text(&marker)?, "ready");
+    assert_eq!(wait_file_text(&marker)?, "closed");
     let mut client = Client::attach(&socket)?;
     assert!(server.0.try_wait()?.is_none());
-
-    write_message(
-        client.reader.get_mut(),
-        &ClientMessage::Paste(b"undeliverable".to_vec()),
-    )?;
-    match read_message(&mut client.reader)? {
-        ServerMessage::Failure(failure) => {
-            assert_eq!(failure.code, FailureCode::Terminal);
-            assert_eq!(failure.detail, "PTY is closed");
-        }
-        message => return Err(format!("unexpected closed-PTY response: {message:?}").into()),
+    let cpu_before = std::env::var_os("ORBIT_MEMCHECK")
+        .is_none()
+        .then(|| process_cpu_ticks(server.0.id()))
+        .transpose()?;
+    fs::write(&release, b"release")?;
+    assert_eq!(
+        wait_file_text_matching(&marker, |text| text == "closed,reopened")?,
+        "closed,reopened"
+    );
+    if let Some(cpu_before) = cpu_before {
+        let cpu_ticks = process_cpu_ticks(server.0.id())? - cpu_before;
+        let clock_ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        assert!(clock_ticks > 0, "sysconf(_SC_CLK_TCK) failed");
+        assert!(
+            cpu_ticks.saturating_mul(5) < clock_ticks as u64,
+            "Orbit consumed {cpu_ticks}/{clock_ticks} CPU ticks during a one-second PTY slave gap"
+        );
     }
-    assert!(server.0.try_wait()?.is_none());
-    assert!(server.shutdown()?.success());
+    client.wait_title("reopened")?;
+    client.paste("after-reopen\n")?;
+    assert_eq!(wait_file_text(&input)?, "after-reopen");
+    assert!(wait_bounded(&mut server)?.success());
     Ok(())
 }
 

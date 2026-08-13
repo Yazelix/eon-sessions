@@ -15,9 +15,12 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::Duration,
 };
 
 static TERMINATE: AtomicBool = AtomicBool::new(false);
+const PTY_EIO_RETRY_DELAY: Duration = Duration::from_millis(10);
 
 pub(crate) enum PtyIo {
     Ready(usize),
@@ -102,11 +105,11 @@ impl Pty {
     }
 
     pub(crate) fn read(&mut self, bytes: &mut [u8]) -> Result<PtyIo> {
-        nonblocking(|| self.master.read(bytes))
+        nonblocking(|| self.master.read(bytes), self.child.is_some())
     }
 
     pub(crate) fn write(&mut self, bytes: &[u8]) -> Result<PtyIo> {
-        nonblocking(|| self.master.write(bytes))
+        nonblocking(|| self.master.write(bytes), false)
     }
 
     pub(crate) fn stop_and_reap(&mut self) {
@@ -267,13 +270,17 @@ fn winsize(size: SurfaceSize) -> libc::winsize {
     }
 }
 
-fn nonblocking(mut operation: impl FnMut() -> io::Result<usize>) -> Result<PtyIo> {
+fn nonblocking(mut operation: impl FnMut() -> io::Result<usize>, retry_eio: bool) -> Result<PtyIo> {
     loop {
         match operation() {
             Ok(0) => return Ok(PtyIo::Closed),
             Ok(count) => return Ok(PtyIo::Ready(count)),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                return Ok(PtyIo::Blocked);
+            }
+            Err(error) if retry_eio && error.raw_os_error() == Some(libc::EIO) => {
+                thread::sleep(PTY_EIO_RETRY_DELAY);
                 return Ok(PtyIo::Blocked);
             }
             Err(error) if error.raw_os_error() == Some(libc::EIO) => {

@@ -202,8 +202,8 @@ observe output produced by a blocked foreground command after the client has
 disconnected, reconnect to the same shell PID, exercise second-client
 rejection, and check aborted attachment, stale-socket identity, permissions,
 child exit, startup and established SIGTERM cleanup, foreground-process reaping,
-replacement-socket ownership, and terminal request failure after a live child
-closes every PTY descriptor, all with bounded timeouts.
+replacement-socket ownership, and bounded recovery after a live child closes
+every PTY descriptor and later reopens its terminal, all with bounded timeouts.
 
 ## Contract
 
@@ -353,8 +353,8 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 8,029 |
+| Product Rust source and tests | 8,064 |
 | Governance Rust tool and tests | 765 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **8,794** |
-| **Total owned implementation source** | **8,796** |
+| **Total owned Rust** | **8,829** |
+| **Total owned implementation source** | **8,831** |
