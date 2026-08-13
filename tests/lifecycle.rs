@@ -495,6 +495,44 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
 }
 
 #[test]
+fn pty_pressure_disconnect_ignores_stale_client_readiness() -> TestResult {
+    let dir = TestDir::new("stale-client-readiness")?;
+    let socket = dir.0.join("orbit.sock");
+    let emitted = dir.0.join("emitted");
+
+    // One more than the pending-effect bound disconnects during PTY processing.
+    let effects = "\\033]52;c;eA==\\033\\\\".repeat(65);
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(
+                "stty -echo; read orbit_trigger; printf \"$ORBIT_EFFECTS\"; \
+                 printf emitted > \"$ORBIT_EMITTED\"; read orbit_stop",
+            )
+            .env("ORBIT_EFFECTS", effects)
+            .env("ORBIT_EMITTED", &emitted)
+            .spawn()?,
+    );
+    let mut first = Client::attach(&socket)?;
+
+    let mut input = encode_client_message(&ClientMessage::Paste(b"trigger\n".to_vec()))?;
+    // The complete first message releases the child; the incomplete second
+    // message keeps client input ready without producing another reply.
+    let incomplete =
+        encode_client_message(&ClientMessage::Paste(vec![b'x'; session::MAX_PASTE_BYTES]))?;
+    input.extend_from_slice(&incomplete[..incomplete.len() - 1]);
+    let _ = first.reader.get_mut().write_all(&input);
+    assert_eq!(wait_file_text(&emitted)?, "emitted");
+
+    let _second = Client::attach(&socket)?;
+    assert!(server.shutdown()?.success());
+    Ok(())
+}
+
+#[test]
 fn closed_pty_rejects_input_while_child_remains_alive() -> TestResult {
     let dir = TestDir::new("closed-pty")?;
     let socket = dir.0.join("orbit.sock");

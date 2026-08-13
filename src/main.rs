@@ -463,8 +463,9 @@ fn run_server(
             discard_pty_writes(&writes);
         }
         if readiness.client
+            && let Some(active) = client.as_mut()
             && !read_client(
-                client.as_mut().expect("client existed when poll began"),
+                active,
                 &mut terminal,
                 pty_open.then_some(&pty),
                 &mut size,
