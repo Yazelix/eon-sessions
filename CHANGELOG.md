@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `cb0703010c3a4944980404b665abff795be09fb4` proof hardens
+  `ORB-C1`: Linux PTY-master `EIO` remains retryable while Orbit's direct child
+  is alive, so a temporary zero-slave interval no longer closes the Session.
+  Recovery is bounded to avoid CPU spin, and later presentation and semantic
+  input continue through the same authoritative terminal. ORBF v1 and ORBS v3
+  are unchanged.
 - The accepted `83d700882ee156bac0de0112b3f1daade049b9fb` proof hardens
   `ORB-C1` and `ORB-C7`: PTY-side output pressure may disconnect a concurrently
   ready client without letting the stale poll result panic Orbit. The live PTY
