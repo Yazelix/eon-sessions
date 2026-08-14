@@ -18,12 +18,12 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns the accepted ORBS v2 attachment, frame, lifecycle, key,
-mouse, focus, paste, resize, selection, and copy messages. The accepted ORBS v3
-producer retains those messages and adds bounded terminal-emitted clipboard
-writes as a distinct ordered effect; Venus still consumes v2 until its separate
-native delivery proof. Orbit's server and diagnostic client use the canonical
-values.
+The same package owns the accepted ORBS v3 attachment, frame, lifecycle, key,
+mouse, focus, paste, resize, selection, copy, and terminal-clipboard messages.
+The ORBS v4 candidate retains those values and adds revision-bound adjacent-row
+previews plus typed vertical-wheel outcomes. Known external consumers remain on
+their separately accepted revisions until their v4 updates. Orbit's server and
+diagnostic client use only the canonical values.
 Orbit resolves selection from the exact complete-frame revision and current
 viewport, publishes selected cells through normal frames, and returns only
 bounded plain text frozen at Finish.
@@ -130,9 +130,9 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The accepted ORBS v3 producer uses a 12-byte explicit
-little-endian header with `ORBS` magic, one exact revision, a typed message
-kind, zero reserved flags, and a bounded payload length. Decoding is
+The ORBS v4 candidate uses a 12-byte explicit little-endian header with `ORBS`
+magic, one exact revision, a typed message kind, zero reserved flags, and a
+bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
 message-specific invalid declarations—including a frame shorter than any
 canonical ORBF value—from the header before payload-sized buffering.
@@ -142,8 +142,11 @@ Arbitrary paste bytes remain opaque; key events retain physical identity,
 action, active and consumed modifiers, composition, multi-codepoint text, and
 an optional unshifted codepoint. Cell selection is revision-bound at Begin,
 ordered through Update and Finish, and copied explicitly without transferring
-terminal authority. The session layer embeds canonical ORBF frames without
-interpreting them again and adds no dependency.
+terminal authority. A vertical preview carries at most one canonical row tied
+to an exact current frame without moving the viewport or sending PTY input. An
+accepted vertical wheel returns either terminal-routed or an atomic applied-row
+count and newer complete frame. The session layer embeds canonical ORBF frames
+without interpreting them again and adds no dependency.
 
 ## PTY-lifetime proof
 
@@ -161,11 +164,11 @@ the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v3 codec. A version-negotiated
+client and server use only the bounded ORBS v4 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
-revision-bound selection events, never raw PTY output.
+revision-bound selection and vertical-preview events, never raw PTY output.
 
 The default socket is `$XDG_RUNTIME_DIR/yazelix-orbit/orbit.sock`, falling back
 to `/tmp/yazelix-orbit-$UID/orbit.sock`. Its directory is user-owned and private,
@@ -223,8 +226,10 @@ ORBF v1 frames over ORBS v2 at accepted Orbit proof
 `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`. Orbit provides authoritative
 selection and bounded copy through that boundary without dual-version support.
 The accepted ORBS v3 producer transports bounded normalized terminal clipboard
-writes; it is intentionally incompatible until a separate Venus consumer proof
-adopts the exact Orbit revision.
+writes. The ORBS v4 candidate adds bounded adjacent-row previews and typed
+vertical-wheel results. Each owner-first replacement is intentionally
+incompatible until a separate Venus consumer proof adopts the exact Orbit
+revision.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
@@ -355,8 +360,8 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 8,217 |
+| Product Rust source and tests | 9,166 |
 | Governance Rust tool and tests | 765 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **8,982** |
-| **Total owned implementation source** | **8,984** |
+| **Total owned Rust** | **9,931** |
+| **Total owned implementation source** | **9,933** |

@@ -410,16 +410,7 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
     }
 
     for row in &frame.rows {
-        let row_flags = u8::from(row.wrapped)
-            | (u8::from(row.wrap_continuation) << 1)
-            | (u8::from(row.kitty_virtual_placeholder) << 2);
-        encoder.u8(row_flags)?;
-        for cell in &row.cells {
-            encoder.u8(cell_width_tag(cell.width))?;
-            encoder.style(cell.style)?;
-            encoder.string("cell text", &cell.text)?;
-            encoder.string("cell hyperlink", &cell.hyperlink)?;
-        }
+        encode_row(&mut encoder, row)?;
     }
     debug_assert_eq!(encoder.0.len(), encoded_size);
     Ok(encoder.0)
@@ -488,28 +479,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
 
     let mut rows = Vec::with_capacity(usize::from(dimensions.rows));
     for _ in 0..dimensions.rows {
-        let flags = decoder.u8()?;
-        if flags & !ROW_FLAG_MASK != 0 {
-            return Err(Error::InvalidFlags {
-                field: "row",
-                value: u16::from(flags),
-            });
-        }
-        let mut cells = Vec::with_capacity(usize::from(dimensions.cols));
-        for _ in 0..dimensions.cols {
-            cells.push(Cell {
-                width: decode_cell_width(decoder.u8()?)?,
-                style: decoder.style()?,
-                text: decoder.string("cell text")?,
-                hyperlink: decoder.string("cell hyperlink")?,
-            });
-        }
-        rows.push(Row {
-            wrapped: flags & 1 != 0,
-            wrap_continuation: flags & (1 << 1) != 0,
-            kitty_virtual_placeholder: flags & (1 << 2) != 0,
-            cells,
-        });
+        rows.push(decode_row(&mut decoder, dimensions.cols)?);
     }
     if decoder.position != bytes.len() {
         return Err(Error::TrailingBytes {
@@ -532,6 +502,88 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
         cursor,
         rows,
     })
+}
+
+pub(crate) fn encode_canonical_row(row: &Row, cols: u16) -> Result<Vec<u8>> {
+    validate_row(row, cols)?;
+    let mut size = FrameSize::from_bytes(ROW_FIXED_BYTES)?;
+    for cell in &row.cells {
+        size.add_cell(&cell.text, &cell.hyperlink)?;
+    }
+    let mut encoder = Encoder(Vec::with_capacity(size.bytes()));
+    encode_row(&mut encoder, row)?;
+    Ok(encoder.0)
+}
+
+pub(crate) fn decode_canonical_row(bytes: &[u8], cols: u16) -> Result<Row> {
+    validate_row_columns(cols)?;
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err(Error::FrameTooLarge { size: bytes.len() });
+    }
+    let mut decoder = Decoder { bytes, position: 0 };
+    let row = decode_row(&mut decoder, cols)?;
+    if decoder.position != bytes.len() {
+        return Err(Error::TrailingBytes {
+            count: bytes.len() - decoder.position,
+        });
+    }
+    Ok(row)
+}
+
+fn encode_row(encoder: &mut Encoder, row: &Row) -> Result<()> {
+    let flags = u8::from(row.wrapped)
+        | (u8::from(row.wrap_continuation) << 1)
+        | (u8::from(row.kitty_virtual_placeholder) << 2);
+    encoder.u8(flags)?;
+    for cell in &row.cells {
+        encoder.u8(cell_width_tag(cell.width))?;
+        encoder.style(cell.style)?;
+        encoder.string("cell text", &cell.text)?;
+        encoder.string("cell hyperlink", &cell.hyperlink)?;
+    }
+    Ok(())
+}
+
+fn decode_row(decoder: &mut Decoder<'_>, cols: u16) -> Result<Row> {
+    let flags = decoder.u8()?;
+    if flags & !ROW_FLAG_MASK != 0 {
+        return Err(Error::InvalidFlags {
+            field: "row",
+            value: u16::from(flags),
+        });
+    }
+    let mut cells = Vec::with_capacity(usize::from(cols));
+    for _ in 0..cols {
+        cells.push(Cell {
+            width: decode_cell_width(decoder.u8()?)?,
+            style: decoder.style()?,
+            text: decoder.string("cell text")?,
+            hyperlink: decoder.string("cell hyperlink")?,
+        });
+    }
+    Ok(Row {
+        wrapped: flags & 1 != 0,
+        wrap_continuation: flags & (1 << 1) != 0,
+        kitty_virtual_placeholder: flags & (1 << 2) != 0,
+        cells,
+    })
+}
+
+fn validate_row_columns(cols: u16) -> Result<()> {
+    if cols == 0 || usize::from(cols) > MAX_CELLS {
+        Err(Error::InvalidDimensions { cols, rows: 1 })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_row(row: &Row, cols: u16) -> Result<()> {
+    validate_row_columns(cols)?;
+    if row.cells.len() != usize::from(cols) {
+        Err(Error::InvalidShape { field: "cell" })
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_dimensions(dimensions: Dimensions) -> Result<usize> {

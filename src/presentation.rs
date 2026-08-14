@@ -2,7 +2,7 @@ use crate::Result;
 use libghostty_vt::{
     Error as GhosttyError, RenderState, Terminal,
     render::{CellIterator, CursorVisualStyle as GhosttyCursorShape, RowIterator},
-    screen::{CellWide as GhosttyCellWidth, Screen},
+    screen::{CellContentTag, CellWide as GhosttyCellWidth, Screen},
     style::{RgbColor, Style, StyleColor as GhosttyStyleColor, Underline as GhosttyUnderline},
     terminal::{Point, PointCoordinate},
 };
@@ -10,7 +10,7 @@ use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
     CursorViewport, Dimensions, Frame, FrameSize, MAX_CELLS, MAX_FRAME_BYTES, Rgb, Row,
     Screen as ProtocolScreen, StyleColor, Underline,
-    session::{HEADER_BYTES, ServerMessage, encode_server_message},
+    session::{HEADER_BYTES, ServerMessage, WheelOutcome, encode_server_message},
 };
 use std::{collections::VecDeque, io, io::Write, os::unix::net::UnixStream};
 
@@ -154,6 +154,74 @@ impl Extractor {
             rows: frame_rows,
         })
     }
+
+    pub(crate) fn row(
+        &self,
+        terminal: &Terminal<'static, '_>,
+        screen_y: u32,
+        cols: u16,
+    ) -> Result<Row> {
+        let first = terminal.grid_ref(Point::Screen(PointCoordinate { x: 0, y: screen_y }))?;
+        let raw_row = first.row()?;
+        let palette = terminal.color_palette()?;
+        let mut frame_size = FrameSize::new("", "", false, false)?;
+        frame_size.add_row()?;
+        let mut chars = vec!['\0'; 8];
+        let mut text = String::new();
+        let mut cells = Vec::with_capacity(usize::from(cols));
+        for x in 0..cols {
+            let reference = terminal.grid_ref(Point::Screen(PointCoordinate { x, y: screen_y }))?;
+            let raw_cell = reference.cell()?;
+            let mut style = reference.style()?;
+            style.bg_color = match raw_cell.content_tag()? {
+                CellContentTag::BgColorPalette => {
+                    GhosttyStyleColor::Rgb(palette.get(raw_cell.bg_color_palette()?))
+                }
+                CellContentTag::BgColorRgb => GhosttyStyleColor::Rgb(raw_cell.bg_color_rgb()?),
+                CellContentTag::Codepoint | CellContentTag::CodepointGrapheme => {
+                    match style.bg_color {
+                        GhosttyStyleColor::Palette(index) => {
+                            GhosttyStyleColor::Rgb(palette.get(index))
+                        }
+                        background => background,
+                    }
+                }
+            };
+            let length = match reference.graphemes(&mut chars) {
+                Ok(length) => length,
+                Err(GhosttyError::OutOfSpace { required })
+                    if required <= MAX_FRAME_BYTES / size_of::<char>() =>
+                {
+                    chars.resize(required, '\0');
+                    reference.graphemes(&mut chars)?
+                }
+                Err(GhosttyError::OutOfSpace { .. }) => {
+                    return Err("cell grapheme exceeds the frame bound".into());
+                }
+                Err(error) => return Err(error.into()),
+            };
+            text.clear();
+            text.extend(chars[..length].iter());
+            let hyperlink = if raw_cell.has_hyperlink()? {
+                hyperlink(&reference)?
+            } else {
+                String::new()
+            };
+            frame_size.add_cell(&text, &hyperlink)?;
+            cells.push(ProtocolCell {
+                width: cell_width(raw_cell.wide()?)?,
+                style: cell_style(style, false, raw_cell.is_protected()?)?,
+                text: text.clone(),
+                hyperlink,
+            });
+        }
+        Ok(Row {
+            wrapped: raw_row.is_wrapped()?,
+            wrap_continuation: raw_row.is_wrap_continuation()?,
+            kitty_virtual_placeholder: raw_row.has_kitty_virtual_placeholder()?,
+            cells,
+        })
+    }
 }
 
 fn hyperlink(reference: &libghostty_vt::screen::GridRef<'_>) -> Result<String> {
@@ -241,7 +309,14 @@ fn cell_style(style: Style, selected: bool, protected: bool) -> Result<CellStyle
 
 struct Message {
     bytes: Vec<u8>,
-    coalescible: bool,
+    class: MessageClass,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MessageClass {
+    Ordered,
+    Preview,
+    Frame,
 }
 
 #[derive(Default)]
@@ -258,38 +333,87 @@ impl OutputQueue {
             <= MAX_OUTPUT_BYTES
     }
 
+    pub(crate) fn can_push_frame_message(&self) -> bool {
+        self.bytes
+            .saturating_sub(self.replaceable_suffix(MessageClass::Frame).1)
+            .saturating_add(MAX_FRAME_BYTES + HEADER_BYTES)
+            <= MAX_OUTPUT_BYTES
+    }
+
+    pub(crate) fn can_push_message(&self, message: &ServerMessage) -> Result<bool> {
+        Ok(self
+            .bytes
+            .saturating_add(encode_server_message(message)?.len())
+            <= MAX_OUTPUT_BYTES)
+    }
+
     pub(crate) fn push_message(&mut self, message: &ServerMessage) -> Result<bool> {
-        Ok(self.push(encode_server_message(message)?, false))
+        let class = match message {
+            ServerMessage::VerticalPreview(_) => MessageClass::Preview,
+            ServerMessage::WheelOutcome(WheelOutcome::Viewport { .. }) => MessageClass::Frame,
+            _ => MessageClass::Ordered,
+        };
+        Ok(self.push_replaceable(encode_server_message(message)?, class))
     }
 
     pub(crate) fn push_initial_frame(&mut self, frame: Frame) -> Result<bool> {
         Ok(self.push(
             encode_server_message(&ServerMessage::Frame(Box::new(frame)))?,
-            false,
+            MessageClass::Ordered,
         ))
     }
 
     pub(crate) fn push_frame(&mut self, frame: Frame) -> Result<bool> {
         let message = encode_server_message(&ServerMessage::Frame(Box::new(frame)))?;
-        Ok(self.push_coalescible(message))
+        Ok(self.push_replaceable(message, MessageClass::Frame))
     }
 
-    fn push_coalescible(&mut self, message: Vec<u8>) -> bool {
-        if self.messages.back().is_some_and(|back| back.coalescible)
-            && (self.messages.len() > 1 || self.offset == 0)
+    fn push_replaceable(&mut self, message: Vec<u8>, class: MessageClass) -> bool {
+        let (remove, removed_bytes) = self.replaceable_suffix(class);
+        if self
+            .bytes
+            .saturating_sub(removed_bytes)
+            .saturating_add(message.len())
+            > MAX_OUTPUT_BYTES
         {
+            return false;
+        }
+        for _ in 0..remove {
             let previous = self.messages.pop_back().expect("back existed");
             self.bytes -= previous.bytes.len();
         }
-        self.push(message, true)
+        self.push(message, class)
     }
 
-    fn push(&mut self, bytes: Vec<u8>, coalescible: bool) -> bool {
+    fn replaceable_suffix(&self, class: MessageClass) -> (usize, usize) {
+        let replaceable = |back: &Message| match class {
+            MessageClass::Ordered => false,
+            MessageClass::Preview => back.class == MessageClass::Preview,
+            MessageClass::Frame => {
+                matches!(back.class, MessageClass::Preview | MessageClass::Frame)
+            }
+        };
+        let mut remove = 0;
+        let mut removed_bytes = 0usize;
+        for (index, back) in self.messages.iter().enumerate().rev() {
+            if !replaceable(back) || index == 0 && self.offset != 0 {
+                break;
+            }
+            remove += 1;
+            removed_bytes += back.bytes.len();
+            if class == MessageClass::Preview {
+                break;
+            }
+        }
+        (remove, removed_bytes)
+    }
+
+    fn push(&mut self, bytes: Vec<u8>, class: MessageClass) -> bool {
         if self.bytes.saturating_add(bytes.len()) > MAX_OUTPUT_BYTES {
             return false;
         }
         self.bytes += bytes.len();
-        self.messages.push_back(Message { bytes, coalescible });
+        self.messages.push_back(Message { bytes, class });
         true
     }
 
@@ -322,6 +446,7 @@ impl OutputQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libghostty_vt::{TerminalOptions, terminal::ScrollViewport};
     use orbit_protocol::session::{
         self, ClientMessage, ServerMessage, decode_server_message, encode_client_message,
     };
@@ -420,7 +545,7 @@ mod tests {
             framed.resize(length, 0);
             reader.read_exact(&mut framed[session::HEADER_BYTES..])?;
             match decode_server_message(&framed)? {
-                ServerMessage::Attached { .. } | ServerMessage::Accepted => {}
+                ServerMessage::Attached | ServerMessage::Accepted => {}
                 ServerMessage::Frame(frame) => return Ok(Some(*frame)),
                 ServerMessage::Busy => return Ok(None),
                 message => return Err(format!("unexpected server message: {message:?}").into()),
@@ -443,10 +568,7 @@ mod tests {
                 Ok(stream) => {
                     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
                     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-                    (&stream).write_all(&encode_client_message(&ClientMessage::Hello {
-                        minimum_version: session::VERSION,
-                        maximum_version: session::VERSION,
-                    })?)?;
+                    (&stream).write_all(&encode_client_message(&ClientMessage::Hello)?)?;
                     let mut reader = BufReader::new(stream);
                     if let Some(frame) = read_frame(&mut reader)? {
                         return Ok((reader, frame));
@@ -481,13 +603,85 @@ mod tests {
     #[test]
     fn pending_frames_keep_the_initial_and_only_the_latest_revision() {
         let mut output = OutputQueue::default();
-        assert!(output.push(vec![0], false));
-        assert!(output.push_coalescible(vec![1]));
-        assert!(output.push_coalescible(vec![2]));
+        assert!(output.push(vec![0], MessageClass::Ordered));
+        assert!(output.push_replaceable(vec![1], MessageClass::Frame));
+        assert!(output.push_replaceable(vec![2], MessageClass::Preview));
+        assert!(output.push_replaceable(vec![3], MessageClass::Preview));
 
-        assert_eq!(output.messages.len(), 2);
+        assert_eq!(output.messages.len(), 3);
         assert!(output.messages.front().unwrap().bytes.ends_with(&[0]));
-        assert!(output.messages.back().unwrap().bytes.ends_with(&[2]));
+        assert!(output.messages.back().unwrap().bytes.ends_with(&[3]));
+
+        assert!(output.push_replaceable(vec![4], MessageClass::Frame));
+        assert_eq!(output.messages.len(), 2);
+        assert!(output.messages.back().unwrap().bytes.ends_with(&[4]));
+
+        assert!(output.push_replaceable(vec![5], MessageClass::Preview));
+        assert_eq!(output.messages.len(), 3);
+        assert!(output.messages.back().unwrap().bytes.ends_with(&[5]));
+
+        let mut full = OutputQueue::default();
+        assert!(full.push(
+            vec![0; MAX_FRAME_BYTES + HEADER_BYTES],
+            MessageClass::Ordered
+        ));
+        assert!(
+            full.push_replaceable(vec![1; MAX_FRAME_BYTES + HEADER_BYTES], MessageClass::Frame)
+        );
+        assert!(full.can_push_frame_message());
+    }
+
+    #[test]
+    fn direct_rows_match_rich_canonical_frame_rows() -> TestResult {
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 12,
+            rows: 4,
+            max_scrollback: 100,
+        })?;
+        terminal.vt_write(
+            "\x1b]8;;https://example.test\x1b\\\x1b[1\"q\x1b[1;38;2;12;34;56;48;5;17mAe\u{301}界wrap-me-long\x1b[0m\x1b[0\"q\x1b]8;;\x1b\\\r\n\x1b[48;2;5;6;7m\x1b[2K\x1b[0m\r\nplain\r\ntail-1\r\ntail-2\r\ntail-3"
+                .as_bytes(),
+        );
+        terminal.scroll_viewport(ScrollViewport::Top);
+
+        let mut extractor = Extractor::new()?;
+        let frame = extractor.frame(1, &terminal)?;
+        for (y, expected) in frame.rows.iter().enumerate() {
+            assert_eq!(
+                extractor.row(&terminal, u32::try_from(y)?, frame.dimensions.cols)?,
+                *expected
+            );
+        }
+        let mut cells = frame.rows.iter().flat_map(|row| &row.cells);
+        assert!(frame.rows.iter().any(|row| row.wrapped));
+        assert!(
+            cells
+                .clone()
+                .any(|cell| cell.hyperlink == "https://example.test")
+        );
+        assert!(cells.clone().any(|cell| cell.style.protected));
+        assert!(cells.clone().any(|cell| {
+            cell.style.foreground
+                == StyleColor::Rgb(Rgb {
+                    r: 12,
+                    g: 34,
+                    b: 56,
+                })
+        }));
+        assert!(
+            cells.clone().any(|cell| {
+                cell.style.background == StyleColor::Rgb(Rgb { r: 0, g: 0, b: 95 })
+            })
+        );
+        assert!(
+            cells
+                .clone()
+                .any(|cell| { cell.style.background == StyleColor::Rgb(Rgb { r: 5, g: 6, b: 7 }) })
+        );
+        assert!(cells.clone().any(|cell| cell.text == "e\u{301}"));
+        assert!(cells.clone().any(|cell| cell.width == CellWidth::Wide));
+        assert!(cells.any(|cell| cell.width == CellWidth::SpacerTail));
+        Ok(())
     }
 
     #[test]

@@ -74,6 +74,13 @@ Mars, Mars Next, or another project by default.
   [render header](https://github.com/ghostty-org/ghostty/blob/45db2c2551ecc016f9746e8e2855f4f8a3871e7b/include/ghostty/vt/render.h)
   expose global and per-row dirty state. This makes incremental presentation a
   future existing-dependency path rather than a reason to add a diff crate.
+  For the ORBS v4 adjacent-row decision, release-mode `GridRef` extraction over
+  400 interleaved samples stayed below 12 microseconds p95 at 80 and 240 columns
+  with 32 and 1,000 retained rows. Complete-frame extraction ranged from 46.5
+  to 173.8 microseconds p95 on the same 24-row terminal, and every lookup left
+  scrollbar state unchanged. Orbit therefore uses the existing read-only grid
+  API and rejects temporary viewport mutation, a new dependency, and a second
+  row schema.
 - [WezTerm at `577474d89ee6`](https://github.com/wezterm/wezterm/tree/577474d89ee61aef4a48145cdec82a638d874751)
   is the closest public structured-state replication comparison. Its
   [protocol types](https://github.com/wezterm/wezterm/blob/577474d89ee61aef4a48145cdec82a638d874751/codec/src/lib.rs),
@@ -177,6 +184,17 @@ not selected because another reference uses it, and an async runtime is not a
 prerequisite for the current single-session architecture.
 
 ## Native client and rendering
+
+- [Wayland `wl_pointer` v10](https://wayland.app/protocols/wayland),
+  [winit 0.30.13](https://docs.rs/winit/0.30.13/winit/event/enum.WindowEvent.html),
+  [Ghostty at `45db2c2551`](https://github.com/ghostty-org/ghostty/tree/45db2c2551ecc016f9746e8e2855f4f8a3871e7b),
+  [Rio at `3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098),
+  and WezTerm's pinned structured-state references above constrain vertical
+  direct manipulation. Venus owns surface pixels, touch phases, accumulated
+  remainders, velocity, and kinetic policy. Orbit exposes only one
+  revision-bound adjacent canonical row and one typed whole-row commit outcome.
+  It does not expose arbitrary history or adopt the comparison projects'
+  same-process engines, caches, multiplexers, or renderers.
 
 - [Ghostling](https://github.com/ghostty-org/ghostling) and
   [libghostty-rs](https://github.com/Uzaaft/libghostty-rs) show small clients

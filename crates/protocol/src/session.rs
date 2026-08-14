@@ -2,12 +2,15 @@
 
 use std::{fmt, str};
 
-use crate::{Frame, MAX_CELLS, MAX_FRAME_BYTES, MIN_FRAME_BYTES, decode_frame, encode_frame};
+use crate::{
+    Frame, MAX_CELLS, MAX_FRAME_BYTES, MIN_FRAME_BYTES, Row, decode_canonical_row, decode_frame,
+    encode_canonical_row, encode_frame,
+};
 
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 4;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
@@ -28,15 +31,20 @@ const CLIENT_FOCUS: u8 = 4;
 const CLIENT_PASTE: u8 = 5;
 const CLIENT_RESIZE: u8 = 6;
 const CLIENT_SELECTION: u8 = 7;
+const CLIENT_PREVIEW_VERTICAL: u8 = 8;
 const SERVER_ATTACHED: u8 = 129;
 const SERVER_BUSY: u8 = 130;
-const SERVER_INCOMPATIBLE: u8 = 131;
 const SERVER_FRAME: u8 = 132;
 const SERVER_ACCEPTED: u8 = 133;
 const SERVER_FAILURE: u8 = 134;
 const SERVER_EXITED: u8 = 135;
 const SERVER_COPIED_TEXT: u8 = 136;
 const SERVER_CLIPBOARD_WRITE: u8 = 137;
+const SERVER_WHEEL_TERMINAL_ROUTED: u8 = 138;
+const SERVER_WHEEL_VIEWPORT_UP: u8 = 139;
+const SERVER_WHEEL_VIEWPORT_STILL: u8 = 140;
+const SERVER_WHEEL_VIEWPORT_DOWN: u8 = 141;
+const SERVER_VERTICAL_PREVIEW: u8 = 142;
 
 const SELECTION_BEGIN: u8 = 0;
 const SELECTION_UPDATE: u8 = 1;
@@ -65,8 +73,6 @@ pub enum Error {
     InvalidValue { field: &'static str },
     /// A UTF-8 field is malformed.
     InvalidUtf8 { field: &'static str },
-    /// A version range is empty or reversed.
-    InvalidVersionRange,
     /// Consumed modifiers are not a subset of active modifiers.
     ConsumedModifiersNotActive,
     /// Mouse coordinates are outside the terminal mapper's supported range.
@@ -109,7 +115,6 @@ impl fmt::Display for Error {
             Self::InvalidUtf8 { field } => {
                 write!(formatter, "local-session {field} is not UTF-8")
             }
-            Self::InvalidVersionRange => formatter.write_str("invalid protocol version range"),
             Self::ConsumedModifiersNotActive => {
                 formatter.write_str("consumed key modifiers are not active")
             }
@@ -141,11 +146,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// A client-to-Orbit semantic message.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientMessage {
-    /// Opens a session whose supported revisions overlap this inclusive range.
-    Hello {
-        minimum_version: u16,
-        maximum_version: u16,
-    },
+    /// Opens a session using the exact revision in the ORBS header.
+    Hello,
     /// One physical key event and its text meaning.
     Key(KeyEvent),
     /// One pointer event in surface pixels.
@@ -158,20 +160,20 @@ pub enum ClientMessage {
     Resize(SurfaceSize),
     /// One authoritative current-viewport selection or copy action.
     Selection(SelectionAction),
+    /// Read at most one vertical row adjacent to an exact complete frame.
+    PreviewVertical {
+        frame_revision: u64,
+        direction: VerticalDirection,
+    },
 }
 
 /// An Orbit-to-client session message.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ServerMessage {
-    /// The client owns the single attachment at this negotiated revision.
-    Attached { version: u16 },
+    /// The client owns the single attachment at this exact ORBS revision.
+    Attached,
     /// Another client already owns the single attachment.
     Busy,
-    /// The offered revisions do not overlap Orbit's accepted revision.
-    Incompatible {
-        minimum_version: u16,
-        maximum_version: u16,
-    },
     /// One canonical, complete Orbit presentation frame.
     Frame(Box<Frame>),
     /// Orbit accepted a semantic event.
@@ -187,6 +189,43 @@ pub enum ServerMessage {
         location: ClipboardLocation,
         text: String,
     },
+    /// Read-only routing and adjacent-row result for a vertical preview.
+    VerticalPreview(VerticalPreview),
+    /// Typed result of one accepted vertical wheel event.
+    WheelOutcome(WheelOutcome),
+}
+
+/// One row direction in the authoritative scrollback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerticalDirection {
+    Up,
+    Down,
+}
+
+/// One revision-bound, read-only vertical preview result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerticalPreview {
+    pub frame_revision: u64,
+    pub direction: VerticalDirection,
+    pub outcome: PreviewOutcome,
+}
+
+/// How Orbit would route a vertical wheel from the previewed frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreviewOutcome {
+    TerminalRouted,
+    Viewport {
+        cols: u16,
+        edge_reached: bool,
+        row: Option<Row>,
+    },
+}
+
+/// Authoritative result of one accepted vertical wheel event.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WheelOutcome {
+    TerminalRouted,
+    Viewport { applied_rows: i8, frame: Box<Frame> },
 }
 
 /// Platform-neutral destination of a terminal-emitted clipboard write.
@@ -599,13 +638,14 @@ fn message_len(
 
 fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
     match kind {
-        CLIENT_HELLO => Ok((4, 4)),
+        CLIENT_HELLO => Ok((0, 0)),
         CLIENT_KEY => Ok((16, 16 + MAX_KEY_TEXT_BYTES)),
         CLIENT_MOUSE => Ok((12, 12)),
         CLIENT_FOCUS => Ok((1, 1)),
         CLIENT_PASTE => Ok((0, MAX_PASTE_BYTES)),
         CLIENT_RESIZE => Ok((36, 36)),
         CLIENT_SELECTION => Ok((1, 13)),
+        CLIENT_PREVIEW_VERTICAL => Ok((9, 9)),
         value => Err(Error::InvalidTag {
             field: "client message",
             value,
@@ -615,13 +655,18 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
 
 fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     match kind {
-        SERVER_ATTACHED => Ok((2, 2)),
+        SERVER_ATTACHED => Ok((0, 0)),
         SERVER_BUSY | SERVER_ACCEPTED => Ok((0, 0)),
-        SERVER_INCOMPATIBLE | SERVER_EXITED => Ok((4, 4)),
+        SERVER_EXITED => Ok((4, 4)),
         SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_PAYLOAD_BYTES)),
         SERVER_FAILURE => Ok((5, 5 + MAX_FAILURE_BYTES)),
         SERVER_COPIED_TEXT => Ok((0, MAX_COPY_BYTES)),
         SERVER_CLIPBOARD_WRITE => Ok((2, 1 + MAX_COPY_BYTES)),
+        SERVER_WHEEL_TERMINAL_ROUTED => Ok((0, 0)),
+        SERVER_WHEEL_VIEWPORT_UP | SERVER_WHEEL_VIEWPORT_STILL | SERVER_WHEEL_VIEWPORT_DOWN => {
+            Ok((MIN_FRAME_BYTES, MAX_PAYLOAD_BYTES))
+        }
+        SERVER_VERTICAL_PREVIEW => Ok((10, MAX_PAYLOAD_BYTES)),
         value => Err(Error::InvalidTag {
             field: "server message",
             value,
@@ -629,19 +674,11 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v3 header.
+/// Encodes one client message with an ORBS v4 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
-        ClientMessage::Hello {
-            minimum_version,
-            maximum_version,
-        } => {
-            validate_version_range(*minimum_version, *maximum_version)?;
-            put_u16(&mut payload, *minimum_version);
-            put_u16(&mut payload, *maximum_version);
-            CLIENT_HELLO
-        }
+        ClientMessage::Hello => CLIENT_HELLO,
         ClientMessage::Key(event) => {
             validate_key(event)?;
             payload.push(key_action_tag(event.action));
@@ -724,6 +761,14 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
             }
             CLIENT_SELECTION
         }
+        ClientMessage::PreviewVertical {
+            frame_revision,
+            direction,
+        } => {
+            payload.extend_from_slice(&frame_revision.to_le_bytes());
+            payload.push(vertical_direction_tag(*direction));
+            CLIENT_PREVIEW_VERTICAL
+        }
     };
     frame_message(kind, payload)
 }
@@ -733,15 +778,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     let (kind, payload) = exact_message(bytes, client_message_len(bytes)?)?;
     let mut reader = Reader::new(payload);
     let message = match kind {
-        CLIENT_HELLO => {
-            let minimum_version = reader.u16()?;
-            let maximum_version = reader.u16()?;
-            validate_version_range(minimum_version, maximum_version)?;
-            ClientMessage::Hello {
-                minimum_version,
-                maximum_version,
-            }
-        }
+        CLIENT_HELLO => ClientMessage::Hello,
         CLIENT_KEY => {
             let action = decode_key_action(reader.u8()?)?;
             let raw_key = reader.u16()?;
@@ -850,6 +887,10 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
                 });
             }
         }),
+        CLIENT_PREVIEW_VERTICAL => ClientMessage::PreviewVertical {
+            frame_revision: u64::from_le_bytes(reader.array()?),
+            direction: decode_vertical_direction(reader.u8()?)?,
+        },
         value => {
             return Err(Error::InvalidTag {
                 field: "client message",
@@ -861,27 +902,12 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v3 header.
+/// Encodes one server message with an ORBS v4 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
-        ServerMessage::Attached { version } => {
-            if *version != VERSION {
-                return Err(Error::UnsupportedVersion { version: *version });
-            }
-            put_u16(&mut payload, *version);
-            SERVER_ATTACHED
-        }
+        ServerMessage::Attached => SERVER_ATTACHED,
         ServerMessage::Busy => SERVER_BUSY,
-        ServerMessage::Incompatible {
-            minimum_version,
-            maximum_version,
-        } => {
-            validate_version_range(*minimum_version, *maximum_version)?;
-            put_u16(&mut payload, *minimum_version);
-            put_u16(&mut payload, *maximum_version);
-            SERVER_INCOMPATIBLE
-        }
         ServerMessage::Frame(frame) => {
             payload = encode_frame(frame)?;
             SERVER_FRAME
@@ -907,6 +933,53 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             payload.extend_from_slice(text.as_bytes());
             SERVER_CLIPBOARD_WRITE
         }
+        ServerMessage::VerticalPreview(preview) => {
+            payload.extend_from_slice(&preview.frame_revision.to_le_bytes());
+            payload.push(vertical_direction_tag(preview.direction));
+            match &preview.outcome {
+                PreviewOutcome::TerminalRouted => payload.push(0),
+                PreviewOutcome::Viewport {
+                    cols,
+                    edge_reached,
+                    row,
+                } => {
+                    if *edge_reached != row.is_none() {
+                        return Err(Error::InvalidValue {
+                            field: "preview edge row",
+                        });
+                    }
+                    payload.push(1);
+                    put_u16(&mut payload, *cols);
+                    payload.push(u8::from(*edge_reached));
+                    if *cols == 0 {
+                        return Err(Error::InvalidValue {
+                            field: "preview columns",
+                        });
+                    }
+                    if let Some(row) = row {
+                        payload.extend_from_slice(&encode_canonical_row(row, *cols)?);
+                    }
+                }
+            }
+            SERVER_VERTICAL_PREVIEW
+        }
+        ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted) => SERVER_WHEEL_TERMINAL_ROUTED,
+        ServerMessage::WheelOutcome(WheelOutcome::Viewport {
+            applied_rows,
+            frame,
+        }) => {
+            payload = encode_frame(frame)?;
+            match applied_rows {
+                -1 => SERVER_WHEEL_VIEWPORT_UP,
+                0 => SERVER_WHEEL_VIEWPORT_STILL,
+                1 => SERVER_WHEEL_VIEWPORT_DOWN,
+                _ => {
+                    return Err(Error::InvalidValue {
+                        field: "applied wheel rows",
+                    });
+                }
+            }
+        }
     };
     frame_message(kind, payload)
 }
@@ -914,28 +987,32 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
 /// Decodes exactly one server message.
 pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
     let (kind, payload) = exact_message(bytes, server_message_len(bytes)?)?;
-    if kind == SERVER_FRAME {
-        return Ok(ServerMessage::Frame(Box::new(decode_frame(payload)?)));
+    if matches!(
+        kind,
+        SERVER_FRAME
+            | SERVER_WHEEL_VIEWPORT_UP
+            | SERVER_WHEEL_VIEWPORT_STILL
+            | SERVER_WHEEL_VIEWPORT_DOWN
+    ) {
+        let frame = Box::new(decode_frame(payload)?);
+        return Ok(if kind == SERVER_FRAME {
+            ServerMessage::Frame(frame)
+        } else {
+            ServerMessage::WheelOutcome(WheelOutcome::Viewport {
+                applied_rows: match kind {
+                    SERVER_WHEEL_VIEWPORT_UP => -1,
+                    SERVER_WHEEL_VIEWPORT_STILL => 0,
+                    SERVER_WHEEL_VIEWPORT_DOWN => 1,
+                    _ => unreachable!("frame-bearing kind was matched"),
+                },
+                frame,
+            })
+        });
     }
     let mut reader = Reader::new(payload);
     let message = match kind {
-        SERVER_ATTACHED => {
-            let version = reader.u16()?;
-            if version != VERSION {
-                return Err(Error::UnsupportedVersion { version });
-            }
-            ServerMessage::Attached { version }
-        }
+        SERVER_ATTACHED => ServerMessage::Attached,
         SERVER_BUSY => ServerMessage::Busy,
-        SERVER_INCOMPATIBLE => {
-            let minimum_version = reader.u16()?;
-            let maximum_version = reader.u16()?;
-            validate_version_range(minimum_version, maximum_version)?;
-            ServerMessage::Incompatible {
-                minimum_version,
-                maximum_version,
-            }
-        }
         SERVER_ACCEPTED => ServerMessage::Accepted,
         SERVER_FAILURE => {
             let code = decode_failure_code(reader.u8()?)?;
@@ -965,6 +1042,46 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
                 location,
                 text: text.to_owned(),
             }
+        }
+        SERVER_WHEEL_TERMINAL_ROUTED => ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted),
+        SERVER_VERTICAL_PREVIEW => {
+            let frame_revision = u64::from_le_bytes(reader.array()?);
+            let direction = decode_vertical_direction(reader.u8()?)?;
+            let outcome = match reader.u8()? {
+                0 => PreviewOutcome::TerminalRouted,
+                1 => {
+                    let cols = reader.u16()?;
+                    let edge_reached = decode_bool(reader.u8()?, "preview edge")?;
+                    let row = if edge_reached {
+                        None
+                    } else {
+                        let row = decode_canonical_row(reader.remaining(), cols)?;
+                        reader.take_remaining();
+                        Some(row)
+                    };
+                    if cols == 0 {
+                        return Err(Error::InvalidValue {
+                            field: "preview columns",
+                        });
+                    }
+                    PreviewOutcome::Viewport {
+                        cols,
+                        edge_reached,
+                        row,
+                    }
+                }
+                value => {
+                    return Err(Error::InvalidTag {
+                        field: "preview outcome",
+                        value,
+                    });
+                }
+            };
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision,
+                direction,
+                outcome,
+            })
         }
         value => {
             return Err(Error::InvalidTag {
@@ -1005,14 +1122,6 @@ fn exact_message(bytes: &[u8], length: Option<usize>) -> Result<(u8, &[u8])> {
         });
     }
     Ok((bytes[6], &bytes[HEADER_BYTES..]))
-}
-
-fn validate_version_range(minimum: u16, maximum: u16) -> Result<()> {
-    if minimum == 0 || minimum > maximum {
-        Err(Error::InvalidVersionRange)
-    } else {
-        Ok(())
-    }
 }
 
 fn validate_bound(size: usize, maximum: usize) -> Result<()> {
@@ -1131,6 +1240,24 @@ fn mouse_action_tag(action: MouseAction) -> u8 {
         MouseAction::Press => 0,
         MouseAction::Release => 1,
         MouseAction::Motion => 2,
+    }
+}
+
+fn vertical_direction_tag(direction: VerticalDirection) -> u8 {
+    match direction {
+        VerticalDirection::Up => 0,
+        VerticalDirection::Down => 1,
+    }
+}
+
+fn decode_vertical_direction(value: u8) -> Result<VerticalDirection> {
+    match value {
+        0 => Ok(VerticalDirection::Up),
+        1 => Ok(VerticalDirection::Down),
+        value => Err(Error::InvalidTag {
+            field: "vertical direction",
+            value,
+        }),
     }
 }
 
@@ -1301,6 +1428,10 @@ impl<'a> Reader<'a> {
         self.offset = self.bytes.len();
     }
 
+    fn remaining(&self) -> &'a [u8] {
+        &self.bytes[self.offset..]
+    }
+
     fn optional_text(&mut self, field: &'static str, maximum: usize) -> Result<Option<String>> {
         let length = self.u32()?;
         if length == u32::MAX {
@@ -1416,10 +1547,7 @@ mod tests {
     #[test]
     fn every_client_message_round_trips() {
         let messages = [
-            ClientMessage::Hello {
-                minimum_version: VERSION,
-                maximum_version: VERSION,
-            },
+            ClientMessage::Hello,
             ClientMessage::Key(KeyEvent {
                 action: KeyAction::Repeat,
                 key: PhysicalKey::A,
@@ -1475,12 +1603,8 @@ mod tests {
     #[test]
     fn every_server_message_round_trips() {
         let messages = [
-            ServerMessage::Attached { version: VERSION },
+            ServerMessage::Attached,
             ServerMessage::Busy,
-            ServerMessage::Incompatible {
-                minimum_version: VERSION,
-                maximum_version: VERSION,
-            },
             ServerMessage::Frame(Box::new(frame())),
             ServerMessage::Accepted,
             ServerMessage::Failure(Failure {
@@ -1596,12 +1720,8 @@ mod tests {
 
     #[test]
     fn framing_is_incremental_strict_and_bounded() {
-        assert_eq!(VERSION, 3);
-        let encoded = encode_client_message(&ClientMessage::Hello {
-            minimum_version: VERSION,
-            maximum_version: VERSION,
-        })
-        .unwrap();
+        assert_eq!(VERSION, 4);
+        let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
         for end in 0..HEADER_BYTES {
             assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
         }
@@ -1654,9 +1774,10 @@ mod tests {
             })
         );
         assert_eq!(
-            client_message_len(&header(CLIENT_HELLO, 3)),
-            Err(Error::InvalidValue {
-                field: "message payload length",
+            client_message_len(&header(CLIENT_HELLO, 1)),
+            Err(Error::PayloadTooLarge {
+                size: 1,
+                maximum: 0,
             })
         );
         assert_eq!(
@@ -1667,7 +1788,7 @@ mod tests {
             })
         );
         assert_eq!(
-            server_message_len(&header(CLIENT_HELLO, 4)),
+            server_message_len(&header(CLIENT_HELLO, 0)),
             Err(Error::InvalidTag {
                 field: "server message",
                 value: CLIENT_HELLO,
@@ -1866,15 +1987,6 @@ mod tests {
             encode_client_message(&invalid),
             Err(Error::InvalidSurfaceSize)
         );
-
-        assert_eq!(
-            encode_server_message(&ServerMessage::Attached {
-                version: VERSION + 1,
-            }),
-            Err(Error::UnsupportedVersion {
-                version: VERSION + 1,
-            })
-        );
     }
 
     #[test]
@@ -2018,6 +2130,158 @@ mod tests {
                 size: MAX_COPY_BYTES + 2,
                 maximum: MAX_COPY_BYTES + 1,
             })
+        );
+    }
+
+    #[test]
+    fn vertical_preview_and_wheel_outcomes_are_canonical() {
+        let request = ClientMessage::PreviewVertical {
+            frame_revision: 7,
+            direction: VerticalDirection::Up,
+        };
+        assert_eq!(
+            decode_client_message(&encode_client_message(&request).unwrap()).unwrap(),
+            request
+        );
+        let mut invalid_direction = encode_client_message(&request).unwrap();
+        invalid_direction[HEADER_BYTES + 8] = u8::MAX;
+        assert_eq!(
+            decode_client_message(&invalid_direction),
+            Err(Error::InvalidTag {
+                field: "vertical direction",
+                value: u8::MAX,
+            })
+        );
+
+        let row = frame().rows.remove(0);
+        for message in [
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 7,
+                direction: VerticalDirection::Up,
+                outcome: PreviewOutcome::TerminalRouted,
+            }),
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 7,
+                direction: VerticalDirection::Down,
+                outcome: PreviewOutcome::Viewport {
+                    cols: 1,
+                    edge_reached: false,
+                    row: Some(row.clone()),
+                },
+            }),
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 7,
+                direction: VerticalDirection::Down,
+                outcome: PreviewOutcome::Viewport {
+                    cols: 1,
+                    edge_reached: true,
+                    row: None,
+                },
+            }),
+            ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted),
+            ServerMessage::WheelOutcome(WheelOutcome::Viewport {
+                applied_rows: -1,
+                frame: Box::new(frame()),
+            }),
+            ServerMessage::WheelOutcome(WheelOutcome::Viewport {
+                applied_rows: 0,
+                frame: Box::new(frame()),
+            }),
+            ServerMessage::WheelOutcome(WheelOutcome::Viewport {
+                applied_rows: 1,
+                frame: Box::new(frame()),
+            }),
+        ] {
+            let encoded = encode_server_message(&message).unwrap();
+            assert_eq!(server_message_len(&encoded).unwrap(), Some(encoded.len()));
+            assert_eq!(decode_server_message(&encoded).unwrap(), message);
+        }
+
+        for invalid in [
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 7,
+                direction: VerticalDirection::Up,
+                outcome: PreviewOutcome::Viewport {
+                    cols: 1,
+                    edge_reached: true,
+                    row: Some(row.clone()),
+                },
+            }),
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 7,
+                direction: VerticalDirection::Up,
+                outcome: PreviewOutcome::Viewport {
+                    cols: 0,
+                    edge_reached: true,
+                    row: None,
+                },
+            }),
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 7,
+                direction: VerticalDirection::Up,
+                outcome: PreviewOutcome::Viewport {
+                    cols: 2,
+                    edge_reached: false,
+                    row: Some(row),
+                },
+            }),
+            ServerMessage::WheelOutcome(WheelOutcome::Viewport {
+                applied_rows: 2,
+                frame: Box::new(frame()),
+            }),
+        ] {
+            assert!(encode_server_message(&invalid).is_err());
+        }
+
+        let mut oversized = frame().rows.remove(0);
+        oversized.cells[0].text = "x".repeat(MAX_FRAME_BYTES);
+        assert!(matches!(
+            encode_server_message(&ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 7,
+                direction: VerticalDirection::Up,
+                outcome: PreviewOutcome::Viewport {
+                    cols: 1,
+                    edge_reached: false,
+                    row: Some(oversized),
+                },
+            })),
+            Err(Error::Frame(crate::Error::FrameTooLarge { .. }))
+        ));
+
+        let preview = ServerMessage::VerticalPreview(VerticalPreview {
+            frame_revision: 7,
+            direction: VerticalDirection::Down,
+            outcome: PreviewOutcome::Viewport {
+                cols: 1,
+                edge_reached: false,
+                row: Some(frame().rows.remove(0)),
+            },
+        });
+        let encoded = encode_server_message(&preview).unwrap();
+        let mut inconsistent = encoded.clone();
+        inconsistent[HEADER_BYTES + 10..HEADER_BYTES + 12].copy_from_slice(&2_u16.to_le_bytes());
+        assert!(matches!(
+            decode_server_message(&inconsistent),
+            Err(Error::Frame(crate::Error::Truncated))
+        ));
+        let mut invalid_edge = encoded.clone();
+        invalid_edge[HEADER_BYTES + 12] = 2;
+        assert_eq!(
+            decode_server_message(&invalid_edge),
+            Err(Error::InvalidTag {
+                field: "preview edge",
+                value: 2,
+            })
+        );
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert_eq!(
+            decode_server_message(&trailing),
+            Err(Error::TrailingBytes { count: 1 })
+        );
+        assert_eq!(
+            decode_server_message(&encoded[..encoded.len() - 1]),
+            Err(Error::Truncated)
         );
     }
 }

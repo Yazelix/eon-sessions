@@ -75,10 +75,7 @@ struct Client {
 impl Client {
     fn attach(socket: &Path) -> TestResult<Self> {
         let deadline = Instant::now() + Duration::from_secs(5);
-        let hello = encode_client_message(&ClientMessage::Hello {
-            minimum_version: session::VERSION,
-            maximum_version: session::VERSION,
-        })?;
+        let hello = encode_client_message(&ClientMessage::Hello)?;
         loop {
             let stream = connect_bounded(socket, deadline)?;
             stream.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -94,10 +91,7 @@ impl Client {
             let mut attached = false;
             loop {
                 match read_message(&mut reader) {
-                    Ok(ServerMessage::Attached { version }) if !attached => {
-                        assert_eq!(version, session::VERSION);
-                        attached = true;
-                    }
+                    Ok(ServerMessage::Attached) if !attached => attached = true,
                     Ok(ServerMessage::Frame(frame)) if attached => {
                         return Ok(Self {
                             reader,
@@ -187,13 +181,51 @@ impl Client {
     }
 
     fn wheel(&mut self, button: session::MouseButton) -> TestResult {
-        self.request_frame(&ClientMessage::Mouse(session::MouseEvent {
-            action: session::MouseAction::Press,
-            button: Some(button),
-            modifiers: Modifiers::empty(),
-            x: 1.0,
-            y: 1.0,
-        }))
+        let previous_revision = self.frame.revision;
+        write_message(
+            self.reader.get_mut(),
+            &ClientMessage::Mouse(session::MouseEvent {
+                action: session::MouseAction::Press,
+                button: Some(button),
+                modifiers: Modifiers::empty(),
+                x: 1.0,
+                y: 1.0,
+            }),
+        )?;
+        match read_message(&mut self.reader)? {
+            ServerMessage::WheelOutcome(session::WheelOutcome::Viewport {
+                applied_rows: -1..=1,
+                frame,
+            }) => {
+                assert!(frame.revision > previous_revision);
+                self.frame = *frame;
+                Ok(())
+            }
+            ServerMessage::Failure(failure) => Err(format!("request failed: {failure:?}").into()),
+            message => Err(format!("unexpected wheel response: {message:?}").into()),
+        }
+    }
+
+    fn preview(
+        &mut self,
+        direction: session::VerticalDirection,
+    ) -> TestResult<session::VerticalPreview> {
+        let frame_revision = self.frame.revision;
+        write_message(
+            self.reader.get_mut(),
+            &ClientMessage::PreviewVertical {
+                frame_revision,
+                direction,
+            },
+        )?;
+        match read_message(&mut self.reader)? {
+            ServerMessage::VerticalPreview(preview) => {
+                assert_eq!(preview.frame_revision, frame_revision);
+                Ok(preview)
+            }
+            ServerMessage::Failure(failure) => Err(format!("preview failed: {failure:?}").into()),
+            message => Err(format!("unexpected preview response: {message:?}").into()),
+        }
     }
 
     fn select(&mut self, action: SelectionAction) -> TestResult {
@@ -490,20 +522,10 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
 
     let mut incompatible = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
     incompatible.set_read_timeout(Some(Duration::from_secs(2)))?;
-    write_message(
-        &mut incompatible,
-        &ClientMessage::Hello {
-            minimum_version: session::VERSION + 1,
-            maximum_version: session::VERSION + 1,
-        },
-    )?;
-    assert_eq!(
-        read_message(&mut incompatible)?,
-        ServerMessage::Incompatible {
-            minimum_version: session::VERSION,
-            maximum_version: session::VERSION,
-        }
-    );
+    let mut unsupported = encode_client_message(&ClientMessage::Hello)?;
+    unsupported[4..6].copy_from_slice(&(session::VERSION + 1).to_le_bytes());
+    incompatible.write_all(&unsupported)?;
+    assert_eq!(incompatible.read(&mut [0])?, 0);
     drop(incompatible);
 
     let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
@@ -797,10 +819,31 @@ fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
     fs::write(&release, b"release")?;
     first.wait_title("selection-ready")?;
     let live = first.frame.clone();
+    let preview = first.preview(session::VerticalDirection::Up)?;
+    let session::PreviewOutcome::Viewport {
+        cols: 20,
+        edge_reached: false,
+        row: Some(entering_top),
+    } = preview.outcome
+    else {
+        return Err("upward preview did not expose one adjacent row".into());
+    };
+    assert_eq!(first.frame, live);
     first.wheel(session::MouseButton::Four)?;
     assert_ne!(first.frame.rows, live.rows);
+    assert_eq!(first.frame.rows[0], entering_top);
+    let preview = first.preview(session::VerticalDirection::Down)?;
+    let session::PreviewOutcome::Viewport {
+        cols: 20,
+        edge_reached: false,
+        row: Some(entering_bottom),
+    } = preview.outcome
+    else {
+        return Err("downward preview did not expose one adjacent row".into());
+    };
     first.wheel(session::MouseButton::Five)?;
     assert_eq!(first.frame.rows, live.rows);
+    assert_eq!(first.frame.rows.last(), Some(&entering_bottom));
 
     first.select(SelectionAction::Begin {
         frame_revision: first.frame.revision,
@@ -960,8 +1003,20 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
         (40, 12)
     );
 
+    let preview = second.preview(session::VerticalDirection::Up)?;
+    let session::PreviewOutcome::Viewport {
+        cols: 40,
+        edge_reached: false,
+        row: Some(entering_top),
+    } = preview.outcome
+    else {
+        return Err("reflowed preview did not expose one adjacent row".into());
+    };
+    second.wheel(session::MouseButton::Four)?;
+    assert_eq!(second.frame.rows[0], entering_top);
+
     let started = Instant::now();
-    for _ in 0..32 {
+    for _ in 0..31 {
         second.wheel(session::MouseButton::Four)?;
     }
     let wheel_elapsed = started.elapsed();
@@ -982,8 +1037,12 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     }))?;
     let _ = second.reader.get_mut().write_all(&wheel.repeat(4096));
     fs::write(&pressure, b"pressure")?;
-    let mut third = Client::attach(&socket)?;
+    let mut busy = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
+    busy.set_read_timeout(Some(Duration::from_secs(2)))?;
+    assert_eq!(read_message(&mut busy)?, ServerMessage::Busy);
+    drop(busy);
     drop(second);
+    let mut third = Client::attach(&socket)?;
     third.wait_title("pressure-complete")?;
 
     fs::write(&stop, b"stop")?;
