@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `9bc87191dd90fd3d7db939127f1ebedfccd2b48d` proof hardens
+  `ORB-C1`: Orbit serializes stale-socket inspection, removal, bind, and setup
+  through the validated private parent directory. Simultaneous launches leave
+  one reachable owner and one explicit loser, without allowing the loser to
+  unlink the winner's socket. ORBF v1 and ORBS v3 are unchanged.
 - The accepted `cb0703010c3a4944980404b665abff795be09fb4` proof hardens
   `ORB-C1`: Linux PTY-master `EIO` remains retryable while Orbit's direct child
   is alive, so a temporary zero-slave interval no longer closes the Session.
