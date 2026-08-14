@@ -2,7 +2,7 @@ use crate::Result;
 use orbit_protocol::session::SurfaceSize;
 use std::{
     env,
-    fs::{self, File},
+    fs::{self, File, TryLockError},
     io::{self, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd, RawFd},
@@ -203,7 +203,17 @@ impl Drop for SocketGuard {
 }
 
 pub(crate) fn create_listener(path: &Path) -> Result<(UnixListener, SocketGuard)> {
-    validate_private_parent(path)?;
+    let parent = validate_private_parent(path)?;
+    let claim = File::open(parent)?;
+    // ponytail: one accepted Session makes the parent the smallest artifact-free claim;
+    // use a per-socket lock only if concurrent Sessions in one directory are accepted.
+    match claim.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            return Err(format!("socket claim already in progress at {}", path.display()).into());
+        }
+        Err(TryLockError::Error(error)) => return Err(error.into()),
+    }
     if let Ok(metadata) = fs::symlink_metadata(path) {
         if !metadata.file_type().is_socket() {
             return Err(format!("refusing to replace non-socket path {}", path.display()).into());
@@ -299,7 +309,7 @@ fn pollfd(fd: RawFd, events: libc::c_short) -> libc::pollfd {
     }
 }
 
-fn validate_private_parent(path: &Path) -> Result {
+fn validate_private_parent(path: &Path) -> Result<&Path> {
     let parent = path.parent().ok_or("socket path has no parent")?;
     let metadata = fs::metadata(parent)?;
     let euid = unsafe { libc::geteuid() };
@@ -310,7 +320,7 @@ fn validate_private_parent(path: &Path) -> Result {
         )
         .into());
     }
-    Ok(())
+    Ok(parent)
 }
 
 fn set_fd_flags(fd: RawFd, status: libc::c_int) -> Result {

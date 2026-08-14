@@ -170,9 +170,10 @@ revision-bound selection events, never raw PTY output.
 The default socket is `$XDG_RUNTIME_DIR/yazelix-orbit/orbit.sock`, falling back
 to `/tmp/yazelix-orbit-$UID/orbit.sock`. Its directory is user-owned and private,
 and the socket mode is `0600`. Orbit removes a connection-refused stale socket,
-refuses to replace any non-socket path, rejects a simultaneous second client,
-retains the last PTY size while detached, reaps an exited child, and removes the
-socket after normal or signal-driven shutdown.
+serializes concurrent stale-socket claims, refuses to replace any non-socket
+path, rejects a simultaneous second client, retains the last PTY size while
+detached, reaps an exited child, and removes the socket after normal or
+signal-driven shutdown.
 
 The proof pins `libc` 0.2.189 for the small Linux `openpty`, controlling-terminal,
 poll, resize, and signal boundary. This avoids `portable-pty` 0.9.0's general
@@ -203,7 +204,8 @@ disconnected, reconnect to the same shell PID, exercise second-client
 rejection, and check aborted attachment, stale-socket identity, permissions,
 child exit, startup and established SIGTERM cleanup, foreground-process reaping,
 replacement-socket ownership, and bounded recovery after a live child closes
-every PTY descriptor and later reopens its terminal, all with bounded timeouts.
+every PTY descriptor and later reopens its terminal, plus simultaneous
+stale-socket ownership, all with bounded timeouts.
 
 ## Contract
 
@@ -353,8 +355,8 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 8,064 |
+| Product Rust source and tests | 8,173 |
 | Governance Rust tool and tests | 765 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **8,829** |
-| **Total owned implementation source** | **8,831** |
+| **Total owned Rust** | **8,938** |
+| **Total owned implementation source** | **8,940** |

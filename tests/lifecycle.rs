@@ -320,6 +320,31 @@ fn server_command() -> Command {
     command
 }
 
+fn gated_server_command(ready: &Path, release: &Path) -> Command {
+    let server = server_command();
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(
+            "printf ready > \"$ORBIT_READY\"; \
+             while [ ! -e \"$ORBIT_RELEASE\" ]; do sleep 0.01; done; exec \"$@\"",
+        )
+        .arg("orbit-claim")
+        .arg(server.get_program())
+        .args(server.get_args())
+        .envs(
+            server
+                .get_envs()
+                .filter_map(|(key, value)| value.map(|value| (key, value))),
+        )
+        .env("ORBIT_READY", ready)
+        .env("ORBIT_RELEASE", release)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    command
+}
+
 fn spawn_server(socket: &Path) -> TestResult<Server> {
     Ok(Server(
         server_command()
@@ -1205,6 +1230,80 @@ fn stale_socket_and_signal_shutdown_are_clean() -> TestResult {
     let _replacement = UnixListener::bind(&socket)?;
     assert!(replaced.shutdown()?.success());
     assert!(socket.exists(), "server removed a replacement socket");
+    Ok(())
+}
+
+#[test]
+fn simultaneous_stale_socket_claim_has_one_reachable_owner() -> TestResult {
+    let dir = TestDir::new("stale-socket-claim")?;
+    let attempts = if std::env::var_os("ORBIT_MEMCHECK").is_some() {
+        1
+    } else {
+        25
+    };
+
+    for attempt in 0..attempts {
+        let socket = dir.0.join(format!("orbit-{attempt}.sock"));
+        let first_ready = dir.0.join(format!("first-{attempt}.ready"));
+        let second_ready = dir.0.join(format!("second-{attempt}.ready"));
+        let release = dir.0.join(format!("release-{attempt}"));
+        drop(UnixListener::bind(&socket)?);
+
+        let mut first = Server(
+            gated_server_command(&first_ready, &release)
+                .arg(&socket)
+                .arg("--")
+                .arg("/bin/sh")
+                .spawn()?,
+        );
+        let mut second = Server(
+            gated_server_command(&second_ready, &release)
+                .arg(&socket)
+                .arg("--")
+                .arg("/bin/sh")
+                .spawn()?,
+        );
+        assert_eq!(wait_file_text(&first_ready)?, "ready");
+        assert_eq!(wait_file_text(&second_ready)?, "ready");
+        fs::write(&release, b"release")?;
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (loser_status, loser, winner) = loop {
+            if let Some(status) = first.0.try_wait()? {
+                break (status, &mut first, &mut second);
+            }
+            if let Some(status) = second.0.try_wait()? {
+                break (status, &mut second, &mut first);
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "both stale-socket contenders remained alive on attempt {attempt}"
+                )
+                .into());
+            }
+            thread::yield_now();
+        };
+        assert!(
+            !loser_status.success(),
+            "losing stale-socket contender succeeded"
+        );
+        let mut error = String::new();
+        loser
+            .0
+            .stderr
+            .take()
+            .ok_or("losing stale-socket contender has no stderr")?
+            .read_to_string(&mut error)?;
+        assert!(
+            error.contains("socket claim already in progress")
+                || error.contains("server already listening"),
+            "unexpected stale-socket loser error: {error:?}"
+        );
+        drop(Client::attach(&socket)?);
+        terminate(winner)?;
+        assert!(wait_bounded(winner)?.success());
+        assert!(!socket.exists());
+    }
     Ok(())
 }
 
