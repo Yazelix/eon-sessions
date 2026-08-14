@@ -774,7 +774,7 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
 }
 
 #[test]
-fn selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
+fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() -> TestResult {
     let dir = TestDir::new("selection")?;
     let socket = dir.0.join("orbit.sock");
     let release = dir.0.join("release");
@@ -1053,7 +1053,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
 }
 
 #[test]
-fn authoritative_input_modes_and_resize_survive_detach() -> TestResult {
+fn conformance_c5_authoritative_input_modes_and_resize_survive_detach() -> TestResult {
     let dir = TestDir::new("input-modes")?;
     let socket = dir.0.join("orbit.sock");
     let first_done = dir.0.join("first-done");
@@ -1162,7 +1162,7 @@ fn authoritative_input_modes_and_resize_survive_detach() -> TestResult {
 }
 
 #[test]
-fn parser_state_and_terminal_replies_survive_client_failure() -> TestResult {
+fn conformance_c2_parser_state_and_terminal_replies_survive_client_failure() -> TestResult {
     let dir = TestDir::new("terminal-authority")?;
     let socket = dir.0.join("orbit.sock");
     let begin = dir.0.join("begin");

@@ -632,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_rows_match_rich_canonical_frame_rows() -> TestResult {
+    fn conformance_c6_direct_rows_match_rich_canonical_frame_rows() -> TestResult {
         let mut terminal = Terminal::new(TerminalOptions {
             cols: 12,
             rows: 4,
@@ -813,7 +813,7 @@ mod tests {
     }
 
     #[test]
-    fn real_pty_reattach_converges_through_complete_ordered_frames() -> TestResult {
+    fn conformance_c4_real_pty_reattach_converges_through_complete_ordered_frames() -> TestResult {
         let directory = TestDir::new()?;
         let socket = directory.0.join("orbit.sock");
         let ready = directory.0.join("ready");

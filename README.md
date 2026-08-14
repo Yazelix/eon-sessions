@@ -89,6 +89,20 @@ repository carries no permanent test target for the rejected reconstruction
 path. Orbit uses no fork, binding extension, compatibility wrapper, second
 terminal engine, or replay fallback.
 
+The focused Orbit terminal conformance corpus reuses six authoritative unit
+and real-PTY tests under one filter:
+
+```sh
+cargo test --locked conformance_
+```
+
+It covers parser continuation and terminal replies, complete rich reattachment,
+semantic input and resize, canonical rich extraction, viewport routing and
+retained-history reflow, and frozen selection copy. The contract-oriented case
+inventory and assertion policy live in [`docs/CONTRACTS.md`](docs/CONTRACTS.md).
+The check is offline, headless, and pinned to the same libghostty path as the
+normal suite; it adds no second engine, fixture framework, or replay format.
+
 Orbit keeps the sole authoritative terminal state and supplies clients with
 host-authored structured presentation frames. It does not export a checkpoint,
 replicate raw PTY tails, or run another terminal emulator in the client. The

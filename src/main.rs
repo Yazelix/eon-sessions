@@ -1885,7 +1885,7 @@ mod tests {
     }
 
     #[test]
-    fn authoritative_viewport_routes_wheel_and_key_from_terminal_state() -> Result {
+    fn conformance_c8_authoritative_viewport_routes_wheel_and_key_from_terminal_state() -> Result {
         let (mut client, mut peer) = attached_client()?;
         let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
         let mut terminal = terminal_with_scrollback(100)?;
