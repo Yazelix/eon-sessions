@@ -65,9 +65,9 @@ the Ghostty source and Zig package inputs instead of relying on network access
 during the Cargo build.
 
 The public VT formatter cannot satisfy Orbit's exact attachment contract. The
-contract tests feed a deterministic prefix to an authoritative terminal,
-reconstruct a fresh terminal from formatter output, and then give both the same
-distinguishing future tail.
+accepted `orb-bi4.1` experiment feeds a deterministic prefix to an authoritative
+terminal, reconstructs a fresh terminal from formatter output, and then gives
+both the same distinguishing future tail.
 
 | State | Proof result |
 | --- | --- |
@@ -82,10 +82,12 @@ distinguishing future tail.
 | PTY-directed effects | Emitted once by the authoritative terminal; the reconstructed terminal has no PTY callback |
 | Current SGR style, scrolling region, and character protection | Not classified by this proof; the failure conclusion does not depend on them |
 
-These failures are reproducible in
-[`tests/formatter_attachment.rs`](tests/formatter_attachment.rs). Orbit does not
-add a fork, binding extension, compatibility wrapper, second terminal engine,
-replay fallback, PTY, socket, or protocol implementation in this slice.
+Git commit `ac0a291ebe7fcebe4d7cace914b89363856c4903` preserves the exact
+counterexample corpus. The current suite exercises the accepted authoritative
+runtime through real PTY lifecycle and structured-presentation checks. The
+repository carries no permanent test target for the rejected reconstruction
+path. Orbit uses no fork, binding extension, compatibility wrapper, second
+terminal engine, or replay fallback.
 
 Orbit keeps the sole authoritative terminal state and supplies clients with
 host-authored structured presentation frames. It does not export a checkpoint,
@@ -360,8 +362,8 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 9,277 |
+| Product Rust source and tests | 8,996 |
 | Governance Rust tool and tests | 561 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **9,838** |
-| **Total owned implementation source** | **9,840** |
+| **Total owned Rust** | **9,557** |
+| **Total owned implementation source** | **9,559** |
