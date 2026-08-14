@@ -6,6 +6,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `2e41997cbec202afc5222f084ffb98973a01b0f0` proof hardens
+  `ORB-C4` and `ORB-C6`: canonical ORBF v1 rejects malformed wide-cell,
+  spacer-tail, and wrapped-edge topology before encoder, decoder, or reducer
+  acceptance. Valid ORBF v1 and ORBS v4 bytes are unchanged.
 - The accepted `9c0617a97612cdd045ed67b5cd7c87244eb888e6` proof changes
   `ORB-C8` and replaces ORBS v3 with exact-version ORBS v4. A client may preview
   one revision-bound adjacent canonical row without moving Orbit's viewport or
