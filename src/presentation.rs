@@ -639,13 +639,14 @@ mod tests {
             max_scrollback: 100,
         })?;
         terminal.vt_write(
-            "\x1b]8;;https://example.test\x1b\\\x1b[1\"q\x1b[1;38;2;12;34;56;48;5;17mAe\u{301}界wrap-me-long\x1b[0m\x1b[0\"q\x1b]8;;\x1b\\\r\n\x1b[48;2;5;6;7m\x1b[2K\x1b[0m\r\nplain\r\ntail-1\r\ntail-2\r\ntail-3"
+            "\x1b]8;;https://example.test\x1b\\\x1b[1\"q\x1b[1;38;2;12;34;56;48;5;17mAe\u{301}界1234567界wrap-me-long\x1b[0m\x1b[0\"q\x1b]8;;\x1b\\\r\n\x1b[48;2;5;6;7m\x1b[2K\x1b[0m\r\nplain\r\ntail-1\r\ntail-2\r\ntail-3"
                 .as_bytes(),
         );
         terminal.scroll_viewport(ScrollViewport::Top);
 
         let mut extractor = Extractor::new()?;
         let frame = extractor.frame(1, &terminal)?;
+        frame.encode()?;
         for (y, expected) in frame.rows.iter().enumerate() {
             assert_eq!(
                 extractor.row(&terminal, u32::try_from(y)?, frame.dimensions.cols)?,
@@ -680,7 +681,18 @@ mod tests {
         );
         assert!(cells.clone().any(|cell| cell.text == "e\u{301}"));
         assert!(cells.clone().any(|cell| cell.width == CellWidth::Wide));
-        assert!(cells.any(|cell| cell.width == CellWidth::SpacerTail));
+        assert!(
+            cells
+                .clone()
+                .any(|cell| cell.width == CellWidth::SpacerTail)
+        );
+        assert!(cells.any(|cell| cell.width == CellWidth::SpacerHead));
+
+        terminal.scroll_viewport(ScrollViewport::Bottom);
+        extractor.frame(2, &terminal)?.encode()?;
+        terminal.resize(9, 4, 8, 16)?;
+        terminal.scroll_viewport(ScrollViewport::Top);
+        extractor.frame(3, &terminal)?.encode()?;
         Ok(())
     }
 

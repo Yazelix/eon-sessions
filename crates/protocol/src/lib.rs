@@ -337,7 +337,7 @@ impl FrameSize {
     }
 }
 
-/// Retains complete frames with canonical ORBF v1 capabilities and strictly increasing revisions.
+/// Retains frames with supported ORBF v1 capabilities, valid cell-width topology, and strictly increasing revisions.
 #[derive(Debug, Default)]
 pub struct FrameReducer {
     current: Option<Frame>,
@@ -349,9 +349,12 @@ impl FrameReducer {
         self.current.as_ref()
     }
 
-    /// Reject invalid ORBF v1 capabilities, then accept only a strictly newer frame.
+    /// Validate ORBF v1 capabilities and cell widths, then accept only a newer frame.
     pub fn push(&mut self, frame: Frame) -> Result<&Frame> {
         validate_capabilities(frame.capabilities)?;
+        for row in &frame.rows {
+            validate_cell_width_topology(row)?;
+        }
         if let Some(current) = &self.current
             && frame.revision <= current.revision
         {
@@ -561,12 +564,14 @@ fn decode_row(decoder: &mut Decoder<'_>, cols: u16) -> Result<Row> {
             hyperlink: decoder.string("cell hyperlink")?,
         });
     }
-    Ok(Row {
+    let row = Row {
         wrapped: flags & 1 != 0,
         wrap_continuation: flags & (1 << 1) != 0,
         kitty_virtual_placeholder: flags & (1 << 2) != 0,
         cells,
-    })
+    };
+    validate_cell_width_topology(&row)?;
+    Ok(row)
 }
 
 fn validate_row_columns(cols: u16) -> Result<()> {
@@ -580,10 +585,29 @@ fn validate_row_columns(cols: u16) -> Result<()> {
 fn validate_row(row: &Row, cols: u16) -> Result<()> {
     validate_row_columns(cols)?;
     if row.cells.len() != usize::from(cols) {
-        Err(Error::InvalidShape { field: "cell" })
-    } else {
-        Ok(())
+        return Err(Error::InvalidShape { field: "cell" });
     }
+    validate_cell_width_topology(row)
+}
+
+fn validate_cell_width_topology(row: &Row) -> Result<()> {
+    for (index, cell) in row.cells.iter().enumerate() {
+        let valid = match cell.width {
+            CellWidth::Narrow => true,
+            CellWidth::Wide => row
+                .cells
+                .get(index + 1)
+                .is_some_and(|cell| cell.width == CellWidth::SpacerTail),
+            CellWidth::SpacerTail => index > 0 && row.cells[index - 1].width == CellWidth::Wide,
+            CellWidth::SpacerHead => index > 0 && index + 1 == row.cells.len() && row.wrapped,
+        };
+        if !valid {
+            return Err(Error::InvalidShape {
+                field: "cell width topology",
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_dimensions(dimensions: Dimensions) -> Result<usize> {
@@ -623,9 +647,7 @@ fn validate_frame(frame: &Frame) -> Result<usize> {
         frame.cursor.viewport.is_some(),
     )?;
     for row in &frame.rows {
-        if row.cells.len() != usize::from(frame.dimensions.cols) {
-            return Err(Error::InvalidShape { field: "cell" });
-        }
+        validate_row(row, frame.dimensions.cols)?;
         size.add_row()?;
         for cell in &row.cells {
             size.add_cell(&cell.text, &cell.hyperlink)?;
@@ -993,6 +1015,21 @@ mod tests {
         }
     }
 
+    fn frame_with_widths(revision: u64, wrapped: bool, widths: &[CellWidth]) -> Frame {
+        let mut frame = minimal_frame(revision);
+        frame.dimensions.cols = u16::try_from(widths.len()).expect("test row width fits u16");
+        frame.rows[0].wrapped = wrapped;
+        let cell = frame.rows[0].cells[0].clone();
+        frame.rows[0].cells = widths
+            .iter()
+            .map(|width| Cell {
+                width: *width,
+                ..cell.clone()
+            })
+            .collect();
+        frame
+    }
+
     fn rich_frame() -> Frame {
         let mut palette = [Rgb::BLACK; PALETTE_LEN];
         for (index, color) in palette.iter_mut().enumerate() {
@@ -1063,9 +1100,9 @@ mod tests {
                             hyperlink: "https://example.test".into(),
                         },
                         Cell {
-                            width: CellWidth::Wide,
-                            style: plain_style(),
-                            text: "界".into(),
+                            width: CellWidth::SpacerHead,
+                            style: decorated,
+                            text: String::new(),
                             hyperlink: String::new(),
                         },
                     ],
@@ -1076,15 +1113,15 @@ mod tests {
                     kitty_virtual_placeholder: false,
                     cells: vec![
                         Cell {
-                            width: CellWidth::SpacerTail,
-                            style: plain_style(),
-                            text: String::new(),
+                            width: CellWidth::Wide,
+                            style: decorated,
+                            text: "界".into(),
                             hyperlink: String::new(),
                         },
                         Cell {
-                            width: CellWidth::SpacerHead,
+                            width: CellWidth::SpacerTail,
                             style: decorated,
-                            text: "final".into(),
+                            text: String::new(),
                             hyperlink: String::new(),
                         },
                     ],
@@ -1130,6 +1167,68 @@ mod tests {
             assert_eq!(decode_frame(&invalid).unwrap_err(), error);
         }
         assert_eq!(decode_frame(&bytes).unwrap(), canonical);
+    }
+
+    #[test]
+    fn orbf_v1_cell_width_topology_is_validated_at_every_acceptance_boundary() {
+        use CellWidth::{Narrow, SpacerHead, SpacerTail, Wide};
+
+        let canonical = frame_with_widths(0, false, &[Narrow; 4]);
+        let error = Error::InvalidShape {
+            field: "cell width topology",
+        };
+        let invalid: &[(bool, &[CellWidth])] = &[
+            (false, &[Wide, Wide, Narrow, Narrow]),
+            (false, &[Wide, Narrow, Narrow, Narrow]),
+            (false, &[Narrow, Narrow, Narrow, Wide]),
+            (false, &[SpacerTail, Narrow, Narrow, Narrow]),
+            (false, &[Narrow, SpacerTail, Narrow, Narrow]),
+            (true, &[Narrow, SpacerHead, Narrow, Narrow]),
+            (false, &[Narrow, Narrow, Narrow, SpacerHead]),
+            (true, &[SpacerHead]),
+        ];
+        let cell_bytes = CELL_FIXED_BYTES + 2 * STRING_LENGTH_BYTES;
+        let mut reducer = FrameReducer::default();
+        reducer.push(canonical.clone()).unwrap();
+
+        for &(wrapped, widths) in invalid {
+            let frame = frame_with_widths(1, wrapped, widths);
+            let cols = frame.dimensions.cols;
+            assert_eq!(frame.encode().unwrap_err(), error);
+            assert_eq!(
+                encode_canonical_row(&frame.rows[0], cols).unwrap_err(),
+                error
+            );
+            assert_eq!(reducer.push(frame).unwrap_err(), error);
+            assert_eq!(reducer.current(), Some(&canonical));
+
+            let mut invalid_bytes = frame_with_widths(0, false, &vec![Narrow; widths.len()])
+                .encode()
+                .unwrap();
+            invalid_bytes[ROW_FLAGS_OFFSET] = u8::from(wrapped);
+            for (index, &width) in widths.iter().enumerate() {
+                invalid_bytes[CELL_WIDTH_OFFSET + index * cell_bytes] = cell_width_tag(width);
+            }
+            assert_eq!(decode_frame(&invalid_bytes).unwrap_err(), error);
+            assert_eq!(
+                decode_canonical_row(&invalid_bytes[ROW_FLAGS_OFFSET..], cols).unwrap_err(),
+                error
+            );
+        }
+
+        for frame in [
+            canonical,
+            frame_with_widths(1, false, &[Wide, SpacerTail, Narrow, Narrow]),
+            frame_with_widths(2, true, &[Narrow, Narrow, Narrow, SpacerHead]),
+        ] {
+            let bytes = frame.encode().unwrap();
+            assert_eq!(decode_frame(&bytes).unwrap(), frame);
+            let row = encode_canonical_row(&frame.rows[0], frame.dimensions.cols).unwrap();
+            assert_eq!(
+                decode_canonical_row(&row, frame.dimensions.cols).unwrap(),
+                frame.rows[0]
+            );
+        }
     }
 
     #[test]
