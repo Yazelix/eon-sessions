@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `6de95296d252c119d4fdba2d9b03cec1a09355ae` proof hardens
+  `ORB-C6`: canonical ORBF v1 rejects capability values that contradict its
+  advertised hyperlink support or explicit lack of Kitty graphics before
+  encoder, decoder, or reducer acceptance. Valid ORBF v1 and ORBS v3 bytes are
+  unchanged.
 - The accepted `9bc87191dd90fd3d7db939127f1ebedfccd2b48d` proof hardens
   `ORB-C1`: Orbit serializes stale-socket inspection, removal, bind, and setup
   through the validated private parent directory. Simultaneous launches leave
