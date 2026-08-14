@@ -130,7 +130,9 @@ pub enum Screen {
 /// Capabilities carried by this complete frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
+    /// Must be true in ORBF v1: frames carry hyperlink metadata.
     pub hyperlinks: bool,
+    /// Must be false in ORBF v1: Kitty graphics are unsupported.
     pub kitty_graphics: bool,
 }
 
@@ -335,7 +337,7 @@ impl FrameSize {
     }
 }
 
-/// Retains the latest complete frame while enforcing strictly increasing revisions.
+/// Retains complete frames with canonical ORBF v1 capabilities and strictly increasing revisions.
 #[derive(Debug, Default)]
 pub struct FrameReducer {
     current: Option<Frame>,
@@ -347,8 +349,9 @@ impl FrameReducer {
         self.current.as_ref()
     }
 
-    /// Accept a complete frame only when its revision is strictly newer.
+    /// Reject invalid ORBF v1 capabilities, then accept only a strictly newer frame.
     pub fn push(&mut self, frame: Frame) -> Result<&Frame> {
+        validate_capabilities(frame.capabilities)?;
         if let Some(current) = &self.current
             && frame.revision <= current.revision
         {
@@ -449,6 +452,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
         hyperlinks: decoder.boolean("hyperlink capability")?,
         kitty_graphics: decoder.boolean("Kitty graphics capability")?,
     };
+    validate_capabilities(capabilities)?;
     let background = decoder.rgb()?;
     let foreground = decoder.rgb()?;
     let color_cursor = if decoder.boolean("cursor color presence")? {
@@ -548,6 +552,7 @@ fn validate_dimensions(dimensions: Dimensions) -> Result<usize> {
 
 fn validate_frame(frame: &Frame) -> Result<usize> {
     validate_dimensions(frame.dimensions)?;
+    validate_capabilities(frame.capabilities)?;
     if frame.rows.len() != usize::from(frame.dimensions.rows) {
         return Err(Error::InvalidShape { field: "row" });
     }
@@ -575,6 +580,16 @@ fn validate_frame(frame: &Frame) -> Result<usize> {
         }
     }
     Ok(size.bytes())
+}
+
+fn validate_capabilities(capabilities: Capabilities) -> Result<()> {
+    if !capabilities.hyperlinks || capabilities.kitty_graphics {
+        Err(Error::InvalidShape {
+            field: "capabilities",
+        })
+    } else {
+        Ok(())
+    }
 }
 
 fn encoded_string_size(field: &'static str, value: &str) -> Result<usize> {
@@ -859,6 +874,7 @@ mod tests {
     const SCREEN_OFFSET: usize = 18;
     const TITLE_LENGTH_OFFSET: usize = 19;
     const HYPERLINK_CAPABILITY_OFFSET: usize = 27;
+    const KITTY_GRAPHICS_CAPABILITY_OFFSET: usize = 28;
     const CURSOR_COLOR_PRESENCE_OFFSET: usize = 35;
     const CURSOR_SHAPE_OFFSET: usize = 807;
     const CURSOR_VIEWPORT_PRESENCE_OFFSET: usize = 808;
@@ -895,7 +911,7 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             capabilities: Capabilities {
-                hyperlinks: false,
+                hyperlinks: true,
                 kitty_graphics: false,
             },
             colors: Colors {
@@ -1034,6 +1050,34 @@ mod tests {
         let decoded = decode_frame(&bytes).unwrap();
         assert_eq!(decoded, expected);
         assert_eq!(encode_frame(&decoded).unwrap(), bytes);
+    }
+
+    #[test]
+    fn orbf_v1_capabilities_are_truthful_at_every_acceptance_boundary() {
+        let canonical = minimal_frame(0);
+        let error = Error::InvalidShape {
+            field: "capabilities",
+        };
+        let mut reducer = FrameReducer::default();
+        reducer.push(canonical.clone()).unwrap();
+        let bytes = canonical.encode().unwrap();
+        for (hyperlinks, kitty_graphics) in [(false, false), (false, true), (true, true)] {
+            let mut frame = canonical.clone();
+            frame.revision = 1;
+            frame.capabilities = Capabilities {
+                hyperlinks,
+                kitty_graphics,
+            };
+            assert_eq!(frame.encode().unwrap_err(), error);
+            assert_eq!(reducer.push(frame).unwrap_err(), error);
+            assert_eq!(reducer.current(), Some(&canonical));
+
+            let mut invalid = bytes.clone();
+            invalid[HYPERLINK_CAPABILITY_OFFSET] = u8::from(hyperlinks);
+            invalid[KITTY_GRAPHICS_CAPABILITY_OFFSET] = u8::from(kitty_graphics);
+            assert_eq!(decode_frame(&invalid).unwrap_err(), error);
+        }
+        assert_eq!(decode_frame(&bytes).unwrap(), canonical);
     }
 
     #[test]

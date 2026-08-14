@@ -355,8 +355,8 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 8,173 |
+| Product Rust source and tests | 8,217 |
 | Governance Rust tool and tests | 765 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **8,938** |
-| **Total owned implementation source** | **8,940** |
+| **Total owned Rust** | **8,982** |
+| **Total owned implementation source** | **8,984** |
