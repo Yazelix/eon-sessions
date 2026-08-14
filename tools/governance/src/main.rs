@@ -8,7 +8,6 @@ use std::{
 
 const CONTRACT_STATUSES: &[&str] = &["Planned", "Partially proved", "Proved", "Retired"];
 const DECISION_STATUSES: &[&str] = &["Selected", "Planned", "Candidate", "Deferred"];
-const PORTABILITY: &[&str] = &["neutral", "isolated platform dependency", "macos blocker"];
 
 #[derive(Debug, Deserialize)]
 struct Comment {
@@ -19,12 +18,6 @@ struct Comment {
 #[derive(Debug, Deserialize)]
 struct Issue {
     id: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    issue_type: String,
-    #[serde(default)]
-    labels: Vec<String>,
     #[serde(default)]
     description: String,
     #[serde(default)]
@@ -37,12 +30,6 @@ struct Issue {
     close_reason: String,
     #[serde(default)]
     comments: Vec<Comment>,
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-struct CheckResult {
-    errors: Vec<String>,
-    protocol_exceptions: Vec<String>,
 }
 
 fn read_text(root: &Path, relative: &str, errors: &mut Vec<String>) -> String {
@@ -232,21 +219,12 @@ fn contract_references(text: &str) -> BTreeSet<String> {
 
 fn load_issues(text: &str, errors: &mut Vec<String>) -> Vec<Issue> {
     let mut issues = Vec::new();
-    let mut seen = BTreeSet::new();
     for (number, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
         match serde_json::from_str::<Issue>(line) {
-            Ok(issue) => {
-                if !seen.insert(issue.id.clone()) {
-                    errors.push(format!(
-                        ".beads/issues.jsonl: duplicate Bead ID {}",
-                        issue.id
-                    ));
-                }
-                issues.push(issue);
-            }
+            Ok(issue) => issues.push(issue),
             Err(error) => errors.push(format!(
                 ".beads/issues.jsonl:{}: invalid issue JSON: {error}",
                 number + 1
@@ -272,162 +250,19 @@ fn issue_text(issue: &Issue) -> String {
     text
 }
 
-fn is_implementation(issue: &Issue) -> bool {
-    matches!(
-        issue.issue_type.as_str(),
-        "bug" | "chore" | "feature" | "task"
-    ) && !issue.labels.iter().any(|label| label == "spike")
-}
-
-fn contains_non_product(text: &str) -> bool {
-    let text = text.to_ascii_lowercase();
-    [
-        "changes no product contract",
-        "changed no product contract",
-        "changes no product-contract",
-        "changed no product-contract",
-        "no orb-c product contract",
-        "no orb-c product-contract",
-        "tooling only",
-        "non-product",
-    ]
-    .iter()
-    .any(|marker| text.contains(marker))
-}
-
-fn contains_crate_marker(text: &str) -> bool {
-    let text = text.to_ascii_lowercase();
-    if text.contains("docs/crates.md")
-        || ((text.contains("cargo.toml")
-            || text.contains("cargo.lock")
-            || text.contains("cargo files"))
-            && text.contains("unchanged"))
-    {
-        return true;
-    }
-    text.match_indices("no").any(|(position, _)| {
-        let before = position
-            .checked_sub(1)
-            .and_then(|index| text.as_bytes().get(index))
-            .is_some_and(u8::is_ascii_alphanumeric);
-        if before {
-            return false;
-        }
-        let suffix = text[position..].chars().take(100).collect::<String>();
-        suffix.contains("crate")
-            || suffix.contains("dependency")
-            || suffix.contains("manifest change")
-    })
-}
-
-fn contains_portability(text: &str) -> bool {
-    let text = text.to_ascii_lowercase();
-    PORTABILITY.iter().any(|marker| text.contains(marker))
-}
-
-fn check_issues(
+fn check_issue_references(
     issues: &[Issue],
     known_contracts: &BTreeSet<String>,
     errors: &mut Vec<String>,
-) -> Vec<String> {
-    let mut exceptions = BTreeSet::new();
+) {
     for issue in issues {
-        let text = issue_text(issue);
-        let references = contract_references(&text);
-        for unknown in references.difference(known_contracts) {
+        for unknown in contract_references(&issue_text(issue)).difference(known_contracts) {
             errors.push(format!(
                 "{}: unknown contract reference {unknown}",
                 issue.id
             ));
         }
-        let comments = issue
-            .comments
-            .iter()
-            .map(|comment| comment.text.as_str())
-            .collect::<Vec<_>>();
-        if comments
-            .iter()
-            .any(|comment| comment.starts_with("Protocol exception"))
-        {
-            exceptions.insert(issue.id.clone());
-        }
-        if !is_implementation(issue) {
-            continue;
-        }
-        let non_product = contains_non_product(&text);
-        if references.is_empty() && !non_product {
-            errors.push(format!(
-                "{}: implementation Bead lacks contract routing",
-                issue.id
-            ));
-        }
-        if issue.status != "closed" {
-            continue;
-        }
-
-        let baseline = comments
-            .iter()
-            .rposition(|comment| comment.starts_with("Execution baseline"));
-        if baseline.is_none() {
-            errors.push(format!(
-                "{}: closed implementation Bead is missing an Execution baseline",
-                issue.id
-            ));
-        }
-        let reference = baseline.and_then(|baseline| {
-            comments
-                .iter()
-                .enumerate()
-                .skip(baseline + 1)
-                .rfind(|(_, comment)| comment.starts_with("Reference gate"))
-                .map(|(index, _)| index)
-        });
-        if reference.is_none() {
-            errors.push(format!(
-                "{}: closed implementation Bead is missing a post-baseline Reference gate",
-                issue.id
-            ));
-        }
-        let closure = reference
-            .map(|reference| {
-                comments
-                    .iter()
-                    .skip(reference + 1)
-                    .filter(|comment| {
-                        comment.starts_with("Closure evidence")
-                            || comment.starts_with("Closure measurement")
-                    })
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        if closure.is_empty() {
-            errors.push(format!(
-                "{}: closed implementation Bead is missing current Closure evidence",
-                issue.id
-            ));
-        }
-        if !closure.contains("docs/CONTRACTS.md") && !contains_non_product(&closure) {
-            errors.push(format!(
-                "{}: closure is missing a contract-update marker",
-                issue.id
-            ));
-        }
-        if !contains_crate_marker(&closure) {
-            errors.push(format!(
-                "{}: closure is missing a crate-decision marker",
-                issue.id
-            ));
-        }
-        if !non_product && !contains_portability(&closure) {
-            errors.push(format!(
-                "{}: closure is missing a portability disposition",
-                issue.id
-            ));
-        }
     }
-    exceptions.into_iter().collect()
 }
 
 fn has_exact_version(text: &str) -> bool {
@@ -531,13 +366,13 @@ fn check_unknown_references(
     }
 }
 
-fn check_repository(root: &Path) -> CheckResult {
+fn check_repository(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
     let contracts = read_text(root, "docs/CONTRACTS.md", &mut errors);
     let known_contracts = check_contracts(&contracts, &mut errors);
     let beads = read_text(root, ".beads/issues.jsonl", &mut errors);
     let issues = load_issues(&beads, &mut errors);
-    let protocol_exceptions = check_issues(&issues, &known_contracts, &mut errors);
+    check_issue_references(&issues, &known_contracts, &mut errors);
     let crates = read_text(root, "docs/CRATES.md", &mut errors);
     check_crates(
         &crates,
@@ -551,10 +386,7 @@ fn check_repository(root: &Path) -> CheckResult {
         &mut errors,
     );
     check_unknown_references("docs/CRATES.md", &crates, &known_contracts, &mut errors);
-    CheckResult {
-        errors,
-        protocol_exceptions,
-    }
+    errors
 }
 
 fn main() -> ExitCode {
@@ -573,15 +405,12 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = check_repository(&root);
-    for bead_id in result.protocol_exceptions {
-        println!("notice: {bead_id} has a Protocol exception record");
-    }
-    if result.errors.is_empty() {
+    let errors = check_repository(&root);
+    if errors.is_empty() {
         println!("governance: ok");
         ExitCode::SUCCESS
     } else {
-        for error in result.errors {
+        for error in errors {
             eprintln!("error: {error}");
         }
         ExitCode::FAILURE
@@ -617,16 +446,7 @@ mod tests {
                 "id": "orb-proof",
                 "status": "closed",
                 "issue_type": "task",
-                "labels": ["runtime"],
-                "description": "Preserve ORB-C1.",
-                "notes": "Historical notes must not satisfy current closure.",
-                "close_reason": "Completed.",
-                "comments": [
-                    {"text": "Execution baseline: preserve ORB-C1."},
-                    {"text": "Reference gate: exact evidence inspected."},
-                    {"text": "Protocol exception: visible historical record."},
-                    {"text": "Closure evidence: docs/CONTRACTS.md and docs/CRATES.md updated. Portability disposition: neutral. Cargo.toml and Cargo.lock are unchanged."}
-                ]
+                "description": "This docs-only task preserves ORB-C1."
             });
             let repository = Self { root, issue };
             repository.write_fixture();
@@ -670,7 +490,7 @@ mod tests {
         }
 
         fn errors(&self) -> Vec<String> {
-            check_repository(&self.root).errors
+            check_repository(&self.root)
         }
     }
 
@@ -681,20 +501,16 @@ mod tests {
     }
 
     #[test]
-    fn valid_repository_keeps_protocol_exceptions_visible() {
+    fn valid_repository_accepts_docs_only_task_without_gate_markers() {
         let repository = TestRepository::new();
+        let issue = serde_json::to_string(&repository.issue).expect("serialize issue");
+        repository.write(".beads/issues.jsonl", &format!("{issue}\n{issue}\n"));
 
-        assert_eq!(
-            check_repository(&repository.root),
-            CheckResult {
-                errors: Vec::new(),
-                protocol_exceptions: vec!["orb-proof".into()],
-            }
-        );
+        assert!(repository.errors().is_empty());
     }
 
     #[test]
-    fn contract_failures_are_reported_together() {
+    fn invalid_metadata_failures_are_reported_together() {
         let mut repository = TestRepository::new();
         repository.write(
             "docs/CONTRACTS.md",
@@ -702,61 +518,41 @@ mod tests {
                 "# Contracts\n\n## Current contracts\n\n\
                  | ID | Contract | Owner | Status | Accepted proof revision | Check or evidence | Gap |\n\
                  | --- | --- | --- | --- | --- | --- | --- |\n\
-                 | `ORB-C1` | One | Orbit | Proved | `{COMMIT}` | canonical test | None |\n\
+                 | `ORB-C1` | One; see ORB-C8 | Orbit | Proved | `{COMMIT}` | canonical test | None |\n\
                  | `ORB-C1` | Duplicate | Orbit | Done | `{COMMIT}` | canonical test | None |\n\
                  | `ORB-X` | Malformed | Orbit | Planned | — | plan | Open |\n\
-                 | `ORB-C2` | Bad proof | Orbit | Proved | `edge` | — | None |\n"
+                 | `ORB-C2` | Bad proof | Orbit | Proved | `edge` | — | None |\n\
+                 | Too | Short |\n"
             ),
         );
         repository.issue["description"] = json!("Preserve ORB-C1 and unknown ORB-C9.");
-        repository.write_issue();
+        repository.write(
+            ".beads/issues.jsonl",
+            &(serde_json::to_string(&repository.issue).expect("serialize issue") + "\n{\n"),
+        );
+        repository.write(
+            "docs/CRATES.md",
+            "# Crates\n\n## Current decisions\n\n\
+             | Boundary | Selected shape | Status | Credible alternatives | Why | Evidence |\n\
+             | --- | --- | --- | --- | --- | --- |\n\
+             | Runtime | Owned loop | Selected | — | Small; preserves ORB-C7 | future work |\n\
+             | Renderer | Maybe | Chosen | owned code | Deferred | orb-proof |\n\
+             | Too | Short |\n",
+        );
 
         let errors = repository.errors().join("\n");
 
+        assert!(errors.contains("Current contracts row 5 has the wrong column count"));
         assert!(errors.contains("duplicate contract ID ORB-C1"));
         assert!(errors.contains("malformed contract ID `ORB-X`"));
         assert!(errors.contains("invalid contract status Done"));
         assert!(errors.contains("ORB-C2 requires a full 40-character proof commit"));
         assert!(errors.contains("ORB-C2 requires a named check or evidence"));
         assert!(errors.contains("unknown contract reference ORB-C9"));
-    }
-
-    #[test]
-    fn stale_proof_and_protocol_exceptions_do_not_satisfy_current_gates() {
-        let mut repository = TestRepository::new();
-        repository.issue["comments"]
-            .as_array_mut()
-            .expect("comments array")
-            .push(json!({"text": "Execution baseline: restarted work."}));
-        repository.write_issue();
-
-        let errors = repository.errors().join("\n");
-
-        assert!(errors.contains("missing a post-baseline Reference gate"));
-        assert!(errors.contains("missing current Closure evidence"));
-        assert!(errors.contains("missing a contract-update marker"));
-        assert!(errors.contains("missing a crate-decision marker"));
-        assert!(errors.contains("missing a portability disposition"));
-        assert_eq!(
-            check_repository(&repository.root).protocol_exceptions,
-            ["orb-proof"]
-        );
-    }
-
-    #[test]
-    fn selected_crate_decisions_require_complete_evidence() {
-        let repository = TestRepository::new();
-        repository.write(
-            "docs/CRATES.md",
-            "# Crates\n\n## Current decisions\n\n\
-             | Boundary | Selected shape | Status | Credible alternatives | Why | Evidence |\n\
-             | --- | --- | --- | --- | --- | --- |\n\
-             | Runtime | Owned loop | Selected | — | Small | future work |\n\
-             | Renderer | Maybe | Chosen | owned code | Deferred | orb-proof |\n",
-        );
-
-        let errors = repository.errors().join("\n");
-
+        assert!(errors.contains("docs/CONTRACTS.md: unknown contract reference ORB-C8"));
+        assert!(errors.contains("docs/CRATES.md: unknown contract reference ORB-C7"));
+        assert!(errors.contains("invalid issue JSON"));
+        assert!(errors.contains("Current decisions row 3 has the wrong column count"));
         assert!(errors.contains("selected Runtime decision lacks an exact version or commit"));
         assert!(errors.contains("selected Runtime decision lacks credible alternatives"));
         assert!(errors.contains("selected Runtime decision lacks an existing evidence Bead"));

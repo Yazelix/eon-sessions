@@ -120,8 +120,10 @@ attachment, frame-envelope, lifecycle, semantic-input, paste, and resize. The
 accepted ORBS v2 replaces that session revision, retains those message
 families, and adds revision-bound selection and bounded copy. The accepted ORBS
 v3 producer retains those values and carries bounded normalized clipboard
-writes as ordered effects outside replaceable presentation frames.
-Venus pins one accepted Orbit proof revision and uses those values directly.
+writes as ordered effects outside replaceable presentation frames. Orbit adds
+revision-bound adjacent-row previews and typed vertical-wheel outcomes in ORBS
+v4. Venus pins exact ORBS v3 proof
+`3ee7c80005f3d2bbe81e539799327803716f6174` until it adopts v4.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
 row contents, and stable anchors. Venus may own ephemeral pointer gestures over

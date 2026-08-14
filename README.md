@@ -221,15 +221,16 @@ terminal state. The initial contract covers surviving client exits and
 disconnections while Orbit continues running; it does not cover daemon or
 machine restarts.
 
-Venus revision `2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832` consumes canonical
-ORBF v1 frames over ORBS v2 at accepted Orbit proof
-`9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`. Orbit provides authoritative
-selection and bounded copy through that boundary without dual-version support.
-The accepted ORBS v3 producer transports bounded normalized terminal clipboard
-writes. The accepted ORBS v4 producer adds bounded adjacent-row previews and typed
-vertical-wheel results. Each owner-first replacement is intentionally
-incompatible until a separate Venus consumer proof adopts the exact Orbit
-revision.
+Venus source proof `2d3498258920736eb1bdae2b8869b6547b9735d4` consumes canonical
+ORBF v1 over ORBS v3 at exact Orbit proof
+`3ee7c80005f3d2bbe81e539799327803716f6174`. Eon packages that pair at source
+`0e25ebc2311d7e41edf90c940f8211dd5839bb83`, and Eonova
+`4fda9b67b0faa33561624633229135e5e2d579ea` accepts native x86_64 Linux
+Wayland delivery to the primary selection. Ordinary clipboard delivery, Wayland
+without data-control, broader compositors, and macOS remain unproved. Orbit's
+ORBS v4 producer adds bounded adjacent-row previews and typed vertical-wheel
+outcomes. Venus and Eon/Eonova require exact v4 adoption; no adapter, feature
+probe, dual-version support, or compatibility window exists.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
@@ -309,22 +310,21 @@ does not run for unrelated documentation.
 
 The governance command checks only deterministic repository facts:
 
-- Contract rows use unique `ORB-C*` IDs and a known status. Proved rows name a
-  full Git commit and a check or evidence, and governed metadata cannot refer
-  to an unknown contract.
-- `bug`, `chore`, `feature`, and `task` Beads are implementation work unless
-  labeled `spike`. They require contract routing or an explicit non-product
-  declaration. Once closed, they also require a reference gate and closure
-  evidence after the latest execution baseline, with current contract and crate
-  decision markers and a portability disposition for product work.
+- Contract and crate tables retain their canonical columns and row shape.
+  Contract rows use unique `ORB-C*` IDs and a known status; proved rows name a
+  full Git commit and a check or evidence. `docs/CONTRACTS.md`,
+  `docs/CRATES.md`, and Beads cannot refer to an unknown contract.
 - Selected crate-index rows name an exact version or commit, alternatives, and
   an existing evidence Bead. Selected, planned, candidate, and deferred rows
   remain distinct.
-- Protocol exceptions recorded in Beads remain visible notices and never count
-  as successful gates.
+- Beads JSON must parse so those contract and crate-evidence links can be
+  checked. `br doctor` owns tracker schema, duplicate IDs, storage, and
+  integrity.
 
-The check cannot establish that an agent read a reference, that an approval or
-evidence comment is truthful, that a crate gate was required, or that a runtime
+The check does not classify implementation work or interpret execution,
+reference, crate, closure, portability, or protocol-exception prose;
+`AGENTS.md` and applicability-aware review own that policy. It cannot establish
+that an agent read a reference, that evidence is truthful, or that a runtime
 contract actually passes. It deliberately does not parse `.agent-protocols.*`
 or generated `AGENTS.md`: Starcompass owns that interpretation. CI installs
 Starcompass from exact public Git revision
@@ -361,7 +361,7 @@ and protocol remain platform-neutral.
 | Surface | Lines |
 | --- | ---: |
 | Product Rust source and tests | 9,277 |
-| Governance Rust tool and tests | 765 |
+| Governance Rust tool and tests | 561 |
 | Eon terminfo source | 2 |
-| **Total owned Rust** | **10,042** |
-| **Total owned implementation source** | **10,044** |
+| **Total owned Rust** | **9,838** |
+| **Total owned implementation source** | **9,840** |
