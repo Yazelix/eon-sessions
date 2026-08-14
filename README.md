@@ -18,12 +18,12 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns the accepted ORBS v3 attachment, frame, lifecycle, key,
-mouse, focus, paste, resize, selection, copy, and terminal-clipboard messages.
-The ORBS v4 candidate retains those values and adds revision-bound adjacent-row
-previews plus typed vertical-wheel outcomes. Known external consumers remain on
-their separately accepted revisions until their v4 updates. Orbit's server and
-diagnostic client use only the canonical values.
+The same package owns canonical ORBS v4 at
+`9c0617a97612cdd045ed67b5cd7c87244eb888e6`, including attachment, frames,
+lifecycle, semantic input, selection and copy, terminal clipboard writes,
+revision-bound adjacent-row previews, and typed vertical-wheel outcomes. Known
+external consumers remain on their accepted revisions until they adopt v4.
+Orbit's server and diagnostic client use only the canonical values.
 Orbit resolves selection from the exact complete-frame revision and current
 viewport, publishes selected cells through normal frames, and returns only
 bounded plain text frozen at Finish.
@@ -130,7 +130,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The ORBS v4 candidate uses a 12-byte explicit little-endian header with `ORBS`
+The accepted ORBS v4 producer uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -226,7 +226,7 @@ ORBF v1 frames over ORBS v2 at accepted Orbit proof
 `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`. Orbit provides authoritative
 selection and bounded copy through that boundary without dual-version support.
 The accepted ORBS v3 producer transports bounded normalized terminal clipboard
-writes. The ORBS v4 candidate adds bounded adjacent-row previews and typed
+writes. The accepted ORBS v4 producer adds bounded adjacent-row previews and typed
 vertical-wheel results. Each owner-first replacement is intentionally
 incompatible until a separate Venus consumer proof adopts the exact Orbit
 revision.

@@ -6,6 +6,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `9c0617a97612cdd045ed67b5cd7c87244eb888e6` proof changes
+  `ORB-C8` and replaces ORBS v3 with exact-version ORBS v4. A client may preview
+  one revision-bound adjacent canonical row without moving Orbit's viewport or
+  sending PTY input. Each vertical wheel returns a typed terminal-routed result
+  or one atomic applied-row count and newer complete frame. Venus and the pinned
+  Eon/Eonova runtime require separate owner-first adoption; no adapter, dual
+  decoder, feature probe, or compatibility window is provided. ORBF remains v1.
 - The accepted `6de95296d252c119d4fdba2d9b03cec1a09355ae` proof hardens
   `ORB-C6`: canonical ORBF v1 rejects capability values that contradict its
   advertised hyperlink support or explicit lack of Kitty graphics before
