@@ -309,6 +309,58 @@ br ready
 
 Beads contain the dependency-ordered experiment plan.
 
+### Orbit–Venus performance baseline
+
+[`tools/perf/orbit-venus-baseline.sh`](tools/perf/orbit-venus-baseline.sh)
+repeats the manual Linux baseline without vendoring a benchmark corpus or
+adding a product mode. It consumes exact caller-supplied Orbit and Venus
+binaries. Throughput mode also consumes an exact upstream
+[vtebench](https://github.com/alacritty/vtebench) checkout whose release binary
+and existing `benchmarks/` corpus have already been built. Lifecycle mode uses
+exact caller-supplied Neovim and Yazi binaries.
+
+Run the local checks first, then leave the desktop idle. Benchmark runs open
+native Venus windows and 50 short-lived `foot` windows, so they can change
+focus and tiling temporarily. Evidence includes local paths, machine and display
+details, and process logs; review it before sharing.
+
+```sh
+tools/perf/orbit-venus-baseline.sh --self-check
+
+export ORB_BASELINE_CPUS=9-15
+export ORB_BASELINE_GRID='58 93'
+export ORB_BASELINE_NVIM="$(command -v nvim)"
+export ORB_BASELINE_YAZI="$(command -v yazi)"
+
+tools/perf/orbit-venus-baseline.sh throughput \
+  /exact/orbit/bin/yazelix-orbit \
+  /exact/venus/bin/yazelix-venus \
+  /exact/vtebench-checkout \
+  /tmp/eon-performance
+
+tools/perf/orbit-venus-baseline.sh lifecycle \
+  /exact/orbit/bin/yazelix-orbit \
+  /exact/venus/bin/yazelix-venus \
+  /tmp/eon-performance
+```
+
+The harness requires native Wayland plus `pidstat`, `taskset`, `ss`, and
+standard GNU command-line tools. Throughput also requires Git; lifecycle also
+requires `foot`. It validates required commands and host load before launching
+Orbit, then rejects any grid mismatch before the measured workload starts.
+Each mode attempt creates a unique evidence directory beneath the supplied
+parent and records the exact harness, hashes, revisions, environment, process
+samples, and summaries; throughput also retains raw vtebench DAT files. This
+output is an internal, intentionally unstable evidence artifact rather than a
+product trace format.
+
+vtebench measures blocking PTY consumption, not frame rate or visual latency.
+The lifecycle reattachment check proves process survival, transport attachment,
+and authoritative grid continuity. Native Wayland does not expose another
+client's keypress-to-pixel or first-visible-frame timing, so the harness reports
+those visual metrics as unavailable instead of substituting title changes,
+wrong-output screenshots, or internal timestamps.
+
 The [CI workflow](.github/workflows/ci.yml) runs on pushes to `edge` that
 change Cargo metadata, Rust source or tests, `build.rs`, Rust toolchain files,
 the governance tool or its governed metadata, or the workflow itself. It can
@@ -379,5 +431,6 @@ and protocol remain platform-neutral.
 | Product Rust source and tests | 8,996 |
 | Governance Rust tool and tests | 561 |
 | Eon terminfo source | 2 |
+| Manual performance harness | 647 |
 | **Total owned Rust** | **9,557** |
-| **Total owned implementation source** | **9,559** |
+| **Total owned implementation source** | **10,206** |
