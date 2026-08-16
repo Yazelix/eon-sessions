@@ -67,6 +67,21 @@ impl Drop for Server {
     }
 }
 
+struct CgroupCleanup(PathBuf);
+
+impl Drop for CgroupCleanup {
+    fn drop(&mut self) {
+        let _ = fs::write(self.0.join("cgroup.kill"), b"1");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while fs::remove_dir(&self.0)
+            .is_err_and(|error| error.kind() != std::io::ErrorKind::NotFound)
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 struct Client {
     reader: BufReader<UnixStream>,
     frame: Frame,
@@ -420,13 +435,41 @@ fn wait_process_gone(pid: u32) -> TestResult {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGKILL);
-            }
             return Err(format!("PTY child {pid} remained alive").into());
         }
         thread::yield_now();
     }
+}
+
+fn process_cgroup(pid: u32) -> TestResult<PathBuf> {
+    let memberships = fs::read_to_string(format!("/proc/{pid}/cgroup"))?;
+    let path = memberships
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .ok_or("process is not in a cgroup-v2 hierarchy")?;
+    Ok(PathBuf::from(path))
+}
+
+fn cgroup_fs_path(cgroup: &Path) -> TestResult<PathBuf> {
+    Ok(Path::new("/sys/fs/cgroup").join(cgroup.strip_prefix("/")?))
+}
+
+fn process_group_and_session(pid: u32) -> TestResult<(u32, u32)> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let (_, fields) = stat
+        .rsplit_once(") ")
+        .ok_or("process stat is missing its command terminator")?;
+    let mut fields = fields.split_whitespace().skip(2);
+    Ok((
+        fields
+            .next()
+            .ok_or("process stat is missing pgrp")?
+            .parse()?,
+        fields
+            .next()
+            .ok_or("process stat is missing session")?
+            .parse()?,
+    ))
 }
 
 fn process_cpu_ticks(pid: u32) -> TestResult<u64> {
@@ -655,23 +698,19 @@ fn writing_descendant_cannot_hold_server_open_after_known_child_exit() -> TestRe
             .arg("/bin/sh")
             .arg("-c")
             .arg(
-                "sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_DESCENDANT_PID\"; exec yes orbit' & while [ ! -s \"$ORBIT_DESCENDANT_PID\" ]; do :; done",
+                "sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_DESCENDANT_PID\"; while printf orbit; do sleep 0.05; done' & while [ ! -s \"$ORBIT_DESCENDANT_PID\" ]; do :; done",
             )
             .env("ORBIT_DESCENDANT_PID", &descendant_pid_file)
             .spawn()?,
     );
 
     let descendant_pid = wait_file_text(&descendant_pid_file)?.trim().parse()?;
-    let status = wait_bounded(&mut server);
-    if status.is_err() {
-        unsafe {
-            libc::kill(descendant_pid as libc::pid_t, libc::SIGKILL);
-        }
-    }
+    let containment_path = cgroup_fs_path(&process_cgroup(descendant_pid)?)?;
+    let _cleanup = CgroupCleanup(containment_path.clone());
 
-    assert!(status?.success());
+    assert!(wait_bounded(&mut server)?.success());
     assert!(!socket.exists());
-    wait_process_gone(descendant_pid)?;
+    assert!(!containment_path.exists());
     Ok(())
 }
 
@@ -1289,6 +1328,227 @@ fn stale_socket_and_signal_shutdown_are_clean() -> TestResult {
     let _replacement = UnixListener::bind(&socket)?;
     assert!(replaced.shutdown()?.success());
     assert!(socket.exists(), "server removed a replacement socket");
+    Ok(())
+}
+
+#[test]
+fn shutdown_hups_the_unreaped_direct_child() -> TestResult {
+    let dir = TestDir::new("direct-child-hup")?;
+    let socket = dir.0.join("orbit.sock");
+    let child_pid_file = dir.0.join("child.pid");
+    let hup_marker = dir.0.join("hup");
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(
+                "trap 'printf hup > \"$ORBIT_HUP_MARKER\"; exit 0' HUP; \
+                 printf '%s\n' \"$$\" > \"$ORBIT_CHILD_PID\"; \
+                 while :; do :; done",
+            )
+            .env("ORBIT_CHILD_PID", &child_pid_file)
+            .env("ORBIT_HUP_MARKER", &hup_marker)
+            .spawn()?,
+    );
+
+    let child_pid = wait_file_text(&child_pid_file)?.trim().parse()?;
+    let containment_path = cgroup_fs_path(&process_cgroup(child_pid)?)?;
+    let _cleanup = CgroupCleanup(containment_path.clone());
+    assert!(server.shutdown()?.success());
+    assert_eq!(fs::read_to_string(&hup_marker)?, "hup");
+    assert!(!containment_path.exists());
+    Ok(())
+}
+
+#[test]
+fn signal_shutdown_empties_the_owned_session_containment() -> TestResult {
+    let dir = TestDir::new("contained-shutdown")?;
+    let socket = dir.0.join("orbit.sock");
+    let initial_pid_file = dir.0.join("initial.pid");
+    let background_pid_file = dir.0.join("background.pid");
+    let setsid_pid_file = dir.0.join("setsid.pid");
+    let foreground_pid_file = dir.0.join("foreground.pid");
+    let mut unrelated = Server(Command::new("/bin/sleep").arg("60").spawn()?);
+    let unrelated_pid = unrelated.0.id();
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/bash")
+            .arg("-c")
+            .arg(
+                "set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
+                 /bin/sh -c 'trap \"\" HUP TERM; printf \"%s\\n\" \"$$\" > \"$ORBIT_BACKGROUND_PID\"; while :; do sleep 1; done' & \
+                 /usr/bin/setsid --fork /bin/sh -c 'trap \"\" HUP TERM; printf \"%s\\n\" \"$$\" > \"$ORBIT_SETSID_PID\"; while :; do sleep 1; done'; \
+                 /bin/sh -c 'trap \"\" HUP TERM; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; exec sleep 60'",
+            )
+            .env("ORBIT_INITIAL_PID", &initial_pid_file)
+            .env("ORBIT_BACKGROUND_PID", &background_pid_file)
+            .env("ORBIT_SETSID_PID", &setsid_pid_file)
+            .env("ORBIT_FOREGROUND_PID", &foreground_pid_file)
+            .spawn()?,
+    );
+
+    let initial_pid = wait_file_text(&initial_pid_file)?.trim().parse()?;
+    let background_pid = wait_file_text(&background_pid_file)?.trim().parse()?;
+    let setsid_pid = wait_file_text(&setsid_pid_file)?.trim().parse()?;
+    let foreground_pid = wait_file_text(&foreground_pid_file)?.trim().parse()?;
+    let containment = process_cgroup(initial_pid)?;
+    let containment_path = cgroup_fs_path(&containment)?;
+    let _cleanup = CgroupCleanup(containment_path.clone());
+    assert_eq!(
+        process_group_and_session(initial_pid)?,
+        (initial_pid, initial_pid)
+    );
+    assert_eq!(process_group_and_session(background_pid)?.0, background_pid);
+    assert_eq!(process_group_and_session(foreground_pid)?.0, foreground_pid);
+    assert_eq!(process_group_and_session(setsid_pid)?.1, setsid_pid);
+    for pid in [background_pid, setsid_pid, foreground_pid] {
+        assert_eq!(process_cgroup(pid)?, containment);
+    }
+    assert_ne!(process_cgroup(unrelated_pid)?, containment);
+    assert!(containment_path.exists());
+    assert_eq!(
+        fs::metadata(&containment_path)?.permissions().mode() & 0o077,
+        0
+    );
+    assert!(server.shutdown()?.success());
+    assert!(!containment_path.exists());
+    assert!(unrelated.0.try_wait()?.is_none());
+    Ok(())
+}
+
+#[test]
+fn explicit_handoff_leaves_process_outside_session_shutdown_scope() -> TestResult {
+    let dir = TestDir::new("external-handoff")?;
+    let socket = dir.0.join("orbit.sock");
+    let initial_pid_file = dir.0.join("initial.pid");
+    let handed_off_pid_file = dir.0.join("handed-off.pid");
+    let handed_off_hup = dir.0.join("handed-off.hup");
+    let foreground_pid_file = dir.0.join("foreground.pid");
+    let handoff = cgroup_fs_path(&process_cgroup(std::process::id())?)?.join(format!(
+        "_orbit_test_handoff_{}_{}",
+        std::process::id(),
+        NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&handoff)?;
+    let handoff_cleanup = CgroupCleanup(handoff.clone());
+    fs::set_permissions(&handoff, fs::Permissions::from_mode(0o700))?;
+
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/bash")
+            .arg("-c")
+            .arg(
+                "set +m; printf '%s\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
+                 /bin/sh -c 'trap \"printf hup > \\\"$ORBIT_HANDOFF_HUP\\\"\" HUP; trap \"\" TERM; printf 0 > \"$ORBIT_HANDOFF_PROCS\"; printf \"%s\\n\" \"$$\" > \"$ORBIT_HANDOFF_PID\"; while :; do sleep 1; done' & \
+                 disown \"$!\"; \
+                 while [ ! -s \"$ORBIT_HANDOFF_PID\" ]; do :; done; \
+                 set -m; /bin/sh -c 'trap \"\" HUP TERM; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; while :; do sleep 1; done'; :",
+            )
+            .env("ORBIT_INITIAL_PID", &initial_pid_file)
+            .env("ORBIT_HANDOFF_PID", &handed_off_pid_file)
+            .env("ORBIT_HANDOFF_HUP", &handed_off_hup)
+            .env("ORBIT_HANDOFF_PROCS", handoff.join("cgroup.procs"))
+            .env("ORBIT_FOREGROUND_PID", &foreground_pid_file)
+            .spawn()?,
+    );
+
+    let initial_pid = wait_file_text(&initial_pid_file)?.trim().parse()?;
+    let handed_off_pid = wait_file_text(&handed_off_pid_file)?.trim().parse()?;
+    let foreground_pid = wait_file_text(&foreground_pid_file)?.trim().parse()?;
+    let containment = process_cgroup(initial_pid)?;
+    let containment_path = cgroup_fs_path(&containment)?;
+    let _containment_cleanup = CgroupCleanup(containment_path.clone());
+    assert_eq!(cgroup_fs_path(&process_cgroup(handed_off_pid)?)?, handoff);
+    assert_eq!(
+        process_group_and_session(handed_off_pid)?,
+        process_group_and_session(initial_pid)?
+    );
+    assert_ne!(
+        process_group_and_session(foreground_pid)?.0,
+        process_group_and_session(initial_pid)?.0
+    );
+    assert_eq!(process_cgroup(foreground_pid)?, containment);
+
+    assert!(server.shutdown()?.success());
+    assert!(!containment_path.exists());
+    assert_eq!(cgroup_fs_path(&process_cgroup(handed_off_pid)?)?, handoff);
+    assert!(
+        !handed_off_hup.exists(),
+        "handed-off process received SIGHUP"
+    );
+    drop(handoff_cleanup);
+    wait_process_gone(handed_off_pid)?;
+    assert!(!handoff.exists());
+    Ok(())
+}
+
+#[test]
+fn widened_containment_is_explicit_shutdown_failure() -> TestResult {
+    let dir = TestDir::new("widened-containment")?;
+    let socket = dir.0.join("orbit.sock");
+    let child_pid_file = dir.0.join("child.pid");
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg("trap '' HUP TERM; printf '%s\n' \"$$\" > \"$ORBIT_CHILD_PID\"; exec sleep 60")
+            .env("ORBIT_CHILD_PID", &child_pid_file)
+            .spawn()?,
+    );
+
+    let child_pid = wait_file_text(&child_pid_file)?.trim().parse()?;
+    let containment = process_cgroup(child_pid)?;
+    let containment_path = cgroup_fs_path(&containment)?;
+    assert_ne!(process_cgroup(std::process::id())?, containment);
+    let cleanup = CgroupCleanup(containment_path.clone());
+    fs::set_permissions(&containment_path, fs::Permissions::from_mode(0o755))?;
+
+    assert!(!server.shutdown()?.success());
+    assert!(containment_path.exists());
+    drop(cleanup);
+    assert!(!containment_path.exists());
+    Ok(())
+}
+
+#[test]
+fn stale_containment_fails_before_the_pty_child_starts() -> TestResult {
+    let dir = TestDir::new("stale-containment")?;
+    let socket = dir.0.join("orbit.sock");
+    let ready = dir.0.join("ready");
+    let release = dir.0.join("release");
+    let child_marker = dir.0.join("child-started");
+    let mut server = Server(
+        gated_server_command(&ready, &release)
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(format!(": > {}", child_marker.display()))
+            .spawn()?,
+    );
+    assert_eq!(wait_file_text(&ready)?, "ready");
+
+    let containment = cgroup_fs_path(&process_cgroup(std::process::id())?)?
+        .join(format!("_yazelix_orbit_{}_0", server.0.id()));
+    fs::create_dir(&containment)?;
+    let cleanup = CgroupCleanup(containment);
+    fs::write(&release, b"release")?;
+
+    assert!(!wait_bounded(&mut server)?.success());
+    assert!(!child_marker.exists());
+    assert!(!socket.exists());
+    assert!(
+        cleanup.0.exists(),
+        "Orbit removed a containment it did not create"
+    );
     Ok(())
 }
 

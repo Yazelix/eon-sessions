@@ -194,6 +194,24 @@ path, rejects a simultaneous second client, retains the last PTY size while
 detached, reaps an exited child, and removes the socket after normal or
 signal-driven shutdown.
 
+On Linux, Orbit requires a user-owned writable cgroup-v2 parent with
+`cgroup.kill`. Before PTY exec, the child enters one per-Session cgroup while
+Orbit remains outside it. SIGINT, SIGTERM, and SIGHUP send SIGHUP only to an
+unreaped direct PTY child and give the exact containment 500 ms to empty, kill
+any remaining contained descendants, reap the direct child, require
+`cgroup.events` to report `populated 0`, and remove the exact cgroup before
+reporting success. Orbit never targets a numeric process group and refuses to
+start the PTY command when containment cannot be established.
+The cgroup is a lifecycle scope rather than a hostile-code sandbox. `nohup`,
+`disown`, daemon-style forks, and `setsid` remain owned while they stay in that
+scope. A process launched or migrated into another lifecycle manager's scope is
+outside Orbit's shutdown result; deliberate same-user cgroup manipulation is
+not an escape-resistance claim. Cgroup handoff does not detach the process from
+the PTY: ordinary kernel hangup may still signal a foreground-attached process,
+and full signal isolation requires terminal-session detachment. Client
+disconnection remains non-destructive and separate from explicit Session stop.
+This is not a macOS support claim.
+
 The proof pins `libc` 0.2.189 for the small Linux `openpty`, controlling-terminal,
 poll, resize, and signal boundary. This avoids `portable-pty` 0.9.0's general
 cross-platform abstraction and dependency stack. `rustix` 1.1.4 exposes the
@@ -428,9 +446,9 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 8,996 |
+| Product Rust source and tests | 9,453 |
 | Governance Rust tool and tests | 561 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
-| **Total owned Rust** | **9,557** |
-| **Total owned implementation source** | **10,206** |
+| **Total owned Rust** | **10,014** |
+| **Total owned implementation source** | **10,663** |

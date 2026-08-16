@@ -399,10 +399,11 @@ fn run_server(
             client.negotiation_deadline.is_none() && !client.close_after_flush
         });
         if platform::termination_requested() {
+            pty.stop_and_reap()?;
             return Ok(0);
         }
         if let Some(status) = pty.try_wait()? {
-            pty.stop_and_reap();
+            pty.stop_and_reap()?;
             let changed = clear_selection(&terminal, &mut selection, true)?
                 | drain_exited_pty(&mut pty, &mut terminal, &mut selection)?;
             fail_on_pty_write_overflow(&response_overflow)?;
@@ -2533,7 +2534,7 @@ mod tests {
 
         let status = loop {
             if let Some(status) = pty.try_wait()? {
-                pty.stop_and_reap();
+                let _ = pty.stop_and_reap();
                 drain_exited_pty(&mut pty, &mut terminal, &mut selection)?;
                 break status;
             }
