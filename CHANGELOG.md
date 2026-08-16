@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c` proof adds
+  `ORB-C12`: explicit Linux Session shutdown reaps the direct PTY child and
+  empties the exact Orbit-owned cgroup before reporting success. Processes
+  deliberately handed to another lifecycle scope are outside Orbit ownership;
+  graphical-client disconnection remains non-destructive under `ORB-C1`.
 - The accepted `2e41997cbec202afc5222f084ffb98973a01b0f0` proof hardens
   `ORB-C4` and `ORB-C6`: canonical ORBF v1 rejects malformed wide-cell,
   spacer-tail, and wrapped-edge topology before encoder, decoder, or reducer

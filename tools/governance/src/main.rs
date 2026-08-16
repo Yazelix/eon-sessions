@@ -10,14 +10,10 @@ const CONTRACT_STATUSES: &[&str] = &["Planned", "Partially proved", "Proved", "R
 const DECISION_STATUSES: &[&str] = &["Selected", "Planned", "Candidate", "Deferred"];
 
 #[derive(Debug, Deserialize)]
-struct Comment {
-    #[serde(default)]
-    text: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct Issue {
     id: String,
+    #[serde(default)]
+    status: String,
     #[serde(default)]
     description: String,
     #[serde(default)]
@@ -28,8 +24,6 @@ struct Issue {
     notes: String,
     #[serde(default)]
     close_reason: String,
-    #[serde(default)]
-    comments: Vec<Comment>,
 }
 
 fn read_text(root: &Path, relative: &str, errors: &mut Vec<String>) -> String {
@@ -235,19 +229,14 @@ fn load_issues(text: &str, errors: &mut Vec<String>) -> Vec<Issue> {
 }
 
 fn issue_text(issue: &Issue) -> String {
-    let mut text = [
+    [
         issue.description.as_str(),
         issue.design.as_str(),
         issue.acceptance_criteria.as_str(),
         issue.notes.as_str(),
         issue.close_reason.as_str(),
     ]
-    .join("\n");
-    for comment in &issue.comments {
-        text.push('\n');
-        text.push_str(&comment.text);
-    }
-    text
+    .join("\n")
 }
 
 fn check_issue_references(
@@ -255,7 +244,7 @@ fn check_issue_references(
     known_contracts: &BTreeSet<String>,
     errors: &mut Vec<String>,
 ) {
-    for issue in issues {
+    for issue in issues.iter().filter(|issue| issue.status != "deferred") {
         for unknown in contract_references(&issue_text(issue)).difference(known_contracts) {
             errors.push(format!(
                 "{}: unknown contract reference {unknown}",
@@ -507,6 +496,33 @@ mod tests {
         repository.write(".beads/issues.jsonl", &format!("{issue}\n{issue}\n"));
 
         assert!(repository.errors().is_empty());
+    }
+
+    #[test]
+    fn deferred_proposals_and_archival_comments_are_not_current_contract_claims() {
+        let mut repository = TestRepository::new();
+        repository.issue["status"] = json!("deferred");
+        repository.issue["description"] = json!("Proposed ORB-C9 requires approval.");
+        repository.issue["comments"] = json!([{"text": "Historical ORB-C8 proposal."}]);
+        repository.write_issue();
+
+        assert!(repository.errors().is_empty());
+
+        repository.issue["status"] = json!("open");
+        repository.issue["description"] = json!("Preserve ORB-C1.");
+        repository.write_issue();
+
+        assert!(repository.errors().is_empty());
+
+        repository.issue["description"] = json!("Proposed ORB-C9 requires approval.");
+        repository.write_issue();
+
+        assert!(
+            repository
+                .errors()
+                .join("\n")
+                .contains("unknown contract reference ORB-C9")
+        );
     }
 
     #[test]

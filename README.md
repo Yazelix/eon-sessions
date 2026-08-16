@@ -252,7 +252,7 @@ time. On attachment, the client receives a coherent complete structured
 presentation frame at one revision followed by later frame revisions in order.
 The client sends semantic input for Orbit to encode against authoritative
 terminal state. The initial contract covers surviving client exits and
-disconnections while Orbit continues running; it does not cover daemon or
+disconnections while Orbit continues running; it does not cover Orbit or
 machine restarts.
 
 Venus source proof `2d3498258920736eb1bdae2b8869b6547b9735d4` consumes canonical
@@ -447,8 +447,8 @@ and protocol remain platform-neutral.
 | Surface | Lines |
 | --- | ---: |
 | Product Rust source and tests | 9,453 |
-| Governance Rust tool and tests | 561 |
+| Governance Rust tool and tests | 577 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
-| **Total owned Rust** | **10,014** |
-| **Total owned implementation source** | **10,663** |
+| **Total owned Rust** | **10,030** |
+| **Total owned implementation source** | **10,679** |
