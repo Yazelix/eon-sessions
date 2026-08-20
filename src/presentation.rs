@@ -949,9 +949,23 @@ mod tests {
         assert_eq!(reattached_rich, rich);
         fs::write(&release, b"go")?;
         wait_file(&flooding)?;
-        fs::remove_file(&flooding)?;
-        wait_file(&finished)?;
         drop(slow_client);
+        let (mut interrupt_client, _) = attach(&socket)?;
+        interrupt_client
+            .get_mut()
+            .write_all(&encode_client_message(&ClientMessage::Key(
+                session::KeyEvent {
+                    action: session::KeyAction::Press,
+                    key: session::PhysicalKey::C,
+                    modifiers: session::Modifiers::CTRL,
+                    consumed_modifiers: session::Modifiers::empty(),
+                    composing: false,
+                    text: None,
+                    unshifted_codepoint: Some('c'),
+                },
+            ))?)?;
+        wait_file(&finished)?;
+        drop(interrupt_client);
         let (mut second_reader, mut final_frame) = attach(&socket)?;
         let initial_revision = final_frame.revision;
         while final_frame.title != "final" {

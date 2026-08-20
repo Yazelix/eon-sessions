@@ -458,10 +458,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 11,433 |
+| Product Rust source and tests | 11,447 |
 | Governance Rust tool and tests | 577 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
-| Shell test fixture | 55 |
-| **Total owned Rust** | **12,010** |
-| **Total owned implementation source** | **12,714** |
+| Shell test fixture | 58 |
+| **Total owned Rust** | **12,024** |
+| **Total owned implementation source** | **12,731** |
