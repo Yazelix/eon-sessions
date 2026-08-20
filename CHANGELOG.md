@@ -6,6 +6,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Prove `ORB-C13` through exact Eon consumer acceptance at
+  `0bf0b165d06b4a8162be497011070f61f6c2000a`: same-boot supervisor loss,
+  multi-Session and EonTerm recovery, contending replacements, and owner-routed
+  Stop preserve Orbit authority without fallback or duplicate ownership.
 - The accepted `7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c` proof adds
   `ORB-C12`: explicit Linux Session shutdown reaps the direct PTY child and
   empties the exact Orbit-owned cgroup before reporting success. Processes
