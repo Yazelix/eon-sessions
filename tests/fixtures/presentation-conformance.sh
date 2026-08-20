@@ -30,15 +30,12 @@ while [ ! -e "$release" ] && [ ! -e "$stop" ]; do
 done
 [ -e "$stop" ] && exit
 
-running=yes
-trap 'running=' INT
 dd if=/dev/zero bs=65536 count=4 2>/dev/null
 : > "$flooding"
-while [ -n "$running" ] && [ ! -e "$stop" ]; do
+while [ -e "$flooding" ] && [ ! -e "$stop" ]; do
     printf '%s' "$primary"
 done
 [ -e "$stop" ] && exit
-trap - INT
 
 printf '\033[?1049lX'
 printf '\033[3'

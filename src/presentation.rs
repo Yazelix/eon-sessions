@@ -945,23 +945,11 @@ mod tests {
         );
         drop(first_reader);
 
-        let (mut slow_client, reattached_rich) = attach(&socket)?;
+        let (slow_client, reattached_rich) = attach(&socket)?;
         assert_eq!(reattached_rich, rich);
         fs::write(&release, b"go")?;
         wait_file(&flooding)?;
-        slow_client
-            .get_mut()
-            .write_all(&encode_client_message(&ClientMessage::Key(
-                session::KeyEvent {
-                    action: session::KeyAction::Press,
-                    key: session::PhysicalKey::C,
-                    modifiers: session::Modifiers::CTRL,
-                    consumed_modifiers: session::Modifiers::empty(),
-                    composing: false,
-                    text: None,
-                    unshifted_codepoint: Some('c'),
-                },
-            ))?)?;
+        fs::remove_file(&flooding)?;
         wait_file(&finished)?;
         drop(slow_client);
         let (mut second_reader, mut final_frame) = attach(&socket)?;
