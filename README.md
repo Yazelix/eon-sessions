@@ -194,6 +194,18 @@ path, rejects a simultaneous second client, retains the last PTY size while
 detached, reaps an exited child, and removes the socket after normal or
 signal-driven shutdown.
 
+The private same-boot management owner is enabled with
+`serve SOCKET --management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
+It derives `SOCKET.management` and `SOCKET.record`, publishes the live record
+only after the PTY, terminal owner, and both sockets are usable, and permits one
+UID- and identity-validated management lease. Lease loss is non-destructive;
+the surface carries only acquire, status, and explicit stop. Natural exit or a
+successful stop atomically replaces the live record with a typed terminal
+tombstone and removes only the exact sockets. Messages and records are limited
+to 4 KiB, identities to 128 UTF-8 bytes, and negotiation to one second. Eon
+launch and recovery consumption remains separate work; this mode does not
+promise logout, reboot, machine-restart, topology, or same-UID isolation.
+
 On Linux, Orbit requires a user-owned writable cgroup-v2 parent with
 `cgroup.kill`. Before PTY exec, the child enters one per-Session cgroup while
 Orbit remains outside it. SIGINT, SIGTERM, and SIGHUP send SIGHUP only to an
@@ -446,10 +458,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 9,456 |
+| Product Rust source and tests | 11,445 |
 | Governance Rust tool and tests | 577 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **10,033** |
-| **Total owned implementation source** | **10,740** |
+| **Total owned Rust** | **12,022** |
+| **Total owned implementation source** | **12,729** |
