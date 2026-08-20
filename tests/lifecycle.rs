@@ -5,18 +5,27 @@ use std::{
     io::{BufReader, Read, Write},
     net::Shutdown,
     os::unix::{
-        fs::PermissionsExt,
+        ffi::OsStringExt,
+        fs::{MetadataExt, PermissionsExt},
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Barrier,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use orbit_protocol::{
     Frame, Rgb, Screen,
+    management::{
+        self as management, ClientMessage as ManagementClientMessage,
+        FailureCode as ManagementFailureCode, LiveIdentity, ObjectIdentity, ProcessOutcome,
+        Record as ManagementRecord, ServerMessage as ManagementServerMessage, TerminationReason,
+    },
     session::{
         self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, PhysicalKey,
         SelectionAction, ServerMessage, SurfaceSize, ViewportCell, decode_server_message,
@@ -52,6 +61,10 @@ impl Drop for TestDir {
 struct Server(Child);
 
 impl Server {
+    fn wait(mut self) -> TestResult<ExitStatus> {
+        wait_bounded(&mut self)
+    }
+
     fn shutdown(mut self) -> TestResult<ExitStatus> {
         terminate(&self)?;
         wait_bounded(&mut self)
@@ -64,6 +77,50 @@ impl Drop for Server {
             let _ = terminate(self);
             let _ = wait_bounded(self);
         }
+    }
+}
+
+struct OrbitCleanup(Option<(u32, u64)>);
+
+impl OrbitCleanup {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for OrbitCleanup {
+    fn drop(&mut self) {
+        let Some((pid, start)) = self.0 else {
+            return;
+        };
+        if !process_identity_matches(pid, start) {
+            return;
+        }
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+        if wait_process_gone(pid).is_err() && process_identity_matches(pid, start) {
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+            let _ = wait_process_gone(pid);
+        }
+    }
+}
+
+struct ManagementClient {
+    reader: BufReader<UnixStream>,
+}
+
+impl ManagementClient {
+    fn request(
+        &mut self,
+        message: &ManagementClientMessage,
+    ) -> TestResult<ManagementServerMessage> {
+        self.reader
+            .get_mut()
+            .write_all(&management::encode_client_message(message)?)?;
+        read_management_message(&mut self.reader)
     }
 }
 
@@ -303,6 +360,68 @@ fn read_message(reader: &mut impl Read) -> TestResult<ServerMessage> {
     Ok(decode_server_message(&framed)?)
 }
 
+fn read_management_message(reader: &mut impl Read) -> TestResult<ManagementServerMessage> {
+    let mut header = [0; management::HEADER_BYTES];
+    reader.read_exact(&mut header)?;
+    let length = management::server_message_len(&header)?
+        .expect("complete header declares its management-message length");
+    let mut framed = Vec::with_capacity(length);
+    framed.extend_from_slice(&header);
+    framed.resize(length, 0);
+    reader.read_exact(&mut framed[management::HEADER_BYTES..])?;
+    Ok(management::decode_server_message(&framed)?)
+}
+
+fn wait_management_record(path: &Path) -> TestResult<ManagementRecord> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(bytes) = fs::read(path)
+            && bytes.len() <= management::MAX_RECORD_BYTES
+            && let Ok(record) = management::decode_record(&bytes)
+        {
+            return Ok(record);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for record {}", path.display()).into());
+        }
+        thread::yield_now();
+    }
+}
+
+fn acquire_management(
+    record_path: &Path,
+    identity: &LiveIdentity,
+) -> TestResult<(ManagementServerMessage, ManagementClient)> {
+    let metadata = fs::symlink_metadata(record_path)?;
+    let record = ObjectIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    };
+    let management_path = PathBuf::from(std::ffi::OsString::from_vec(
+        identity.management.path.clone(),
+    ));
+    let mut stream = connect_bounded(&management_path, Instant::now() + Duration::from_secs(5))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    let write = stream.write_all(&management::encode_client_message(
+        &ManagementClientMessage::Acquire {
+            expected: identity.clone(),
+            record,
+        },
+    )?);
+    let mut client = ManagementClient {
+        reader: BufReader::new(stream),
+    };
+    let response = match read_management_message(&mut client.reader) {
+        Ok(response) => response,
+        Err(error) => {
+            write?;
+            return Err(error);
+        }
+    };
+    Ok((response, client))
+}
+
 fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
     loop {
         match UnixStream::connect(socket) {
@@ -439,6 +558,20 @@ fn wait_process_gone(pid: u32) -> TestResult {
         }
         thread::yield_now();
     }
+}
+
+fn process_start_identity(pid: u32) -> TestResult<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let fields = stat.rsplit_once(')').ok_or("malformed process stat")?.1;
+    Ok(fields
+        .split_whitespace()
+        .nth(19)
+        .ok_or("process stat is missing start identity")?
+        .parse()?)
+}
+
+fn process_identity_matches(pid: u32, start: u64) -> bool {
+    process_start_identity(pid).is_ok_and(|current| current == start)
 }
 
 fn process_cgroup(pid: u32) -> TestResult<PathBuf> {
@@ -1287,6 +1420,7 @@ fn stale_socket_and_signal_shutdown_are_clean() -> TestResult {
     fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700))?;
     let socket = runtime.join("orbit.sock");
     drop(UnixListener::bind(&socket)?);
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
 
     let server = spawn_default_server(&dir.0)?;
     let aborted = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
@@ -1567,6 +1701,7 @@ fn simultaneous_stale_socket_claim_has_one_reachable_owner() -> TestResult {
         let second_ready = dir.0.join(format!("second-{attempt}.ready"));
         let release = dir.0.join(format!("release-{attempt}"));
         drop(UnixListener::bind(&socket)?);
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
 
         let mut first = Server(
             gated_server_command(&first_ready, &release)
@@ -1641,5 +1776,264 @@ fn signal_during_startup_removes_socket() -> TestResult {
 
     assert!(server.shutdown()?.success());
     assert!(!socket.exists());
+    Ok(())
+}
+
+#[test]
+fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestResult {
+    let dir = TestDir::new("managed-owner")?;
+    let socket = dir.0.join("orbit.sock");
+    let mut record_path = socket.as_os_str().to_os_string();
+    record_path.push(".record");
+    let record_path = PathBuf::from(record_path);
+    let orbit_pid_path = dir.0.join("orbit.pid");
+    let pty_pid_path = dir.0.join("pty.pid");
+    let work = dir.0.join("work");
+    let done = dir.0.join("done");
+
+    let mut orbit = server_command();
+    orbit
+        .arg(&socket)
+        .args([
+            "--management-v1",
+            "session-1",
+            "run-1",
+            "component-1",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf '%s' \"$$\" > \"$ORBIT_PTY_PID\"; \
+             while [ ! -e \"$ORBIT_WORK\" ]; do sleep 0.01; done; \
+             printf '\\033]2;survived\\033\\\\'; printf survived > \"$ORBIT_DONE\"; \
+             while :; do sleep 1; done",
+        ])
+        .env("ORBIT_PTY_PID", &pty_pid_path)
+        .env("ORBIT_WORK", &work)
+        .env("ORBIT_DONE", &done);
+
+    let mut launcher = Command::new("/bin/sh");
+    launcher
+        .arg("-c")
+        .arg("\"$@\" & orbit=$!; printf '%s' \"$orbit\" > \"$ORBIT_PID\"; wait \"$orbit\"")
+        .arg("orbit-launcher")
+        .arg(orbit.get_program())
+        .args(orbit.get_args())
+        .envs(
+            orbit
+                .get_envs()
+                .filter_map(|(key, value)| value.map(|value| (key, value))),
+        )
+        .env("ORBIT_PID", &orbit_pid_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut launcher = launcher.spawn()?;
+
+    let orbit_pid = wait_file_text(&orbit_pid_path)?.parse::<u32>()?;
+    let mut cleanup = OrbitCleanup(None);
+    let identity = match wait_management_record(&record_path)? {
+        ManagementRecord::Live(identity) => identity,
+        record => return Err(format!("expected live management record, got {record:?}").into()),
+    };
+    assert_eq!(identity.process_id, orbit_pid);
+    assert!(process_identity_matches(orbit_pid, identity.process_start));
+    cleanup.0 = Some((orbit_pid, identity.process_start));
+    drop(OrbitCleanup(Some((orbit_pid, identity.process_start + 1))));
+    let pty_pid = wait_file_text(&pty_pid_path)?.parse::<u32>()?;
+    let containment = cgroup_fs_path(&process_cgroup(pty_pid)?)?;
+    let inherited_sockets = [
+        format!("socket:[{}]", identity.presentation.object.inode),
+        format!("socket:[{}]", identity.management.object.inode),
+    ];
+    for descriptor in fs::read_dir(format!("/proc/{pty_pid}/fd"))? {
+        let target = fs::read_link(descriptor?.path())?;
+        assert!(
+            !inherited_sockets
+                .iter()
+                .any(|socket| target == Path::new(socket)),
+            "PTY child inherited an Orbit listener: {}",
+            target.display()
+        );
+    }
+
+    let mut wrong_identity = identity.clone();
+    wrong_identity.run_id = "wrong-run".into();
+    let (response, rejected) = acquire_management(&record_path, &wrong_identity)?;
+    assert!(matches!(
+        response,
+        ManagementServerMessage::Failure(ref failure)
+            if failure.code == ManagementFailureCode::InvalidIdentity
+    ));
+    drop(rejected);
+    thread::sleep(Duration::from_millis(50));
+
+    let (response, initial_manager) = acquire_management(&record_path, &identity)?;
+    assert_eq!(response, ManagementServerMessage::Lease(identity.clone()));
+    let initial_revision = Client::attach(&socket)?.frame.revision;
+
+    assert_eq!(
+        unsafe { libc::kill(launcher.id() as libc::pid_t, libc::SIGKILL) },
+        0
+    );
+    assert!(!launcher.wait()?.success());
+    drop(initial_manager);
+    thread::sleep(Duration::from_millis(150));
+
+    fs::write(&work, b"continue")?;
+    assert_eq!(wait_file_text(&done)?, "survived");
+
+    let barrier = Arc::new(Barrier::new(3));
+    let mut attempts = Vec::new();
+    for _ in 0..2 {
+        let barrier = Arc::clone(&barrier);
+        let record_path = record_path.clone();
+        let identity = identity.clone();
+        attempts.push(thread::spawn(move || {
+            barrier.wait();
+            acquire_management(&record_path, &identity).unwrap()
+        }));
+    }
+    barrier.wait();
+
+    let mut winner = None;
+    let mut busy = 0;
+    for attempt in attempts {
+        let (response, client) = attempt.join().map_err(|_| "management race panicked")?;
+        match response {
+            ManagementServerMessage::Lease(current) => {
+                assert_eq!(current, identity);
+                assert!(winner.replace(client).is_none(), "two leases were granted");
+            }
+            ManagementServerMessage::Busy => busy += 1,
+            response => return Err(format!("unexpected lease-race response: {response:?}").into()),
+        }
+    }
+    assert_eq!(busy, 1);
+    let mut winner = winner.ok_or("management race produced no lease winner")?;
+    assert_eq!(
+        winner.request(&ManagementClientMessage::Status)?,
+        ManagementServerMessage::Status(identity.clone())
+    );
+
+    let mut presentation = Client::attach(&socket)?;
+    presentation.wait_title("survived")?;
+    assert!(presentation.frame.revision > initial_revision);
+    assert_eq!(identity.process_id, orbit_pid);
+    assert!(Path::new(&format!("/proc/{orbit_pid}")).exists());
+    assert!(Path::new(&format!("/proc/{pty_pid}")).exists());
+
+    let stop = management::encode_client_message(&ManagementClientMessage::Stop)?;
+    winner.reader.get_mut().write_all(&stop)?;
+    drop(winner);
+    wait_process_gone(orbit_pid)?;
+    let ManagementRecord::Tombstone(stopped) = wait_management_record(&record_path)? else {
+        return Err("accepted stop did not publish a tombstone".into());
+    };
+    assert_eq!(stopped.identity, identity);
+    assert_eq!(stopped.reason, TerminationReason::ExplicitStop);
+    assert_eq!(stopped.outcome, ProcessOutcome::Signal(libc::SIGHUP));
+    wait_process_gone(pty_pid)?;
+    cleanup.disarm();
+    assert!(!socket.exists());
+    assert!(!identity.management.path.is_empty());
+    assert!(!PathBuf::from(std::ffi::OsString::from_vec(identity.management.path)).exists());
+    assert!(!containment.exists());
+    assert!(record_path.exists());
+    Ok(())
+}
+
+#[test]
+fn management_authority_negatives_fail_closed_without_stopping_session() -> TestResult {
+    let dir = TestDir::new("management-negatives")?;
+    let socket = dir.0.join("orbit.sock");
+    let mut record_path = socket.as_os_str().to_os_string();
+    record_path.push(".record");
+    let record_path = PathBuf::from(record_path);
+    let natural_exit = dir.0.join("natural-exit");
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .args([
+                "--management-v1",
+                "session-negative",
+                "run-negative",
+                "component-negative",
+                "--",
+                "/bin/sh",
+                "-c",
+                "while [ ! -e \"$ORBIT_NATURAL_EXIT\" ]; do sleep 0.01; done; exit 23",
+            ])
+            .env("ORBIT_NATURAL_EXIT", &natural_exit)
+            .spawn()?,
+    );
+    let identity = match wait_management_record(&record_path)? {
+        ManagementRecord::Live(identity) => identity,
+        record => return Err(format!("expected live management record, got {record:?}").into()),
+    };
+    let management_path = PathBuf::from(std::ffi::OsString::from_vec(
+        identity.management.path.clone(),
+    ));
+
+    let silent = connect_bounded(&management_path, Instant::now() + Duration::from_secs(5))?;
+    thread::sleep(Duration::from_millis(1_150));
+    let (response, lease) = acquire_management(&record_path, &identity)?;
+    assert_eq!(response, ManagementServerMessage::Lease(identity.clone()));
+    drop(silent);
+    drop(lease);
+    thread::sleep(Duration::from_millis(150));
+
+    let mut malformed = connect_bounded(&management_path, Instant::now() + Duration::from_secs(5))?;
+    malformed.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut oversized = [0; management::HEADER_BYTES];
+    oversized[..4].copy_from_slice(b"ORBM");
+    oversized[4..6].copy_from_slice(&management::VERSION.to_le_bytes());
+    oversized[6] = 2;
+    oversized[8..12].copy_from_slice(&(management::MAX_MESSAGE_BYTES as u32).to_le_bytes());
+    malformed.write_all(&oversized)?;
+    assert!(matches!(
+        read_management_message(&mut malformed)?,
+        ManagementServerMessage::Failure(ref failure)
+            if failure.code == ManagementFailureCode::InvalidRequest
+    ));
+    drop(malformed);
+    thread::sleep(Duration::from_millis(150));
+
+    fs::set_permissions(&record_path, fs::Permissions::from_mode(0o640))?;
+    let (response, rejected) = acquire_management(&record_path, &identity)?;
+    assert!(matches!(
+        response,
+        ManagementServerMessage::Failure(ref failure)
+            if failure.code == ManagementFailureCode::InvalidIdentity
+    ));
+    drop(rejected);
+    fs::set_permissions(&record_path, fs::Permissions::from_mode(0o600))?;
+    thread::sleep(Duration::from_millis(150));
+
+    let (response, lease) = acquire_management(&record_path, &identity)?;
+    assert_eq!(response, ManagementServerMessage::Lease(identity.clone()));
+    drop(lease);
+    thread::sleep(Duration::from_millis(150));
+
+    fs::remove_file(&socket)?;
+    let replacement = UnixListener::bind(&socket)?;
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
+    let (response, rejected) = acquire_management(&record_path, &identity)?;
+    assert!(matches!(
+        response,
+        ManagementServerMessage::Failure(ref failure)
+            if failure.code == ManagementFailureCode::InvalidIdentity
+    ));
+    drop(rejected);
+
+    fs::write(&natural_exit, b"exit")?;
+    assert_eq!(server.wait()?.code(), Some(23));
+    assert!(socket.exists(), "replacement endpoint was removed");
+    assert!(!management_path.exists());
+    let ManagementRecord::Tombstone(tombstone) = wait_management_record(&record_path)? else {
+        return Err("natural exit did not publish a tombstone".into());
+    };
+    assert_eq!(tombstone.reason, TerminationReason::NaturalExit);
+    assert_eq!(tombstone.outcome, ProcessOutcome::ExitCode(23));
+    drop(replacement);
     Ok(())
 }

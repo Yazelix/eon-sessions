@@ -1,5 +1,8 @@
 use crate::Result;
-use orbit_protocol::session::SurfaceSize;
+use orbit_protocol::{
+    management::{EndpointIdentity, ObjectIdentity},
+    session::SurfaceSize,
+};
 use std::{
     env,
     fs::{self, File, OpenOptions, TryLockError},
@@ -7,7 +10,8 @@ use std::{
     os::{
         fd::{AsRawFd, FromRawFd, RawFd},
         unix::{
-            fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
+            ffi::OsStrExt,
+            fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
             net::{UnixListener, UnixStream},
             process::CommandExt,
         },
@@ -21,6 +25,7 @@ use std::{
 
 static TERMINATE: AtomicBool = AtomicBool::new(false);
 static NEXT_CONTAINMENT: AtomicU64 = AtomicU64::new(0);
+static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
@@ -128,13 +133,14 @@ impl Pty {
         nonblocking(|| self.master.write(bytes), false)
     }
 
-    pub(crate) fn stop_and_reap(&mut self) -> Result {
+    pub(crate) fn stop_and_reap(&mut self) -> Result<Option<ExitStatus>> {
         let Some(child) = self.child.as_mut() else {
-            return self.containment.remove();
+            self.containment.remove()?;
+            return Ok(None);
         };
         let child_pid = child.id() as libc::pid_t;
-        let child_exited = child.try_wait()?.is_some();
-        if !child_exited {
+        let mut status = child.try_wait()?;
+        if status.is_none() {
             unsafe {
                 libc::kill(child_pid, libc::SIGHUP);
             }
@@ -153,10 +159,11 @@ impl Pty {
             }
         }
 
-        if !child_exited {
+        if status.is_none() {
             let deadline = Instant::now() + SHUTDOWN_LIMIT;
             loop {
-                if child.try_wait()?.is_some() {
+                if let Some(exit) = child.try_wait()? {
+                    status = Some(exit);
                     break;
                 }
                 if Instant::now() >= deadline {
@@ -166,7 +173,8 @@ impl Pty {
             }
         }
         self.child = None;
-        self.containment.remove()
+        self.containment.remove()?;
+        Ok(status)
     }
 }
 
@@ -335,17 +343,21 @@ impl Drop for SessionContainment {
 
 pub(crate) struct Readiness {
     pub(crate) listener: bool,
+    pub(crate) management_listener: bool,
     pub(crate) pty_read: bool,
     pub(crate) pty_write: bool,
     pub(crate) client: bool,
+    pub(crate) management_client: bool,
 }
 
 pub(crate) fn poll(
     listener: &UnixListener,
+    management_listener: Option<&UnixListener>,
     pty: Option<(&Pty, bool)>,
     client: Option<&UnixStream>,
+    management_client: Option<(&UnixStream, bool)>,
 ) -> Result<Readiness> {
-    let mut fds = [pollfd(0, 0); 3];
+    let mut fds = [pollfd(0, 0); 5];
     let mut len = 0;
     let mut push = |fd, events| {
         let index = len;
@@ -354,6 +366,8 @@ pub(crate) fn poll(
         index
     };
     let listener_index = push(listener.as_raw_fd(), libc::POLLIN);
+    let management_listener_index =
+        management_listener.map(|listener| push(listener.as_raw_fd(), libc::POLLIN));
     let pty_index = pty.map(|(pty, writable)| {
         push(
             pty.master.as_raw_fd(),
@@ -361,6 +375,12 @@ pub(crate) fn poll(
         )
     });
     let client_index = client.map(|client| push(client.as_raw_fd(), libc::POLLIN));
+    let management_client_index = management_client.map(|(client, writable)| {
+        push(
+            client.as_raw_fd(),
+            libc::POLLIN | if writable { libc::POLLOUT } else { 0 },
+        )
+    });
 
     loop {
         let result = unsafe { libc::poll(fds.as_mut_ptr(), len as _, 100) };
@@ -375,11 +395,14 @@ pub(crate) fn poll(
 
     let events = |index: Option<usize>| index.map_or(0, |index| fds[index].revents);
     let pty = events(pty_index);
+    let management = events(management_client_index);
     Ok(Readiness {
         listener: events(Some(listener_index)) & libc::POLLIN != 0,
+        management_listener: events(management_listener_index) & libc::POLLIN != 0,
         pty_read: pty & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0,
         pty_write: pty & libc::POLLOUT != 0,
         client: events(client_index) & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0,
+        management_client: management & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0,
     })
 }
 
@@ -410,10 +433,8 @@ pub(crate) fn create_listener(path: &Path) -> Result<(UnixListener, SocketGuard)
         }
         Err(TryLockError::Error(error)) => return Err(error.into()),
     }
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if !metadata.file_type().is_socket() {
-            return Err(format!("refusing to replace non-socket path {}", path.display()).into());
-        }
+    if let Some(metadata) = existing_metadata(path)? {
+        validate_object(path, &metadata, ObjectKind::Socket)?;
         match UnixStream::connect(path) {
             Ok(_) => return Err(format!("server already listening at {}", path.display()).into()),
             Err(error)
@@ -436,8 +457,195 @@ pub(crate) fn create_listener(path: &Path) -> Result<(UnixListener, SocketGuard)
     Ok((listener, guard))
 }
 
+pub(crate) fn current_uid() -> u32 {
+    unsafe { libc::geteuid() }
+}
+
+pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32> {
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut credentials).cast(),
+            &raw mut length,
+        )
+    } == -1
+    {
+        return Err(io::Error::last_os_error().into());
+    }
+    if length as usize != std::mem::size_of::<libc::ucred>() {
+        return Err("unexpected Unix peer credential size".into());
+    }
+    Ok(credentials.uid)
+}
+
+pub(crate) fn process_start_identity() -> Result<u64> {
+    let stat = fs::read_to_string("/proc/self/stat")?;
+    let fields = stat.rsplit_once(')').ok_or("malformed /proc/self/stat")?.1;
+    fields
+        .split_whitespace()
+        .nth(19)
+        .ok_or_else(|| "missing process start identity".into())
+        .and_then(|value| value.parse::<u64>().map_err(Into::into))
+}
+
+pub(crate) fn endpoint_identity(path: &Path) -> Result<EndpointIdentity> {
+    let metadata = fs::symlink_metadata(path)?;
+    validate_object(path, &metadata, ObjectKind::Socket)?;
+    Ok(EndpointIdentity {
+        path: path.as_os_str().as_bytes().to_vec(),
+        object: object_identity(&metadata),
+    })
+}
+
+pub(crate) fn endpoint_matches(expected: &EndpointIdentity) -> bool {
+    endpoint_identity(Path::new(std::ffi::OsStr::from_bytes(&expected.path)))
+        .is_ok_and(|current| current == *expected)
+}
+
+pub(crate) struct RecordGuard {
+    path: PathBuf,
+    identity: Option<ObjectIdentity>,
+    contents: Vec<u8>,
+}
+
+impl RecordGuard {
+    pub(crate) fn publish(path: &Path, bytes: &[u8]) -> Result<Self> {
+        atomic_record_replace(path, bytes)?;
+        Ok(Self {
+            path: path.to_owned(),
+            identity: Some(record_identity(path)?),
+            contents: bytes.to_vec(),
+        })
+    }
+
+    pub(crate) fn identity(&self) -> Result<ObjectIdentity> {
+        let expected = self.identity.ok_or("management record is no longer live")?;
+        if record_identity(&self.path)? != expected {
+            return Err("management record identity changed".into());
+        }
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&self.path)?;
+        let metadata = file.metadata()?;
+        validate_object(&self.path, &metadata, ObjectKind::Regular)?;
+        let identity = object_identity(&metadata);
+        let mut contents = Vec::with_capacity(self.contents.len().saturating_add(1));
+        Read::by_ref(&mut file)
+            .take(self.contents.len().saturating_add(1) as u64)
+            .read_to_end(&mut contents)?;
+        if identity != expected
+            || contents != self.contents
+            || record_identity(&self.path)? != identity
+        {
+            return Err("management record identity changed".into());
+        }
+        Ok(identity)
+    }
+
+    pub(crate) fn replace_and_preserve(&mut self, bytes: &[u8]) -> Result {
+        self.identity()?;
+        atomic_record_replace(&self.path, bytes)?;
+        self.identity = None;
+        Ok(())
+    }
+}
+
+impl Drop for RecordGuard {
+    fn drop(&mut self) {
+        if self.identity().is_ok() {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn record_identity(path: &Path) -> Result<ObjectIdentity> {
+    let metadata = fs::symlink_metadata(path)?;
+    validate_object(path, &metadata, ObjectKind::Regular)?;
+    Ok(object_identity(&metadata))
+}
+
+fn existing_metadata(path: &Path) -> Result<Option<fs::Metadata>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn atomic_record_replace(path: &Path, bytes: &[u8]) -> Result {
+    validate_private_parent(path)?;
+    if let Some(metadata) = existing_metadata(path)? {
+        validate_object(path, &metadata, ObjectKind::Regular)?;
+    }
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(format!(
+        ".tmp.{}.{}",
+        std::process::id(),
+        NEXT_ARTIFACT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let temporary = PathBuf::from(temporary);
+    let result = (|| -> Result {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+        validate_object(
+            &temporary,
+            &fs::symlink_metadata(&temporary)?,
+            ObjectKind::Regular,
+        )?;
+        fs::rename(&temporary, path)?;
+        validate_object(path, &fs::symlink_metadata(path)?, ObjectKind::Regular)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[derive(Clone, Copy)]
+enum ObjectKind {
+    Socket,
+    Regular,
+}
+
+fn validate_object(path: &Path, metadata: &fs::Metadata, kind: ObjectKind) -> Result {
+    let type_matches = match kind {
+        ObjectKind::Socket => metadata.file_type().is_socket(),
+        ObjectKind::Regular => metadata.file_type().is_file(),
+    };
+    if !type_matches || metadata.uid() != current_uid() || metadata.mode() & 0o7777 != 0o600 {
+        return Err(format!(
+            "{} must be an exact user-owned 0600 {}",
+            path.display(),
+            match kind {
+                ObjectKind::Socket => "socket",
+                ObjectKind::Regular => "regular file",
+            }
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn object_identity(metadata: &fs::Metadata) -> ObjectIdentity {
+    ObjectIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    }
+}
+
 pub(crate) fn default_socket_path() -> Result<PathBuf> {
-    let euid = unsafe { libc::geteuid() };
+    let euid = current_uid();
     let directory = env::var_os("XDG_RUNTIME_DIR").map_or_else(
         || PathBuf::from(format!("/tmp/yazelix-orbit-{euid}")),
         |root| PathBuf::from(root).join("yazelix-orbit"),
@@ -445,8 +653,8 @@ pub(crate) fn default_socket_path() -> Result<PathBuf> {
     if !directory.exists() {
         fs::DirBuilder::new().mode(0o700).create(&directory)?;
     }
-    let metadata = fs::metadata(&directory)?;
-    if metadata.uid() != euid || metadata.mode() & 0o077 != 0 {
+    let metadata = fs::symlink_metadata(&directory)?;
+    if !is_private_directory(&metadata, euid) {
         return Err(format!("runtime directory {} is not private", directory.display()).into());
     }
     Ok(directory.join("orbit.sock"))
@@ -507,9 +715,9 @@ fn pollfd(fd: RawFd, events: libc::c_short) -> libc::pollfd {
 
 fn validate_private_parent(path: &Path) -> Result<&Path> {
     let parent = path.parent().ok_or("socket path has no parent")?;
-    let metadata = fs::metadata(parent)?;
-    let euid = unsafe { libc::geteuid() };
-    if !metadata.is_dir() || metadata.uid() != euid || metadata.mode() & 0o077 != 0 {
+    let metadata = fs::symlink_metadata(parent)?;
+    let euid = current_uid();
+    if !is_private_directory(&metadata, euid) {
         return Err(format!(
             "socket parent {} must be a user-owned 0700 directory",
             parent.display()
@@ -517,6 +725,10 @@ fn validate_private_parent(path: &Path) -> Result<&Path> {
         .into());
     }
     Ok(parent)
+}
+
+fn is_private_directory(metadata: &fs::Metadata, uid: u32) -> bool {
+    metadata.is_dir() && metadata.uid() == uid && metadata.mode() & 0o7777 == 0o700
 }
 
 fn set_fd_flags(fd: RawFd, status: libc::c_int) -> Result {
@@ -555,6 +767,27 @@ fn set_signal_handler(signals: &[libc::c_int], handler: usize) -> Result {
 mod tests {
     use super::*;
 
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(name: &str) -> Result<Self> {
+            let path = env::temp_dir().join(format!(
+                "orbit-platform-{name}-{}-{}",
+                std::process::id(),
+                NEXT_ARTIFACT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+            Ok(Self(path))
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn winsize_preserves_surface_pixels_beyond_the_cell_grid() {
         let size = SurfaceSize {
@@ -574,5 +807,82 @@ mod tests {
 
         assert_eq!((size.ws_col, size.ws_row), (100, 40));
         assert_eq!((size.ws_xpixel, size.ws_ypixel), (920, 740));
+    }
+
+    #[test]
+    fn management_artifacts_and_kernel_identity_fail_closed() -> Result {
+        let directory = TestDir::new("management")?;
+        let record_path = directory.0.join("orbit.record");
+        let record = RecordGuard::publish(&record_path, b"live")?;
+        let original = record.identity()?;
+        let metadata = fs::symlink_metadata(&record_path)?;
+        assert!(metadata.file_type().is_file());
+        assert_eq!(metadata.mode() & 0o7777, 0o600);
+        assert_eq!(metadata.uid(), current_uid());
+
+        fs::write(&record_path, b"truncated")?;
+        assert!(record.identity().is_err());
+        fs::write(&record_path, b"live")?;
+        assert_eq!(record.identity()?, original);
+
+        let fifo_path = directory.0.join("fifo-record");
+        let fifo = RecordGuard::publish(&fifo_path, b"live")?;
+        fs::remove_file(&fifo_path)?;
+        let fifo_name = std::ffi::CString::new(fifo_path.as_os_str().as_bytes())?;
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+        assert!(fifo.identity().is_err());
+        drop(fifo);
+        assert!(fs::symlink_metadata(&fifo_path)?.file_type().is_fifo());
+        fs::remove_file(&fifo_path)?;
+
+        let replacement = directory.0.join("replacement");
+        fs::write(&replacement, b"replacement")?;
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o600))?;
+        fs::rename(&replacement, &record_path)?;
+        assert_ne!(record_identity(&record_path)?, original);
+        assert!(record.identity().is_err());
+        drop(record);
+        assert_eq!(fs::read(&record_path)?, b"replacement");
+
+        fs::set_permissions(&record_path, fs::Permissions::from_mode(0o4600))?;
+        assert_eq!(fs::symlink_metadata(&record_path)?.mode() & 0o7777, 0o4600);
+        assert!(RecordGuard::publish(&record_path, b"wrong mode").is_err());
+        fs::remove_file(&record_path)?;
+        std::os::unix::fs::symlink("target", &record_path)?;
+        assert!(RecordGuard::publish(&record_path, b"symlink").is_err());
+        fs::remove_file(&record_path)?;
+        fs::create_dir(&record_path)?;
+        assert!(RecordGuard::publish(&record_path, b"directory").is_err());
+        fs::remove_dir(&record_path)?;
+
+        let wrong_mode = directory.0.join("wrong-mode");
+        fs::create_dir(&wrong_mode)?;
+        fs::set_permissions(&wrong_mode, fs::Permissions::from_mode(0o1700))?;
+        assert_eq!(fs::symlink_metadata(&wrong_mode)?.mode() & 0o7777, 0o1700);
+        assert!(RecordGuard::publish(&wrong_mode.join("record"), b"mode").is_err());
+        let private = directory.0.join("private");
+        fs::create_dir(&private)?;
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o700))?;
+        let linked = directory.0.join("linked");
+        std::os::unix::fs::symlink(&private, &linked)?;
+        assert!(RecordGuard::publish(&linked.join("record"), b"link").is_err());
+
+        let socket_path = directory.0.join("orbit.sock");
+        let (listener, guard) = create_listener(&socket_path)?;
+        let endpoint = endpoint_identity(&socket_path)?;
+        assert_eq!(endpoint.path, socket_path.as_os_str().as_bytes());
+        let client = UnixStream::connect(&socket_path)?;
+        let (server, _) = listener.accept()?;
+        assert_eq!(peer_uid(&server)?, current_uid());
+        assert_eq!(peer_uid(&client)?, current_uid());
+        assert!(process_start_identity()? > 0);
+        drop((server, client, listener, guard));
+
+        let stale = UnixListener::bind(&socket_path)?;
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o640))?;
+        drop(stale);
+        assert!(create_listener(&socket_path).is_err());
+        assert!(socket_path.exists(), "untrusted stale socket was removed");
+        Ok(())
     }
 }

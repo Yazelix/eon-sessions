@@ -9,6 +9,7 @@
 
 use std::{fmt, str};
 
+pub mod management;
 pub mod session;
 
 /// Maximum decoded cell count accepted by ORBF v1.

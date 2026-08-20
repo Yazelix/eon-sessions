@@ -502,7 +502,7 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             let thread = thread::spawn(move || {
-                assert_eq!(crate::run_server(&socket, &command, None).unwrap(), 0);
+                assert_eq!(crate::run_server(&socket, &command, None, None).unwrap(), 0);
             });
             Self {
                 thread: Some(thread),
