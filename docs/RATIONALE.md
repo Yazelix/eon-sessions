@@ -122,8 +122,10 @@ families, and adds revision-bound selection and bounded copy. The accepted ORBS
 v3 producer retains those values and carries bounded normalized clipboard
 writes as ordered effects outside replaceable presentation frames. Orbit adds
 revision-bound adjacent-row previews and typed vertical-wheel outcomes in ORBS
-v4. Venus pins exact ORBS v3 proof
-`3ee7c80005f3d2bbe81e539799327803716f6174` until it adopts v4.
+v4. Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` pins exact ORBS v4 proof
+`7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`; Eon acceptance
+`0bf0b165d06b4a8162be497011070f61f6c2000a` composes the exact accepted
+Orbit and Venus sources.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
 row contents, and stable anchors. Venus may own ephemeral pointer gestures over

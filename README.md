@@ -21,9 +21,11 @@ consumer boundary is proved at
 The same package owns canonical ORBS v4 at
 `9c0617a97612cdd045ed67b5cd7c87244eb888e6`, including attachment, frames,
 lifecycle, semantic input, selection and copy, terminal clipboard writes,
-revision-bound adjacent-row previews, and typed vertical-wheel outcomes. Known
-external consumers remain on their accepted revisions until they adopt v4.
-Orbit's server and diagnostic client use only the canonical values.
+revision-bound adjacent-row previews, and typed vertical-wheel outcomes. Venus
+consumes its exact accepted proof at
+`7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`; Eon and Eonova compose that v4
+boundary through Orbit's accepted management owner. Orbit's server and
+diagnostic client use only the canonical values.
 Orbit resolves selection from the exact complete-frame revision and current
 viewport, publishes selected cells through normal frames, and returns only
 bounded plain text frozen at Finish.
@@ -202,9 +204,10 @@ UID- and identity-validated management lease. Lease loss is non-destructive;
 the surface carries only acquire, status, and explicit stop. Natural exit or a
 successful stop atomically replaces the live record with a typed terminal
 tombstone and removes only the exact sockets. Messages and records are limited
-to 4 KiB, identities to 128 UTF-8 bytes, and negotiation to one second. Eon
-launch and recovery consumption remains separate work; this mode does not
-promise logout, reboot, machine-restart, topology, or same-UID isolation.
+to 4 KiB, identities to 128 UTF-8 bytes, and negotiation to one second. Eon and
+Eonova consume this owner for accepted same-boot recovery and owner-routed
+Stop; this mode does not promise logout, reboot, machine-restart, topology, or
+same-UID isolation.
 
 On Linux, Orbit requires a user-owned writable cgroup-v2 parent with
 `cgroup.kill`. Before PTY exec, the child enters one per-Session cgroup while
@@ -267,16 +270,17 @@ terminal state. The initial contract covers surviving client exits and
 disconnections while Orbit continues running; it does not cover Orbit or
 machine restarts.
 
-Venus source proof `2d3498258920736eb1bdae2b8869b6547b9735d4` consumes canonical
-ORBF v1 over ORBS v3 at exact Orbit proof
-`3ee7c80005f3d2bbe81e539799327803716f6174`. Eon packages that pair at source
-`0e25ebc2311d7e41edf90c940f8211dd5839bb83`, and Eonova
-`4fda9b67b0faa33561624633229135e5e2d579ea` accepts native x86_64 Linux
-Wayland delivery to the primary selection. Ordinary clipboard delivery, Wayland
-without data-control, broader compositors, and macOS remain unproved. Orbit's
-ORBS v4 producer adds bounded adjacent-row previews and typed vertical-wheel
-outcomes. Venus and Eon/Eonova require exact v4 adoption; no adapter, feature
-probe, dual-version support, or compatibility window exists.
+Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` consumes canonical ORBF v1
+over ORBS v4 at exact Orbit proof
+`7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`. Eon acceptance
+`0bf0b165d06b4a8162be497011070f61f6c2000a` composes exact Orbit source
+`86aa130629c09dce61d0f232150298656fa5cef4` and that Venus source; Eonova
+source `d8a8729f442f3d535b30fd22ac8dc7b6da4626dd` ships exact Eon
+`ced9e4ae11ed21a0f05d50cd470491adffa73b54`. Accepted x86_64 Linux evidence
+covers same-boot recovery, owner-routed Stop, and native Wayland delivery to the
+primary selection. Ordinary clipboard delivery, Wayland without data-control,
+broader compositors, and macOS remain unproved. No adapter, feature probe,
+dual-version support, or compatibility window exists.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
