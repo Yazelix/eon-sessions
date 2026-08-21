@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `2518512758c7848bbd87f907b105c8bcf0fc4e1b` owner proof hardens
+  `ORB-C13`: an optional exact empty record claim serializes the Ready boundary.
+  A launcher-held claim prevents publication; an Orbit-held claim is marked
+  before Live replacement so later record removal cannot restore pre-Ready
+  local-child authority. Eon and Eonova adopt the owner revision separately.
 - Prove `ORB-C13` through exact Eon consumer acceptance at
   `0bf0b165d06b4a8162be497011070f61f6c2000a`: same-boot supervisor loss,
   multi-Session and EonTerm recovery, contending replacements, and owner-routed
