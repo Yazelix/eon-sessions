@@ -81,6 +81,21 @@ Mars, Mars Next, or another project by default.
   scrollbar state unchanged. Orbit therefore uses the existing read-only grid
   API and rejects temporary viewport mutation, a new dependency, and a second
   row schema.
+- [Ghostty at `d760ee96e546`](https://github.com/ghostty-org/ghostty/tree/d760ee96e54657416eb427b793c7e839f003df7d)
+  is conditional evidence when a slice proposes WebAssembly, terminal-model
+  reconstruction, or checkpoint-plus-tail replication. Its
+  [snapshot API](https://github.com/ghostty-org/ghostty/blob/d760ee96e54657416eb427b793c7e839f003df7d/include/ghostty/vt/snapshot.h)
+  encodes a CRC-protected renderable prefix, unfinished parser continuation,
+  and incrementally restorable history. Snapshot format v1 has no binary-
+  compatibility guarantee and omits Kitty image and placement state. The
+  [WebAssembly example](https://github.com/ghostty-org/ghostty/tree/d760ee96e54657416eb427b793c7e839f003df7d/example/wasm-vt)
+  exposes the low-level C ABI but no renderer, PTY, transport, authentication,
+  font, or accessibility owner. Signed optimized artifacts come from a moving
+  [nightly workflow](https://github.com/ghostty-org/ghostty/blob/d760ee96e54657416eb427b793c7e839f003df7d/.github/workflows/release-tip.yml),
+  and upstream still describes API signatures as in flux. Preserve canonical
+  structured frames and Orbit's sole authority by default. A snapshot replica
+  requires a separately accepted replication contract after measured need;
+  terminal-model restoration never implies PTY or process survival.
 - [WezTerm at `577474d89ee6`](https://github.com/wezterm/wezterm/tree/577474d89ee61aef4a48145cdec82a638d874751)
   is the closest public structured-state replication comparison. Its
   [protocol types](https://github.com/wezterm/wezterm/blob/577474d89ee61aef4a48145cdec82a638d874751/codec/src/lib.rs),
