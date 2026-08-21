@@ -200,7 +200,10 @@ The private same-boot management owner is enabled with
 `serve SOCKET --management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
 It derives `SOCKET.management` and `SOCKET.record`, publishes the live record
 only after the PTY, terminal owner, and both sockets are usable, and permits one
-UID- and identity-validated management lease. Lease loss is non-destructive;
+UID- and identity-validated management lease. A launcher may retain an empty
+owned `SOCKET.record` inode. Orbit either wins its lock, marks it, and replaces
+the pathname with Live, or fails startup without publishing when the launcher
+already holds the lock. Lease loss is non-destructive;
 the surface carries only acquire, status, and explicit stop. Natural exit or a
 successful stop atomically replaces the live record with a typed terminal
 tombstone and removes only the exact sockets. Messages and records are limited
@@ -462,10 +465,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 11,447 |
+| Product Rust source and tests | 11,534 |
 | Governance Rust tool and tests | 577 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **12,024** |
-| **Total owned implementation source** | **12,731** |
+| **Total owned Rust** | **12,111** |
+| **Total owned implementation source** | **12,818** |

@@ -514,6 +514,14 @@ pub(crate) struct RecordGuard {
 
 impl RecordGuard {
     pub(crate) fn publish(path: &Path, bytes: &[u8]) -> Result<Self> {
+        let mut ready = ready_claim(path)?;
+        if let Some((claim, expected)) = &mut ready {
+            claim.try_lock()?;
+            if claim.metadata()?.len() != 0 || record_identity(path)? != *expected {
+                return Err("management Ready claim changed before publication".into());
+            }
+            claim.write_all(b"1")?;
+        }
         atomic_record_replace(path, bytes)?;
         Ok(Self {
             path: path.to_owned(),
@@ -567,6 +575,30 @@ fn record_identity(path: &Path) -> Result<ObjectIdentity> {
     let metadata = fs::symlink_metadata(path)?;
     validate_object(path, &metadata, ObjectKind::Regular)?;
     Ok(object_identity(&metadata))
+}
+
+fn ready_claim(path: &Path) -> Result<Option<(File, ObjectIdentity)>> {
+    validate_private_parent(path)?;
+    let file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = file.metadata()?;
+    validate_object(path, &metadata, ObjectKind::Regular)?;
+    if metadata.len() != 0 {
+        return Ok(None);
+    }
+    let identity = object_identity(&metadata);
+    if record_identity(path)? != identity {
+        return Err("management Ready claim changed while it was opened".into());
+    }
+    Ok(Some((file, identity)))
 }
 
 fn existing_metadata(path: &Path) -> Result<Option<fs::Metadata>> {
@@ -714,12 +746,12 @@ fn pollfd(fd: RawFd, events: libc::c_short) -> libc::pollfd {
 }
 
 fn validate_private_parent(path: &Path) -> Result<&Path> {
-    let parent = path.parent().ok_or("socket path has no parent")?;
+    let parent = path.parent().ok_or("artifact path has no parent")?;
     let metadata = fs::symlink_metadata(parent)?;
     let euid = current_uid();
     if !is_private_directory(&metadata, euid) {
         return Err(format!(
-            "socket parent {} must be a user-owned 0700 directory",
+            "artifact parent {} must be a user-owned 0700 directory",
             parent.display()
         )
         .into());
@@ -810,6 +842,57 @@ mod tests {
     }
 
     #[test]
+    fn management_ready_claim_has_one_winner_and_survives_record_removal() -> Result {
+        let directory = TestDir::new("ready-claim")?;
+        let record_path = directory.0.join("orbit.record");
+        let claim = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&record_path)?;
+        claim.lock()?;
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(0);
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let contested_path = record_path.clone();
+        let publisher = thread::spawn(move || {
+            started_tx.send(()).expect("test receiver remains live");
+            let result = match RecordGuard::publish(&contested_path, b"live") {
+                Ok(_) => Err("held Ready claim did not win".to_owned()),
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<TryLockError>(),
+                        Some(TryLockError::WouldBlock)
+                    ) =>
+                {
+                    Ok(())
+                }
+                Err(error) => Err(format!("unexpected Ready claim error: {error}")),
+            };
+            let _ = finished_tx.send(result);
+        });
+        started_rx.recv()?;
+        let contested = finished_rx.recv_timeout(Duration::from_secs(5));
+        claim.unlock()?;
+        publisher
+            .join()
+            .map_err(|_| "Ready claim publisher panicked")?;
+        let contested = contested
+            .map_err(|error| format!("Ready claim publication did not fail promptly: {error}"))?;
+        contested?;
+        assert!(fs::read(&record_path)?.is_empty());
+        let record = RecordGuard::publish(&record_path, b"live")?;
+        claim.try_lock()?;
+        let live_path = record.path.clone();
+        assert_eq!(fs::read(&live_path)?, b"live");
+        drop(record);
+        assert!(!live_path.exists());
+        assert_ne!(claim.metadata()?.len(), 0);
+        Ok(())
+    }
+
+    #[test]
     fn management_artifacts_and_kernel_identity_fail_closed() -> Result {
         let directory = TestDir::new("management")?;
         let record_path = directory.0.join("orbit.record");
@@ -863,9 +946,13 @@ mod tests {
         let private = directory.0.join("private");
         fs::create_dir(&private)?;
         fs::set_permissions(&private, fs::Permissions::from_mode(0o700))?;
+        let target_record = private.join("record");
+        fs::write(&target_record, b"")?;
+        fs::set_permissions(&target_record, fs::Permissions::from_mode(0o600))?;
         let linked = directory.0.join("linked");
         std::os::unix::fs::symlink(&private, &linked)?;
         assert!(RecordGuard::publish(&linked.join("record"), b"link").is_err());
+        assert!(fs::read(&target_record)?.is_empty());
 
         let socket_path = directory.0.join("orbit.sock");
         let (listener, guard) = create_listener(&socket_path)?;
