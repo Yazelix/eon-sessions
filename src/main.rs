@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 
+mod attachment;
 mod management;
 mod platform;
 mod presentation;
@@ -23,7 +24,7 @@ use libghostty_vt::{
     terminal::{ClipboardWrite, ClipboardWriteError, Mode, Point, PointCoordinate, ScrollViewport},
 };
 use orbit_protocol::session::{
-    self, ClientMessage, ClipboardLocation, Failure, FailureCode, FocusEvent, KeyAction, KeyEvent,
+    self, ClientMessage, ClipboardLocation, FailureCode, FocusEvent, KeyAction, KeyEvent,
     Modifiers, MouseAction, MouseButton, PhysicalKey, PreviewOutcome, SelectionAction,
     ServerMessage, SurfaceSize, VerticalDirection, VerticalPreview, ViewportCell, WheelOutcome,
 };
@@ -33,21 +34,21 @@ use std::{
     env,
     error::Error,
     io::{self, BufRead, BufReader, Read, Write},
-    os::unix::net::{UnixListener, UnixStream},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     rc::Rc,
     time::{Duration, Instant},
 };
 
+use attachment::{Client, Incoming};
 use platform::{Pty, PtyIo};
-use presentation::{Extractor, OutputQueue, is_disconnect};
+use presentation::Extractor;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
 const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 const MAX_EXIT_PTY_READS: usize = 4;
 const MAX_PENDING_CLIPBOARD_WRITES: usize = 64;
-const CLIENT_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
 const SYNCHRONIZED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(1);
 const ANSI_PALETTE_ARGUMENT: &str = "--ansi-palette-v1";
 
@@ -63,15 +64,6 @@ const INITIAL_SIZE: SurfaceSize = SurfaceSize {
     padding_left: 0,
     padding_right: 0,
 };
-
-struct Client {
-    stream: UnixStream,
-    input: Vec<u8>,
-    output: OutputQueue,
-    close_after_flush: bool,
-    negotiation_deadline: Option<Instant>,
-    initial_frame_pending: bool,
-}
 
 struct Presentation {
     extractor: Extractor,
@@ -115,9 +107,7 @@ impl Presentation {
             return Ok(true);
         }
         self.synchronized_until = None;
-        let Some(client) = client
-            .filter(|client| client.negotiation_deadline.is_none() && !client.close_after_flush)
-        else {
+        let Some(client) = client.filter(|client| client.accepts_output()) else {
             return Ok(true);
         };
         let frame = match self.extractor.frame(self.revision, terminal) {
@@ -127,15 +117,7 @@ impl Presentation {
                 return Ok(false);
             }
         };
-        let queued = if client.initial_frame_pending {
-            client.output.push_initial_frame(frame)
-        } else {
-            client.output.push_frame(frame)
-        }?;
-        if queued {
-            client.initial_frame_pending = false;
-        }
-        Ok(queued)
+        client.push_frame(frame)
     }
 
     fn release_if_expired(
@@ -243,23 +225,6 @@ fn raw_clipboard_write<'a>(write: &'a ClipboardWrite<'_>) -> &'a ffi::ClipboardW
     let raw: *const ffi::ClipboardWrite = unsafe { std::mem::transmute(write.clone()) };
     // SAFETY: The callback owns a valid request for its full duration.
     unsafe { &*raw }
-}
-
-impl Client {
-    fn close_when_flushed(&mut self) {
-        self.input = Vec::new();
-        self.close_after_flush = true;
-    }
-
-    fn finish_session(&mut self, code: i32) -> Result {
-        if self.negotiation_deadline.is_none() {
-            if !self.close_after_flush {
-                let _ = self.output.push_message(&ServerMessage::Exited { code })?;
-            }
-            let _ = self.output.flush(&mut self.stream);
-        }
-        Ok(())
-    }
 }
 
 fn main() {
@@ -404,9 +369,7 @@ fn run_server(
     let mut selection = SelectionState::default();
     let mut pty_open = true;
     loop {
-        clipboard_writes.borrow_mut().enabled = client.as_ref().is_some_and(|client| {
-            client.negotiation_deadline.is_none() && !client.close_after_flush
-        });
+        clipboard_writes.borrow_mut().enabled = client.as_ref().is_some_and(Client::accepts_output);
         if let Some(owner) = &mut management_owner {
             owner.release_expired(Instant::now());
         }
@@ -444,8 +407,7 @@ fn run_server(
         }
         if client
             .as_ref()
-            .and_then(|client| client.negotiation_deadline)
-            .is_some_and(|deadline| Instant::now() >= deadline)
+            .is_some_and(|client| client.is_expired(Instant::now()))
         {
             disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
         }
@@ -457,10 +419,7 @@ fn run_server(
             &listener,
             management_owner.as_ref().map(management::Owner::listener),
             pty_open.then(|| (&pty, !writes.borrow().is_empty())),
-            client
-                .as_ref()
-                .filter(|client| !client.close_after_flush)
-                .map(|client| &client.stream),
+            client.as_ref().and_then(Client::poll_stream),
             management_owner
                 .as_ref()
                 .and_then(management::Owner::client_readiness),
@@ -468,7 +427,7 @@ fn run_server(
         let pty_was_open = pty_open;
 
         if readiness.listener {
-            accept_clients(&listener, &mut client)?;
+            attachment::accept(&listener, &mut client)?;
         }
         if readiness.management_listener
             && let Some(owner) = &mut management_owner
@@ -530,12 +489,10 @@ fn run_server(
         if let Some(owner) = &mut management_owner {
             owner.flush()?;
         }
-        if let Some(active) = &mut client {
-            let disconnect = !active.output.flush(&mut active.stream)?
-                || active.close_after_flush && active.output.is_empty();
-            if disconnect {
-                disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
-            }
+        if let Some(active) = &mut client
+            && !active.flush()?
+        {
+            disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
         }
     }
 }
@@ -575,10 +532,7 @@ fn publish_clipboard_writes(
     pending: &RefCell<PendingClipboardWrites>,
 ) -> Result<bool> {
     let mut pending = pending.borrow_mut();
-    let Some(client) = active
-        .as_mut()
-        .filter(|client| client.negotiation_deadline.is_none() && !client.close_after_flush)
-    else {
+    let Some(client) = active.as_mut().filter(|client| client.accepts_output()) else {
         pending.clear();
         return Ok(true);
     };
@@ -587,10 +541,7 @@ fn publish_clipboard_writes(
         return Ok(false);
     }
     while let Some((location, text)) = pending.writes.pop_front() {
-        if !client
-            .output
-            .push_message(&ServerMessage::ClipboardWrite { location, text })?
-        {
+        if !client.push_message(&ServerMessage::ClipboardWrite { location, text })? {
             pending.clear();
             return Ok(false);
         }
@@ -684,56 +635,34 @@ fn read_client(
     presentation: &mut Presentation,
     selection: &mut SelectionState,
 ) -> Result<bool> {
-    if client.close_after_flush {
-        return Ok(true);
+    if !client.read_ready()? {
+        return Ok(false);
     }
-    let mut bytes = [0; 1024];
-    let read = match client.stream.read(&mut bytes) {
-        Ok(0) => return Ok(false),
-        Ok(read) => read,
-        Err(error) if error.kind() == io::ErrorKind::Interrupted => return Ok(true),
-        Err(error) if is_disconnect(&error) => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    client.input.extend_from_slice(&bytes[..read]);
     loop {
-        let length = match session::client_message_len(&client.input) {
-            Ok(Some(length)) if client.input.len() >= length => length,
-            Ok(_) => return Ok(true),
-            Err(session::Error::UnsupportedVersion { .. }) => return Ok(false),
-            Err(error) => {
-                if !queue_failure(client, FailureCode::Protocol, error.to_string())? {
+        match client.next_incoming()? {
+            Incoming::Attached => {
+                if !presentation.publish(Some(client), terminal)? {
                     return Ok(false);
                 }
-                client.close_when_flushed();
-                return Ok(true);
             }
-        };
-        let message = match session::decode_client_message(&client.input[..length]) {
-            Ok(message) => message,
-            Err(error) => {
-                if !queue_failure(client, FailureCode::Protocol, error.to_string())? {
+            Incoming::Message(message) => {
+                if !handle_client_message(
+                    client,
+                    message,
+                    terminal,
+                    pty,
+                    size,
+                    writes,
+                    presentation,
+                    selection,
+                )? {
                     return Ok(false);
                 }
-                client.close_when_flushed();
-                return Ok(true);
             }
-        };
-        drop(client.input.drain(..length));
-        let keep = handle_client_message(
-            client,
-            message,
-            terminal,
-            pty,
-            size,
-            writes,
-            presentation,
-            selection,
-        )?;
-        if !keep {
-            return Ok(false);
+            Incoming::Pending => return Ok(true),
+            Incoming::Disconnect => return Ok(false),
         }
-        if client.close_after_flush {
+        if client.is_closing() {
             return Ok(true);
         }
     }
@@ -750,39 +679,8 @@ fn handle_client_message(
     presentation: &mut Presentation,
     selection: &mut SelectionState,
 ) -> Result<bool> {
-    if client.negotiation_deadline.is_some() {
-        return match message {
-            ClientMessage::Hello => {
-                client.negotiation_deadline = None;
-                if !client.output.push_message(&ServerMessage::Attached)? {
-                    return Ok(false);
-                }
-                client.initial_frame_pending = true;
-                presentation.publish(Some(client), terminal)
-            }
-            _ => {
-                let queued = queue_failure(
-                    client,
-                    FailureCode::Protocol,
-                    "first client message must be Hello".into(),
-                )?;
-                client.close_when_flushed();
-                Ok(queued)
-            }
-        };
-    }
-
-    if matches!(&message, ClientMessage::Hello) {
-        let queued = queue_failure(
-            client,
-            FailureCode::Protocol,
-            "Hello may only be sent once".into(),
-        )?;
-        client.close_when_flushed();
-        return Ok(queued);
-    }
     let Some(pty) = pty else {
-        return queue_failure(client, FailureCode::Terminal, "PTY is closed".into());
+        return client.fail(FailureCode::Terminal, "PTY is closed".into());
     };
     if let ClientMessage::PreviewVertical {
         frame_revision,
@@ -806,7 +704,7 @@ fn handle_client_message(
             )?;
             *size = surface;
             presentation.advance()?;
-            if !client.output.push_message(&ServerMessage::Accepted)? {
+            if !client.push_message(&ServerMessage::Accepted)? {
                 return Ok(false);
             }
             return presentation.publish(Some(client), terminal);
@@ -831,15 +729,11 @@ fn handle_client_message(
     let encoded = match encode_input(terminal, *size, message) {
         Ok(encoded) => encoded,
         Err(error) => {
-            return queue_failure(client, FailureCode::Terminal, error.to_string());
+            return client.fail(FailureCode::Terminal, error.to_string());
         }
     };
     if !queue_pty_write(&mut writes.borrow_mut(), &encoded) {
-        let queued = queue_failure(
-            client,
-            FailureCode::Terminal,
-            "PTY input queue is full".into(),
-        )?;
+        let queued = client.fail(FailureCode::Terminal, "PTY input queue is full".into())?;
         client.close_when_flushed();
         return Ok(queued);
     }
@@ -857,7 +751,7 @@ fn handle_client_message(
         } else {
             false
         };
-    if !client.output.push_message(&ServerMessage::Accepted)? {
+    if !client.push_message(&ServerMessage::Accepted)? {
         return Ok(false);
     }
     if returned_live {
@@ -887,8 +781,7 @@ fn handle_vertical_preview(
     presentation: &Presentation,
 ) -> Result<bool> {
     if frame_revision != presentation.revision {
-        return queue_failure(
-            client,
+        return client.fail(
             FailureCode::InvalidInput,
             "preview frame revision is stale".into(),
         );
@@ -897,11 +790,7 @@ fn handle_vertical_preview(
         PreviewOutcome::TerminalRouted
     } else {
         if terminal.mode(Mode::SYNC_OUTPUT)? {
-            return queue_failure(
-                client,
-                FailureCode::Terminal,
-                "presentation is synchronized".into(),
-            );
+            return client.fail(FailureCode::Terminal, "presentation is synchronized".into());
         }
         let scrollbar = terminal.scrollbar()?;
         let target = match direction {
@@ -919,7 +808,7 @@ fn handle_vertical_preview(
             {
                 Ok(row) => Some(row),
                 Err(error) => {
-                    return queue_failure(client, FailureCode::Terminal, error.to_string());
+                    return client.fail(FailureCode::Terminal, error.to_string());
                 }
             },
             None => None,
@@ -930,13 +819,11 @@ fn handle_vertical_preview(
             row,
         }
     };
-    client
-        .output
-        .push_message(&ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision,
-            direction,
-            outcome,
-        }))
+    client.push_message(&ServerMessage::VerticalPreview(VerticalPreview {
+        frame_revision,
+        direction,
+        outcome,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -970,56 +857,45 @@ fn handle_vertical_wheel(
         let encoded = match encode_input(terminal, size, routed) {
             Ok(encoded) if !encoded.is_empty() => encoded,
             Ok(_) => {
-                return queue_failure(
-                    client,
+                return client.fail(
                     FailureCode::InvalidInput,
                     "wheel is outside the terminal grid".into(),
                 );
             }
             Err(error) => {
-                return queue_failure(client, FailureCode::Terminal, error.to_string());
+                return client.fail(FailureCode::Terminal, error.to_string());
             }
         };
         let outcome = ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted);
-        if !client.output.can_push_message(&outcome)? {
-            return queue_failure(
-                client,
+        if !client.can_push_message(&outcome)? {
+            return client.fail(
                 FailureCode::Terminal,
                 "client output queue cannot admit wheel outcome".into(),
             );
         }
         if !queue_pty_write(&mut writes.borrow_mut(), &encoded) {
-            let queued = queue_failure(
-                client,
-                FailureCode::Terminal,
-                "PTY input queue is full".into(),
-            )?;
+            let queued = client.fail(FailureCode::Terminal, "PTY input queue is full".into())?;
             client.close_when_flushed();
             return Ok(queued);
         }
-        if !client.output.push_message(&outcome)? {
+        if !client.push_message(&outcome)? {
             return Err("wheel outcome admission contradicted its preflight".into());
         }
         return Ok(true);
     }
 
     if terminal.mode(Mode::SYNC_OUTPUT)? {
-        return queue_failure(
-            client,
-            FailureCode::Terminal,
-            "presentation is synchronized".into(),
-        );
+        return client.fail(FailureCode::Terminal, "presentation is synchronized".into());
     }
-    if !client.output.can_push_frame_message() {
-        return queue_failure(
-            client,
+    if !client.can_push_frame_message() {
+        return client.fail(
             FailureCode::Terminal,
             "client output queue cannot admit wheel outcome".into(),
         );
     }
     let next = match next_revision(presentation.revision) {
         Ok(next) => next,
-        Err(error) => return queue_failure(client, FailureCode::Terminal, error.to_string()),
+        Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
     };
     let before = terminal.scrollbar()?.offset;
     clear_selection(terminal, selection, false)?;
@@ -1036,13 +912,10 @@ fn handle_vertical_wheel(
     presentation.revision = next;
     presentation.synchronized_until = None;
     let frame = presentation.extractor.frame(next, terminal)?;
-    if !client
-        .output
-        .push_message(&ServerMessage::WheelOutcome(WheelOutcome::Viewport {
-            applied_rows,
-            frame: Box::new(frame),
-        }))?
-    {
+    if !client.push_message(&ServerMessage::WheelOutcome(WheelOutcome::Viewport {
+        applied_rows,
+        frame: Box::new(frame),
+    }))? {
         return Err("wheel outcome admission contradicted its preflight".into());
     }
     Ok(true)
@@ -1062,8 +935,7 @@ fn handle_selection(
             cell,
         } => {
             if frame_revision != presentation.revision {
-                return queue_failure(
-                    client,
+                return client.fail(
                     FailureCode::InvalidInput,
                     "selection frame revision is stale".into(),
                 );
@@ -1072,8 +944,7 @@ fn handle_selection(
         }
         SelectionAction::Update { cell } => {
             let Some(anchor) = state.anchor else {
-                return queue_failure(
-                    client,
+                return client.fail(
                     FailureCode::InvalidInput,
                     "selection update has no active selection".into(),
                 );
@@ -1082,8 +953,7 @@ fn handle_selection(
         }
         SelectionAction::Finish { cell } => {
             let Some(anchor) = state.anchor else {
-                return queue_failure(
-                    client,
+                return client.fail(
                     FailureCode::InvalidInput,
                     "selection finish has no active selection".into(),
                 );
@@ -1092,11 +962,8 @@ fn handle_selection(
         }
         SelectionAction::Copy => {
             return match &state.copied {
-                Some(text) => client
-                    .output
-                    .push_message(&ServerMessage::CopiedText(text.clone())),
-                None => queue_failure(
-                    client,
+                Some(text) => client.push_message(&ServerMessage::CopiedText(text.clone())),
+                None => client.fail(
                     FailureCode::InvalidInput,
                     "no finished selection to copy".into(),
                 ),
@@ -1104,40 +971,38 @@ fn handle_selection(
         }
     };
     if cell.x >= size.cols || cell.y >= size.rows {
-        return queue_failure(
-            client,
+        return client.fail(
             FailureCode::InvalidInput,
             "selection cell is outside the current viewport".into(),
         );
     }
-    if !client.output.can_push_result_frame() {
-        return queue_failure(
-            client,
+    if !client.can_push_result_frame() {
+        return client.fail(
             FailureCode::Terminal,
             "client output queue cannot admit selection frame".into(),
         );
     }
     let next = match next_revision(presentation.revision) {
         Ok(next) => next,
-        Err(error) => return queue_failure(client, FailureCode::Terminal, error.to_string()),
+        Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
     };
 
     let selected = match viewport_selection(terminal, anchor, cell) {
         Ok(selected) => selected,
-        Err(error) => return queue_failure(client, FailureCode::Terminal, error.to_string()),
+        Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
     };
     let copied = if finish {
         match format_selection(terminal, &selected) {
             Ok(text) => Some(text),
             Err(error) => {
-                return queue_failure(client, FailureCode::Terminal, error.to_string());
+                return client.fail(FailureCode::Terminal, error.to_string());
             }
         }
     } else {
         None
     };
     if let Err(error) = terminal.set_selection(Some(&selected)) {
-        return queue_failure(client, FailureCode::Terminal, error.to_string());
+        return client.fail(FailureCode::Terminal, error.to_string());
     }
 
     state.anchor = (!finish).then_some(anchor);
@@ -1146,7 +1011,7 @@ fn handle_selection(
     }
     state.visible = true;
     presentation.revision = next;
-    if !client.output.push_message(&ServerMessage::Accepted)? {
+    if !client.push_message(&ServerMessage::Accepted)? {
         return Ok(false);
     }
     presentation.publish(Some(client), terminal)
@@ -1216,15 +1081,6 @@ fn apply_pty_output(
     clear_selection(terminal, state, false)?;
     terminal.vt_write(bytes);
     Ok(())
-}
-
-fn queue_failure(client: &mut Client, code: FailureCode, mut detail: String) -> Result<bool> {
-    while detail.len() > session::MAX_FAILURE_BYTES {
-        detail.pop();
-    }
-    client
-        .output
-        .push_message(&ServerMessage::Failure(Failure { code, detail }))
 }
 
 fn encode_input(
@@ -1396,31 +1252,6 @@ fn flush_pty(pty: &mut Pty, writes: &mut VecDeque<u8>) -> Result<bool> {
     Ok(true)
 }
 
-fn accept_clients(listener: &UnixListener, active: &mut Option<Client>) -> Result {
-    loop {
-        match listener.accept() {
-            Ok((mut stream, _)) if active.is_some() => {
-                let busy = session::encode_server_message(&ServerMessage::Busy)?;
-                let _ = stream.write_all(&busy);
-            }
-            Ok((stream, _)) => {
-                stream.set_nonblocking(true)?;
-                *active = Some(Client {
-                    stream,
-                    input: Vec::new(),
-                    output: OutputQueue::default(),
-                    close_after_flush: false,
-                    negotiation_deadline: Some(Instant::now() + CLIENT_NEGOTIATION_TIMEOUT),
-                    initial_frame_pending: false,
-                });
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error.into()),
-        }
-    }
-}
-
 fn next_revision(revision: u64) -> Result<u64> {
     revision
         .checked_add(1)
@@ -1443,6 +1274,7 @@ fn disconnect_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbit_protocol::session::Failure;
     use std::{thread, time::Instant};
 
     const TEST_ANSI_PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
@@ -1538,19 +1370,7 @@ mod tests {
     }
 
     fn attached_client() -> Result<(Client, UnixStream)> {
-        let (stream, peer) = UnixStream::pair()?;
-        stream.set_nonblocking(true)?;
-        Ok((
-            Client {
-                stream,
-                input: Vec::new(),
-                output: OutputQueue::default(),
-                close_after_flush: false,
-                negotiation_deadline: None,
-                initial_frame_pending: false,
-            },
-            peer,
-        ))
+        Client::test_pair(None)
     }
 
     fn closing_client() -> Result<(Client, UnixStream, Vec<u8>)> {
@@ -1560,7 +1380,7 @@ mod tests {
             detail: "terminal".into(),
         });
         let expected = session::encode_server_message(&failure)?;
-        assert!(client.output.push_message(&failure)?);
+        assert!(client.push_message(&failure)?);
         client.close_when_flushed();
         Ok((client, peer, expected))
     }
@@ -1576,7 +1396,7 @@ mod tests {
     }
 
     fn flush_message(client: &mut Client, peer: &mut UnixStream) -> Result<ServerMessage> {
-        assert!(client.output.flush(&mut client.stream)?);
+        let _ = client.flush()?;
         read_server_message(peer)?.ok_or_else(|| "client output closed".into())
     }
 
@@ -1593,13 +1413,13 @@ mod tests {
         Ok(())
     }
 
-    fn fill_output(output: &mut OutputQueue) -> Result {
+    fn fill_output(client: &mut Client) -> Result {
         let failure = ServerMessage::Failure(Failure {
             code: FailureCode::Terminal,
             detail: "x".repeat(session::MAX_FAILURE_BYTES),
         });
-        while output.push_message(&failure)? {}
-        while output.push_message(&ServerMessage::Accepted)? {}
+        while client.push_message(&failure)? {}
+        while client.push_message(&ServerMessage::Accepted)? {}
         Ok(())
     }
 
@@ -1618,7 +1438,7 @@ mod tests {
         terminal.vt_write(b"\x1b]2;held-two\x1b\\");
         assert!(presentation.publish_change(Some(&mut client), &terminal)?);
         assert_eq!(presentation.revision, 2);
-        assert!(client.output.is_empty());
+        assert!(client.output_is_empty());
 
         terminal.vt_write(b"\x1b[?2026l");
         assert!(presentation.publish_change(Some(&mut client), &terminal)?);
@@ -1633,36 +1453,26 @@ mod tests {
         let deadline = presentation
             .synchronized_until
             .expect("synchronized output has a deadline");
-        let (mut attaching, mut attaching_peer) = attached_client()?;
-        attaching.negotiation_deadline = Some(deadline);
-        let mut size = INITIAL_SIZE;
-        let writes = RefCell::new(VecDeque::new());
-        let mut selection = SelectionState::default();
-        assert!(handle_client_message(
-            &mut attaching,
-            ClientMessage::Hello,
-            &mut terminal,
-            None,
-            &mut size,
-            &writes,
-            &mut presentation,
-            &mut selection,
-        )?);
+        let (mut attaching, mut attaching_peer) = Client::test_pair(Some(deadline))?;
+        write_client_message(&mut attaching_peer, &ClientMessage::Hello)?;
+        assert!(attaching.read_ready()?);
+        assert!(matches!(attaching.next_incoming()?, Incoming::Attached));
+        assert!(presentation.publish(Some(&mut attaching), &terminal)?);
         assert!(matches!(
             flush_message(&mut attaching, &mut attaching_peer)?,
             ServerMessage::Attached
         ));
-        assert!(attaching.output.is_empty());
+        assert!(attaching.output_is_empty());
         assert!(presentation.release_if_expired(
             Some(&mut attaching),
             &mut terminal,
             deadline - Duration::from_millis(1),
         )?);
-        assert!(attaching.output.is_empty());
+        assert!(attaching.output_is_empty());
         assert!(terminal.mode(Mode::SYNC_OUTPUT)?);
         assert!(presentation.release_if_expired(Some(&mut attaching), &mut terminal, deadline)?);
         assert!(!terminal.mode(Mode::SYNC_OUTPUT)?);
-        assert!(!attaching.initial_frame_pending);
+        assert!(!attaching.initial_frame_pending());
 
         terminal.vt_write(b"\x1b]2;live-after-timeout\x1b\\");
         assert!(presentation.publish_change(Some(&mut attaching), &terminal)?);
@@ -1671,13 +1481,13 @@ mod tests {
 
         terminal.vt_write(b"\x1b[?2026h\x1b]2;exit-release\x1b\\");
         assert!(presentation.publish_change(Some(&mut attaching), &terminal)?);
-        assert!(attaching.output.is_empty());
+        assert!(attaching.output_is_empty());
         assert!(presentation.release(Some(&mut attaching), &mut terminal)?);
         assert!(!terminal.mode(Mode::SYNC_OUTPUT)?);
         expect_frame(&mut attaching, &mut attaching_peer, 6, "exit-release")?;
 
         let (mut blocked, _) = attached_client()?;
-        fill_output(&mut blocked.output)?;
+        fill_output(&mut blocked)?;
         terminal.vt_write(b"\x1b[?2026hpressure");
         assert!(presentation.publish_change(Some(&mut blocked), &terminal)?);
         terminal.vt_write(b"\x1b[?2026l");
@@ -1756,7 +1566,7 @@ mod tests {
     #[test]
     fn clipboard_output_pressure_disconnects_without_retaining_effects() -> Result {
         let (mut client, _peer) = attached_client()?;
-        fill_output(&mut client.output)?;
+        fill_output(&mut client)?;
         let pending = RefCell::new(PendingClipboardWrites {
             enabled: true,
             writes: VecDeque::from([(ClipboardLocation::Standard, "copy".into())]),
@@ -1912,7 +1722,7 @@ mod tests {
         assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
 
         let (mut blocked, _) = attached_client()?;
-        fill_output(&mut blocked.output)?;
+        fill_output(&mut blocked)?;
         let stable_revision = presentation.revision;
         assert!(!handle_client_message(
             &mut blocked,
@@ -2279,7 +2089,7 @@ mod tests {
         )?);
         assert_eq!(terminal.scrollbar()?.offset, before_empty.offset);
         assert_eq!(presentation.revision, 6);
-        assert!(client.close_after_flush);
+        assert!(client.is_closing());
         assert!(matches!(
             flush_message(&mut client, &mut peer)?,
             ServerMessage::Failure(Failure {
@@ -2305,7 +2115,7 @@ mod tests {
         assert_eq!(writes.borrow().len(), MAX_PTY_WRITE_BYTES);
         assert_eq!(presentation.revision, pressure_revision);
         assert_eq!(terminal.scrollbar()?.offset, pressure_offset);
-        assert!(pressure_client.close_after_flush);
+        assert!(pressure_client.is_closing());
         assert!(matches!(
             flush_message(&mut pressure_client, &mut pressure_peer)?,
             ServerMessage::Failure(Failure {
@@ -2316,7 +2126,7 @@ mod tests {
         terminal.vt_write(b"\x1b[?1000l\x1b[?1006l");
 
         let (mut blocked_client, _) = attached_client()?;
-        fill_output(&mut blocked_client.output)?;
+        fill_output(&mut blocked_client)?;
         let blocked_revision = presentation.revision;
         let blocked_offset = terminal.scrollbar()?.offset;
         assert!(!handle_client_message(
@@ -2415,49 +2225,6 @@ mod tests {
     }
 
     #[test]
-    fn fatal_decode_releases_client_input_storage() -> Result {
-        let (mut client, mut peer) = attached_client()?;
-        let mut message =
-            session::encode_client_message(&ClientMessage::Mouse(session::MouseEvent {
-                action: MouseAction::Press,
-                button: Some(MouseButton::Left),
-                modifiers: Modifiers::empty(),
-                x: 1.0,
-                y: 1.0,
-            }))?;
-        message[session::HEADER_BYTES + 4..session::HEADER_BYTES + 8]
-            .copy_from_slice(&f32::MAX.to_bits().to_le_bytes());
-        peer.write_all(&message)?;
-        let mut terminal = terminal()?;
-        let mut size = INITIAL_SIZE;
-        let writes = RefCell::new(VecDeque::new());
-        let mut presentation = Presentation::new()?;
-        let mut selection = SelectionState::default();
-
-        assert!(read_client(
-            &mut client,
-            &mut terminal,
-            None,
-            &mut size,
-            &writes,
-            &mut presentation,
-            &mut selection,
-        )?);
-        assert!(client.close_after_flush);
-        assert!(client.input.is_empty());
-        assert_eq!(client.input.capacity(), 0);
-        assert!(client.output.flush(&mut client.stream)?);
-        assert_eq!(
-            read_server_message(&mut peer)?,
-            Some(ServerMessage::Failure(Failure {
-                code: FailureCode::Protocol,
-                detail: "invalid mouse coordinates".into(),
-            }))
-        );
-        Ok(())
-    }
-
-    #[test]
     fn pty_write_pressure_rejects_whole_input_and_closes_client() -> Result {
         let (mut client, mut peer) = attached_client()?;
         let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
@@ -2482,10 +2249,8 @@ mod tests {
             &mut selection,
         )?);
         assert_eq!(writes.borrow().len(), MAX_PTY_WRITE_BYTES);
-        assert!(client.close_after_flush);
-        assert!(client.input.is_empty());
-        assert_eq!(client.input.capacity(), 0);
-        assert!(client.output.flush(&mut client.stream)?);
+        assert!(client.is_closing());
+        let _ = client.flush()?;
         assert_eq!(
             read_server_message(&mut peer)?,
             Some(ServerMessage::Failure(Failure {
@@ -2525,7 +2290,7 @@ mod tests {
             &mut selection,
         )?);
         assert!(writes.borrow().is_empty());
-        assert!(client.output.flush(&mut client.stream)?);
+        let _ = client.flush()?;
         assert_eq!(
             read_server_message(&mut peer)?,
             Some(ServerMessage::Failure(Failure {
@@ -2548,23 +2313,9 @@ mod tests {
         let client = active
             .as_mut()
             .expect("closing client remains while draining");
-        assert!(client.output.flush(&mut client.stream)?);
-        assert!(client.output.is_empty());
+        let _ = client.flush()?;
+        assert!(client.output_is_empty());
         drop(active);
-
-        let mut actual = Vec::new();
-        peer.read_to_end(&mut actual)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn terminal_closing_client_finishes_with_queued_failure_only() -> Result {
-        let (mut client, mut peer, expected) = closing_client()?;
-
-        client.finish_session(17)?;
-        assert!(client.output.is_empty());
-        drop(client);
 
         let mut actual = Vec::new();
         peer.read_to_end(&mut actual)?;

@@ -10,20 +10,7 @@ use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
     CursorViewport, Dimensions, Frame, FrameSize, MAX_CELLS, MAX_FRAME_BYTES, Rgb, Row,
     Screen as ProtocolScreen, StyleColor, Underline,
-    session::{HEADER_BYTES, ServerMessage, WheelOutcome, encode_server_message},
 };
-use std::{collections::VecDeque, io, io::Write, os::unix::net::UnixStream};
-
-const MAX_OUTPUT_BYTES: usize = 2 * (MAX_FRAME_BYTES + HEADER_BYTES) + 4096;
-
-pub(crate) fn is_disconnect(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::ConnectionReset
-            | io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::BrokenPipe
-    )
-}
 
 pub(crate) struct Extractor {
     state: RenderState<'static>,
@@ -307,142 +294,6 @@ fn cell_style(style: Style, selected: bool, protected: bool) -> Result<CellStyle
     })
 }
 
-struct Message {
-    bytes: Vec<u8>,
-    class: MessageClass,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MessageClass {
-    Ordered,
-    Preview,
-    Frame,
-}
-
-#[derive(Default)]
-pub(crate) struct OutputQueue {
-    messages: VecDeque<Message>,
-    offset: usize,
-    bytes: usize,
-}
-
-impl OutputQueue {
-    pub(crate) fn can_push_result_frame(&self) -> bool {
-        self.bytes
-            .saturating_add(MAX_FRAME_BYTES + 2 * HEADER_BYTES)
-            <= MAX_OUTPUT_BYTES
-    }
-
-    pub(crate) fn can_push_frame_message(&self) -> bool {
-        self.bytes
-            .saturating_sub(self.replaceable_suffix(MessageClass::Frame).1)
-            .saturating_add(MAX_FRAME_BYTES + HEADER_BYTES)
-            <= MAX_OUTPUT_BYTES
-    }
-
-    pub(crate) fn can_push_message(&self, message: &ServerMessage) -> Result<bool> {
-        Ok(self
-            .bytes
-            .saturating_add(encode_server_message(message)?.len())
-            <= MAX_OUTPUT_BYTES)
-    }
-
-    pub(crate) fn push_message(&mut self, message: &ServerMessage) -> Result<bool> {
-        let class = match message {
-            ServerMessage::VerticalPreview(_) => MessageClass::Preview,
-            ServerMessage::WheelOutcome(WheelOutcome::Viewport { .. }) => MessageClass::Frame,
-            _ => MessageClass::Ordered,
-        };
-        Ok(self.push_replaceable(encode_server_message(message)?, class))
-    }
-
-    pub(crate) fn push_initial_frame(&mut self, frame: Frame) -> Result<bool> {
-        Ok(self.push(
-            encode_server_message(&ServerMessage::Frame(Box::new(frame)))?,
-            MessageClass::Ordered,
-        ))
-    }
-
-    pub(crate) fn push_frame(&mut self, frame: Frame) -> Result<bool> {
-        let message = encode_server_message(&ServerMessage::Frame(Box::new(frame)))?;
-        Ok(self.push_replaceable(message, MessageClass::Frame))
-    }
-
-    fn push_replaceable(&mut self, message: Vec<u8>, class: MessageClass) -> bool {
-        let (remove, removed_bytes) = self.replaceable_suffix(class);
-        if self
-            .bytes
-            .saturating_sub(removed_bytes)
-            .saturating_add(message.len())
-            > MAX_OUTPUT_BYTES
-        {
-            return false;
-        }
-        for _ in 0..remove {
-            let previous = self.messages.pop_back().expect("back existed");
-            self.bytes -= previous.bytes.len();
-        }
-        self.push(message, class)
-    }
-
-    fn replaceable_suffix(&self, class: MessageClass) -> (usize, usize) {
-        let replaceable = |back: &Message| match class {
-            MessageClass::Ordered => false,
-            MessageClass::Preview => back.class == MessageClass::Preview,
-            MessageClass::Frame => {
-                matches!(back.class, MessageClass::Preview | MessageClass::Frame)
-            }
-        };
-        let mut remove = 0;
-        let mut removed_bytes = 0usize;
-        for (index, back) in self.messages.iter().enumerate().rev() {
-            if !replaceable(back) || index == 0 && self.offset != 0 {
-                break;
-            }
-            remove += 1;
-            removed_bytes += back.bytes.len();
-            if class == MessageClass::Preview {
-                break;
-            }
-        }
-        (remove, removed_bytes)
-    }
-
-    fn push(&mut self, bytes: Vec<u8>, class: MessageClass) -> bool {
-        if self.bytes.saturating_add(bytes.len()) > MAX_OUTPUT_BYTES {
-            return false;
-        }
-        self.bytes += bytes.len();
-        self.messages.push_back(Message { bytes, class });
-        true
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.messages.is_empty()
-    }
-
-    pub(crate) fn flush(&mut self, stream: &mut UnixStream) -> io::Result<bool> {
-        while let Some(message) = self.messages.front() {
-            match stream.write(&message.bytes[self.offset..]) {
-                Ok(0) => return Ok(false),
-                Ok(written) => {
-                    self.offset += written;
-                    self.bytes -= written;
-                    if self.offset == message.bytes.len() {
-                        self.messages.pop_front();
-                        self.offset = 0;
-                    }
-                }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(true),
-                Err(error) if is_disconnect(&error) => return Ok(false),
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(true)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,37 +456,6 @@ mod tests {
             thread::yield_now();
         }
         Ok(())
-    }
-
-    #[test]
-    fn pending_frames_keep_the_initial_and_only_the_latest_revision() {
-        let mut output = OutputQueue::default();
-        assert!(output.push(vec![0], MessageClass::Ordered));
-        assert!(output.push_replaceable(vec![1], MessageClass::Frame));
-        assert!(output.push_replaceable(vec![2], MessageClass::Preview));
-        assert!(output.push_replaceable(vec![3], MessageClass::Preview));
-
-        assert_eq!(output.messages.len(), 3);
-        assert!(output.messages.front().unwrap().bytes.ends_with(&[0]));
-        assert!(output.messages.back().unwrap().bytes.ends_with(&[3]));
-
-        assert!(output.push_replaceable(vec![4], MessageClass::Frame));
-        assert_eq!(output.messages.len(), 2);
-        assert!(output.messages.back().unwrap().bytes.ends_with(&[4]));
-
-        assert!(output.push_replaceable(vec![5], MessageClass::Preview));
-        assert_eq!(output.messages.len(), 3);
-        assert!(output.messages.back().unwrap().bytes.ends_with(&[5]));
-
-        let mut full = OutputQueue::default();
-        assert!(full.push(
-            vec![0; MAX_FRAME_BYTES + HEADER_BYTES],
-            MessageClass::Ordered
-        ));
-        assert!(
-            full.push_replaceable(vec![1; MAX_FRAME_BYTES + HEADER_BYTES], MessageClass::Frame)
-        );
-        assert!(full.can_push_frame_message());
     }
 
     #[test]

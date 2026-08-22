@@ -1,4 +1,4 @@
-use crate::{Result, platform, presentation::is_disconnect};
+use crate::{Result, attachment::is_disconnect, platform};
 use orbit_protocol::management::{
     self as protocol, Failure, FailureCode, LiveIdentity, ProcessOutcome, Record, ServerMessage,
     TerminationReason, Tombstone,
