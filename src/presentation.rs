@@ -563,12 +563,19 @@ mod tests {
 
     fn attach(socket: &Path) -> TestResult<(BufReader<UnixStream>, Frame)> {
         let deadline = Instant::now() + Duration::from_secs(5);
+        let hello = encode_client_message(&ClientMessage::Hello)?;
         loop {
             match UnixStream::connect(socket) {
                 Ok(stream) => {
                     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
                     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-                    (&stream).write_all(&encode_client_message(&ClientMessage::Hello)?)?;
+                    if let Err(error) = (&stream).write_all(&hello) {
+                        if Instant::now() >= deadline {
+                            return Err(error.into());
+                        }
+                        thread::yield_now();
+                        continue;
+                    }
                     let mut reader = BufReader::new(stream);
                     if let Some(frame) = read_frame(&mut reader)? {
                         return Ok((reader, frame));
