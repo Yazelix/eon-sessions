@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 
+mod management;
 mod platform;
 mod presentation;
 
@@ -21,11 +22,6 @@ use libghostty_vt::{
     style::RgbColor,
     terminal::{ClipboardWrite, ClipboardWriteError, Mode, Point, PointCoordinate, ScrollViewport},
 };
-use orbit_protocol::management::{
-    self as management, Failure as ManagementFailure, FailureCode as ManagementFailureCode,
-    LiveIdentity, ProcessOutcome, Record as ManagementRecord,
-    ServerMessage as ManagementServerMessage, TerminationReason, Tombstone,
-};
 use orbit_protocol::session::{
     self, ClientMessage, ClipboardLocation, Failure, FailureCode, FocusEvent, KeyAction, KeyEvent,
     Modifiers, MouseAction, MouseButton, PhysicalKey, PreviewOutcome, SelectionAction,
@@ -37,12 +33,8 @@ use std::{
     env,
     error::Error,
     io::{self, BufRead, BufReader, Read, Write},
-    os::unix::{
-        net::{UnixListener, UnixStream},
-        process::ExitStatusExt,
-    },
+    os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
-    process::ExitStatus,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -58,7 +50,6 @@ const MAX_PENDING_CLIPBOARD_WRITES: usize = 64;
 const CLIENT_NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
 const SYNCHRONIZED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(1);
 const ANSI_PALETTE_ARGUMENT: &str = "--ansi-palette-v1";
-const MANAGEMENT_ARGUMENT: &str = "--management-v1";
 
 const INITIAL_SIZE: SurfaceSize = SurfaceSize {
     cols: 80,
@@ -80,30 +71,6 @@ struct Client {
     close_after_flush: bool,
     negotiation_deadline: Option<Instant>,
     initial_frame_pending: bool,
-}
-
-struct ManagementLaunch {
-    session_id: String,
-    run_id: String,
-    component_generation: String,
-}
-
-struct ManagementClient {
-    stream: UnixStream,
-    peer_uid: u32,
-    input: Vec<u8>,
-    output: Vec<u8>,
-    output_offset: usize,
-    close_after_flush: bool,
-    negotiation_deadline: Option<Instant>,
-}
-
-struct ManagementOwner {
-    listener: UnixListener,
-    _socket_guard: platform::SocketGuard,
-    record: platform::RecordGuard,
-    identity: LiveIdentity,
-    client: Option<ManagementClient>,
 }
 
 struct Presentation {
@@ -310,7 +277,7 @@ fn run() -> Result<i32> {
     match arguments.next().as_deref() {
         Some("serve") => {
             let mut arguments: Vec<String> = arguments.collect();
-            let management = take_management_launch(&mut arguments)?;
+            let management = management::take_launch(&mut arguments)?;
             let ansi_palette = take_ansi_palette(&mut arguments)?;
             let socket = if arguments.first().is_some_and(|value| value != "--") {
                 PathBuf::from(arguments.remove(0))
@@ -334,47 +301,6 @@ fn run() -> Result<i32> {
         }
         _ => Err("usage: yazelix-orbit serve [SOCKET] [--management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION] [--ansi-palette-v1 RGB,...] [-- COMMAND ...] | client [SOCKET]".into()),
     }
-}
-
-fn take_management_launch(arguments: &mut Vec<String>) -> Result<Option<ManagementLaunch>> {
-    let launch_end = arguments
-        .iter()
-        .position(|argument| argument == "--")
-        .unwrap_or(arguments.len());
-    let mut positions = arguments[..launch_end]
-        .iter()
-        .enumerate()
-        .filter_map(|(index, argument)| (argument == MANAGEMENT_ARGUMENT).then_some(index));
-    let Some(index) = positions.next() else {
-        return Ok(None);
-    };
-    if positions.next().is_some() {
-        return Err("duplicate --management-v1 argument".into());
-    }
-    let values = arguments
-        .get(index + 1..index + 4)
-        .filter(|_| index + 4 <= launch_end)
-        .ok_or("--management-v1 requires Session, run, and component identities")?;
-    for (field, value) in [
-        ("Session ID", &values[0]),
-        ("run ID", &values[1]),
-        ("component generation", &values[2]),
-    ] {
-        if value.is_empty() || value.len() > management::MAX_ID_BYTES {
-            return Err(format!(
-                "{field} must contain 1 through {} UTF-8 bytes",
-                management::MAX_ID_BYTES
-            )
-            .into());
-        }
-    }
-    let launch = ManagementLaunch {
-        session_id: values[0].clone(),
-        run_id: values[1].clone(),
-        component_generation: values[2].clone(),
-    };
-    arguments.drain(index..index + 4);
-    Ok(Some(launch))
 }
 
 fn take_ansi_palette(arguments: &mut Vec<String>) -> Result<Option<[RgbColor; 16]>> {
@@ -439,18 +365,13 @@ fn run_server(
     socket: &Path,
     command: &[String],
     ansi_palette: Option<[RgbColor; 16]>,
-    management_launch: Option<ManagementLaunch>,
+    management_launch: Option<management::Launch>,
 ) -> Result<i32> {
     platform::install_shutdown_signals()?;
     let (listener, _socket_guard) = platform::create_listener(socket)?;
-    let management_listener = if management_launch.is_some() {
-        let management_path = artifact_path(socket, ".management");
-        let record_path = artifact_path(socket, ".record");
-        let (listener, guard) = platform::create_listener(&management_path)?;
-        Some((management_path, record_path, listener, guard))
-    } else {
-        None
-    };
+    let prepared_management = management_launch
+        .map(|launch| launch.prepare(socket))
+        .transpose()?;
     let mut size = INITIAL_SIZE;
     let mut pty = Pty::spawn(command, size)?;
     platform::ignore_broken_pipe()?;
@@ -477,33 +398,9 @@ fn run_server(
 
     let mut presentation = Presentation::new()?;
     let mut client: Option<Client> = None;
-    let mut management_owner = match (management_launch, management_listener) {
-        (Some(launch), Some((management_path, record_path, listener, socket_guard))) => {
-            let identity = LiveIdentity {
-                session_id: launch.session_id,
-                run_id: launch.run_id,
-                component_generation: launch.component_generation,
-                record_generation: management::RECORD_GENERATION,
-                management_generation: management::VERSION,
-                process_id: std::process::id(),
-                process_start: platform::process_start_identity()?,
-                uid: platform::current_uid(),
-                presentation: platform::endpoint_identity(socket)?,
-                management: platform::endpoint_identity(&management_path)?,
-            };
-            let live_record = management::encode_record(&ManagementRecord::Live(identity.clone()))?;
-            let record = platform::RecordGuard::publish(&record_path, &live_record)?;
-            Some(ManagementOwner {
-                listener,
-                _socket_guard: socket_guard,
-                record,
-                identity,
-                client: None,
-            })
-        }
-        (None, None) => None,
-        _ => unreachable!("management launch and listener are created together"),
-    };
+    let mut management_owner = prepared_management
+        .map(|prepared| prepared.publish(socket))
+        .transpose()?;
     let mut selection = SelectionState::default();
     let mut pty_open = true;
     loop {
@@ -518,7 +415,7 @@ fn run_server(
                 .stop_and_reap()?
                 .ok_or("PTY child status unavailable after explicit shutdown")?;
             if let Some(owner) = &mut management_owner {
-                owner.finish(TerminationReason::ExplicitStop, status)?;
+                owner.finish_explicit(status)?;
             }
             return Ok(0);
         }
@@ -541,7 +438,7 @@ fn run_server(
                 client.finish_session(code)?;
             }
             if let Some(owner) = &mut management_owner {
-                owner.finish(TerminationReason::NaturalExit, status)?;
+                owner.finish_natural(status)?;
             }
             return Ok(code);
         }
@@ -558,18 +455,15 @@ fn run_server(
 
         let readiness = platform::poll(
             &listener,
-            management_owner.as_ref().map(|owner| &owner.listener),
+            management_owner.as_ref().map(management::Owner::listener),
             pty_open.then(|| (&pty, !writes.borrow().is_empty())),
             client
                 .as_ref()
                 .filter(|client| !client.close_after_flush)
                 .map(|client| &client.stream),
-            management_owner.as_ref().and_then(|owner| {
-                owner
-                    .client
-                    .as_ref()
-                    .map(|client| (&client.stream, !client.output.is_empty()))
-            }),
+            management_owner
+                .as_ref()
+                .and_then(management::Owner::client_readiness),
         )?;
         let pty_was_open = pty_open;
 
@@ -629,7 +523,7 @@ fn run_server(
             let owner = management_owner
                 .as_mut()
                 .expect("management stop has one owner");
-            let tombstone = owner.finish(TerminationReason::ExplicitStop, status)?;
+            let tombstone = owner.finish_explicit(status)?;
             owner.reply_stopped(&tombstone)?;
             return Ok(0);
         }
@@ -644,256 +538,6 @@ fn run_server(
             }
         }
     }
-}
-
-fn artifact_path(socket: &Path, suffix: &str) -> PathBuf {
-    let mut path = socket.as_os_str().to_os_string();
-    path.push(suffix);
-    PathBuf::from(path)
-}
-
-impl ManagementOwner {
-    fn release_expired(&mut self, now: Instant) {
-        if self
-            .client
-            .as_ref()
-            .and_then(|client| client.negotiation_deadline)
-            .is_some_and(|deadline| now >= deadline)
-        {
-            self.client = None;
-        }
-    }
-
-    fn accept(&mut self) -> Result {
-        loop {
-            match self.listener.accept() {
-                Ok((mut stream, _)) => {
-                    if self.client.is_some() {
-                        let busy =
-                            management::encode_server_message(&ManagementServerMessage::Busy)?;
-                        let _ = stream.write_all(&busy);
-                        continue;
-                    }
-                    stream.set_nonblocking(true)?;
-                    self.client = Some(ManagementClient {
-                        peer_uid: platform::peer_uid(&stream)?,
-                        stream,
-                        input: Vec::new(),
-                        output: Vec::new(),
-                        output_offset: 0,
-                        close_after_flush: false,
-                        negotiation_deadline: Some(Instant::now() + CLIENT_NEGOTIATION_TIMEOUT),
-                    });
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-
-    fn read_request(&mut self) -> Result<bool> {
-        let request = {
-            let Some(client) = self.client.as_mut() else {
-                return Ok(false);
-            };
-            if !client.output.is_empty() {
-                return Ok(false);
-            }
-            let remaining = management::MAX_MESSAGE_BYTES.saturating_sub(client.input.len());
-            if remaining == 0 {
-                queue_management_failure(client, "management request exceeded its bound")?;
-                return Ok(false);
-            }
-            let mut bytes = [0; management::MAX_MESSAGE_BYTES];
-            match client.stream.read(&mut bytes[..remaining]) {
-                Ok(0) => {
-                    self.client = None;
-                    return Ok(false);
-                }
-                Ok(read) => client.input.extend_from_slice(&bytes[..read]),
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => return Ok(false),
-                Err(error) if is_disconnect(&error) => {
-                    self.client = None;
-                    return Ok(false);
-                }
-                Err(error) => return Err(error.into()),
-            }
-            let length = match management::client_message_len(&client.input) {
-                Ok(Some(length)) => length,
-                Ok(None) => return Ok(false),
-                Err(error) => {
-                    queue_management_failure(client, &error.to_string())?;
-                    return Ok(false);
-                }
-            };
-            if client.input.len() != length {
-                queue_management_failure(client, "management requests cannot be pipelined")?;
-                return Ok(false);
-            }
-            let message = match management::decode_client_message(&client.input) {
-                Ok(message) => message,
-                Err(error) => {
-                    queue_management_failure(client, &error.to_string())?;
-                    return Ok(false);
-                }
-            };
-            client.input.clear();
-            (
-                message,
-                client.peer_uid,
-                client.negotiation_deadline.is_none(),
-            )
-        };
-
-        match request {
-            (management::ClientMessage::Acquire { expected, record }, peer_uid, false) => {
-                let valid = peer_uid == self.identity.uid
-                    && expected == self.identity
-                    && self
-                        .record
-                        .identity()
-                        .is_ok_and(|current| current == record)
-                    && platform::endpoint_matches(&self.identity.presentation)
-                    && platform::endpoint_matches(&self.identity.management);
-                let client = self.client.as_mut().expect("request has one client");
-                if valid {
-                    client.negotiation_deadline = None;
-                    queue_management_response(
-                        client,
-                        &ManagementServerMessage::Lease(self.identity.clone()),
-                    )?;
-                } else {
-                    queue_management_response(
-                        client,
-                        &ManagementServerMessage::Failure(ManagementFailure {
-                            code: ManagementFailureCode::InvalidIdentity,
-                            detail: "live Orbit identity did not match".into(),
-                        }),
-                    )?;
-                    client.close_after_flush = true;
-                }
-                Ok(false)
-            }
-            (management::ClientMessage::Status, _, true) => {
-                let identity = self.identity.clone();
-                queue_management_response(
-                    self.client.as_mut().expect("request has one client"),
-                    &ManagementServerMessage::Status(identity),
-                )?;
-                Ok(false)
-            }
-            (management::ClientMessage::Stop, _, true) => Ok(true),
-            _ => {
-                let client = self.client.as_mut().expect("request has one client");
-                queue_management_response(
-                    client,
-                    &ManagementServerMessage::Failure(ManagementFailure {
-                        code: ManagementFailureCode::InvalidRequest,
-                        detail: "acquire the management lease before this request".into(),
-                    }),
-                )?;
-                client.close_after_flush = true;
-                Ok(false)
-            }
-        }
-    }
-
-    fn flush(&mut self) -> Result {
-        let mut disconnect = false;
-        if let Some(client) = &mut self.client {
-            while client.output_offset < client.output.len() {
-                match client.stream.write(&client.output[client.output_offset..]) {
-                    Ok(0) => {
-                        disconnect = true;
-                        break;
-                    }
-                    Ok(written) => client.output_offset += written,
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                    Err(error) if is_disconnect(&error) => {
-                        disconnect = true;
-                        break;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            if client.output_offset == client.output.len() {
-                client.output.clear();
-                client.output_offset = 0;
-                disconnect |= client.close_after_flush;
-            }
-        }
-        if disconnect {
-            self.client = None;
-        }
-        Ok(())
-    }
-
-    fn finish(&mut self, reason: TerminationReason, status: ExitStatus) -> Result<Tombstone> {
-        let outcome = if let Some(code) = status.code() {
-            ProcessOutcome::ExitCode(code)
-        } else if let Some(signal) = status.signal() {
-            ProcessOutcome::Signal(signal)
-        } else {
-            return Err("PTY child had neither an exit code nor a termination signal".into());
-        };
-        let tombstone = Tombstone {
-            identity: self.identity.clone(),
-            reason,
-            outcome,
-        };
-        let bytes = management::encode_record(&ManagementRecord::Tombstone(tombstone.clone()))?;
-        self.record.replace_and_preserve(&bytes)?;
-        Ok(tombstone)
-    }
-
-    fn reply_stopped(&mut self, tombstone: &Tombstone) -> Result {
-        let Some(client) = self
-            .client
-            .as_mut()
-            .filter(|client| client.negotiation_deadline.is_none())
-        else {
-            return Ok(());
-        };
-        let response = management::encode_server_message(&ManagementServerMessage::Stopped(
-            tombstone.clone(),
-        ))?;
-        if client.stream.set_nonblocking(false).is_ok()
-            && client
-                .stream
-                .set_write_timeout(Some(CLIENT_NEGOTIATION_TIMEOUT))
-                .is_ok()
-        {
-            let _ = client.stream.write_all(&response);
-        }
-        Ok(())
-    }
-}
-
-fn queue_management_response(
-    client: &mut ManagementClient,
-    message: &ManagementServerMessage,
-) -> Result {
-    if !client.output.is_empty() {
-        return Err("management response already in flight".into());
-    }
-    client.output = management::encode_server_message(message)?;
-    client.output_offset = 0;
-    Ok(())
-}
-
-fn queue_management_failure(client: &mut ManagementClient, detail: &str) -> Result {
-    queue_management_response(
-        client,
-        &ManagementServerMessage::Failure(ManagementFailure {
-            code: ManagementFailureCode::InvalidRequest,
-            detail: detail.into(),
-        }),
-    )?;
-    client.close_after_flush = true;
-    Ok(())
 }
 
 fn discard_pty_writes(writes: &RefCell<VecDeque<u8>>) {
