@@ -30,6 +30,17 @@ pub(crate) struct Client {
 }
 
 impl Client {
+    fn new(stream: UnixStream, negotiation_deadline: Option<Instant>) -> Self {
+        Self {
+            stream,
+            input: Vec::new(),
+            output: OutputQueue::default(),
+            close_after_flush: false,
+            negotiation_deadline,
+            initial_frame_pending: false,
+        }
+    }
+
     pub(crate) fn accepts_output(&self) -> bool {
         self.negotiation_deadline.is_none() && !self.close_after_flush
     }
@@ -164,17 +175,7 @@ impl Client {
     pub(crate) fn test_pair(negotiation_deadline: Option<Instant>) -> Result<(Self, UnixStream)> {
         let (stream, peer) = UnixStream::pair()?;
         stream.set_nonblocking(true)?;
-        Ok((
-            Self {
-                stream,
-                input: Vec::new(),
-                output: OutputQueue::default(),
-                close_after_flush: false,
-                negotiation_deadline,
-                initial_frame_pending: false,
-            },
-            peer,
-        ))
+        Ok((Self::new(stream, negotiation_deadline), peer))
     }
 
     #[cfg(test)]
@@ -197,14 +198,10 @@ pub(crate) fn accept(listener: &UnixListener, active: &mut Option<Client>) -> Re
             }
             Ok((stream, _)) => {
                 stream.set_nonblocking(true)?;
-                *active = Some(Client {
+                *active = Some(Client::new(
                     stream,
-                    input: Vec::new(),
-                    output: OutputQueue::default(),
-                    close_after_flush: false,
-                    negotiation_deadline: Some(Instant::now() + NEGOTIATION_TIMEOUT),
-                    initial_frame_pending: false,
-                });
+                    Some(Instant::now() + NEGOTIATION_TIMEOUT),
+                ));
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
