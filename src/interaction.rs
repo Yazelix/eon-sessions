@@ -1,5 +1,8 @@
 use crate::{
-    Presentation, Result, attachment::Client, next_revision, platform::Pty, queue_pty_write,
+    Result,
+    attachment::Client,
+    platform::Pty,
+    runtime::{Presentation, next_revision, queue_pty_write},
 };
 use libghostty_vt::{
     Terminal,
@@ -571,10 +574,13 @@ fn ghostty_mouse_button(button: MouseButton) -> GhosttyMouseButton {
 mod tests {
     use super::*;
     use crate::{
-        INITIAL_SIZE, MAX_PTY_WRITE_BYTES,
         presentation::Extractor,
-        tests::{
-            attached_client, fill_output, flush_message, terminal, terminal_with_scrollback, wheel,
+        runtime::{
+            INITIAL_SIZE, MAX_PTY_WRITE_BYTES,
+            tests::{
+                attached_client, fill_output, flush_message, terminal, terminal_with_scrollback,
+                wheel,
+            },
         },
     };
     use orbit_protocol::session::Failure;

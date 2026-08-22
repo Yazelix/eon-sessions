@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(client.input.capacity(), 0);
         let _ = client.flush()?;
         assert_eq!(
-            crate::read_server_message(&mut peer)?,
+            crate::diagnostic::read_message(&mut peer)?,
             Some(ServerMessage::Failure(Failure {
                 code: FailureCode::Protocol,
                 detail: "invalid mouse coordinates".into(),

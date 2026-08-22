@@ -297,6 +297,7 @@ fn cell_style(style: Style, selected: bool, protected: bool) -> Result<CellStyle
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{diagnostic::read_message, runtime};
     use libghostty_vt::{TerminalOptions, terminal::ScrollViewport};
     use orbit_protocol::session::{
         self, ClientMessage, ServerMessage, decode_server_message, encode_client_message,
@@ -353,7 +354,7 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             let thread = thread::spawn(move || {
-                assert_eq!(crate::run_server(&socket, &command, None, None).unwrap(), 0);
+                assert_eq!(runtime::run(&socket, &command, None, None).unwrap(), 0);
             });
             Self {
                 thread: Some(thread),
@@ -547,20 +548,20 @@ mod tests {
         wait_file(&emitted)?;
 
         assert_eq!(
-            crate::read_server_message(&mut reader)?,
+            read_message(&mut reader)?,
             Some(ServerMessage::ClipboardWrite {
                 location: session::ClipboardLocation::Standard,
                 text: "zellij copy".into(),
             })
         );
-        let Some(ServerMessage::Frame(frame)) = crate::read_server_message(&mut reader)? else {
+        let Some(ServerMessage::Frame(frame)) = read_message(&mut reader)? else {
             return Err("clipboard write was not followed by its frame".into());
         };
         assert!(frame.revision > initial.revision);
 
         server.finish()?;
         assert_eq!(
-            crate::read_server_message(&mut reader)?,
+            read_message(&mut reader)?,
             Some(ServerMessage::Exited { code: 0 })
         );
         Ok(())
@@ -597,7 +598,7 @@ mod tests {
         reader
             .get_mut()
             .set_read_timeout(Some(Duration::from_millis(100)))?;
-        match crate::read_server_message(&mut reader) {
+        match read_message(&mut reader) {
             Err(error)
                 if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
                     matches!(
@@ -617,14 +618,14 @@ mod tests {
         fs::write(&payload, b"payload")?;
         wait_file(&emitted)?;
         assert_eq!(
-            crate::read_server_message(&mut reader)?,
+            read_message(&mut reader)?,
             Some(ServerMessage::ClipboardWrite {
                 location: session::ClipboardLocation::Standard,
                 text: "synced copy".into(),
             })
         );
         fs::write(&end, b"end")?;
-        let Some(ServerMessage::Frame(frame)) = crate::read_server_message(&mut reader)? else {
+        let Some(ServerMessage::Frame(frame)) = read_message(&mut reader)? else {
             return Err("synchronized output did not finish with one frame".into());
         };
         assert_eq!(frame.revision, initial.revision + 1);
@@ -633,7 +634,7 @@ mod tests {
 
         server.finish()?;
         assert_eq!(
-            crate::read_server_message(&mut reader)?,
+            read_message(&mut reader)?,
             Some(ServerMessage::Exited { code: 0 })
         );
         Ok(())
@@ -685,7 +686,7 @@ mod tests {
                 session::SurfaceSize {
                     rows: 30,
                     screen_height: 480,
-                    ..crate::INITIAL_SIZE
+                    ..runtime::INITIAL_SIZE
                 },
             ))?)?;
         while (rich.dimensions.cols, rich.dimensions.rows) != (80, 30) {
