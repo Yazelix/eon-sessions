@@ -459,6 +459,12 @@ fn encode_input(
         ClientMessage::Key(input) => {
             let key = Key::try_from(u32::from(input.key.raw()))
                 .map_err(|value| format!("unsupported physical key {value}"))?;
+            let unshifted_codepoint = input
+                .unshifted_codepoint
+                .or((input.key == PhysicalKey::SPACE).then_some(' '));
+            let text = input
+                .text
+                .filter(|_| input.action != KeyAction::Release || unshifted_codepoint.is_some());
             let mut event = GhosttyKeyEvent::new()?;
             event
                 .set_action(match input.action {
@@ -470,8 +476,8 @@ fn encode_input(
                 .set_mods(ghostty_modifiers(input.modifiers)?)
                 .set_consumed_mods(ghostty_modifiers(input.consumed_modifiers)?)
                 .set_composing(input.composing)
-                .set_utf8(input.text);
-            if let Some(codepoint) = input.unshifted_codepoint {
+                .set_utf8(text);
+            if let Some(codepoint) = unshifted_codepoint {
                 event.set_unshifted_codepoint(codepoint);
             }
             let mut encoder = KeyEncoder::new()?;
@@ -1191,6 +1197,37 @@ mod tests {
         assert_eq!(
             encode_input(&terminal, INITIAL_SIZE, motion)?,
             b"\x1b[<32;641;1M"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn kitty_release_never_falls_back_to_text() -> Result {
+        let mut terminal = terminal()?;
+        terminal.vt_write(b"\x1b[>3u");
+        let release = |key, text: &str| {
+            ClientMessage::Key(KeyEvent {
+                action: KeyAction::Release,
+                key,
+                modifiers: Modifiers::empty(),
+                consumed_modifiers: Modifiers::empty(),
+                composing: false,
+                text: Some(text.into()),
+                unshifted_codepoint: None,
+            })
+        };
+
+        assert_eq!(
+            encode_input(&terminal, INITIAL_SIZE, release(PhysicalKey::SPACE, " "))?,
+            b"\x1b[32;1:3u"
+        );
+        assert!(
+            encode_input(
+                &terminal,
+                INITIAL_SIZE,
+                release(PhysicalKey::UNIDENTIFIED, "!")
+            )?
+            .is_empty()
         );
         Ok(())
     }
