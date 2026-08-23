@@ -6,6 +6,9 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `b2fbfe1a718b77dbd37d9c82370bec83584384ae` proof hardens
+  `ORB-C5`: under Kitty keyboard reporting, a text-bearing Space release is
+  encoded as a release sequence instead of a second literal Space.
 - The accepted `2518512758c7848bbd87f907b105c8bcf0fc4e1b` owner proof hardens
   `ORB-C13`: an optional exact empty record claim serializes the Ready boundary.
   A launcher-held claim prevents publication; an Orbit-held claim is marked
