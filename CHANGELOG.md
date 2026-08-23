@@ -6,6 +6,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `0ca0cc93b83793d08eadcca7eac6e947a80ce25d` proof hardens
+  `ORB-C12`: Orbit permits up to one second for an external launcher to finish
+  placing it in a cgroup before PTY startup, while retaining the exact parent
+  ownership, mode, and membership checks and bounded fail-before-exec behavior.
 - The accepted `69c402737799f03e615473956954a043647a4713` proof changes
   `ORB-C3` and replaces ORBS v4 with exact-version ORBS v5. The existing
   private presentation endpoint admits one input-capable attachment and one
