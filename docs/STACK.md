@@ -47,9 +47,10 @@ policy.
 
 Orbit owns the wire schema and its state-transition rules. The accepted
 `orbit-protocol` package owns canonical ORBF v1 values, bounded decoding,
-complete-frame reduction, and exact-version ORBS v4 messages for attachment,
-frames, lifecycle, semantic input, selection and copy, terminal clipboard
-writes, adjacent-row previews, and typed vertical-wheel outcomes. Venus must
+complete-frame reduction, and exact-version ORBS v5 messages for one
+input-capable attachment, one bounded title/CWD observer, frames, lifecycle,
+semantic input, selection and copy, terminal clipboard writes, adjacent-row
+previews, and typed vertical-wheel outcomes. Venus must
 record each consumed contract's proof revision and pin the exact package
 revision instead of mirroring the schema.
 

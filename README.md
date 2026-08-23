@@ -18,14 +18,14 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns canonical ORBS v4 at
-`9c0617a97612cdd045ed67b5cd7c87244eb888e6`, including attachment, frames,
-lifecycle, semantic input, selection and copy, terminal clipboard writes,
-revision-bound adjacent-row previews, and typed vertical-wheel outcomes. Venus
-consumes its exact accepted proof at
-`7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`; Eon and Eonova compose that v4
-boundary through Orbit's accepted management owner. Orbit's server and
-diagnostic client use only the canonical values.
+The same package owns canonical ORBS v5 at
+`69c402737799f03e615473956954a043647a4713`, including one input-capable
+attachment, one bounded read-only title/CWD observer, frames, lifecycle,
+semantic input, selection and copy, terminal clipboard writes, revision-bound
+adjacent-row previews, and typed vertical-wheel outcomes. The currently
+composed Venus, Eon, and Eonova sources remain on their exact accepted ORBS v4
+pair until the owner-first Venus and Eon adoption Beads consume this proof.
+Orbit's server and diagnostic client use only the canonical values.
 Orbit resolves selection from the exact complete-frame revision and current
 viewport, publishes selected cells through normal frames, and returns only
 bounded plain text frozen at Finish.
@@ -148,7 +148,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The accepted ORBS v4 producer uses a 12-byte explicit little-endian header with `ORBS`
+The accepted ORBS v5 producer uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -182,18 +182,22 @@ the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v4 codec. An exact-version
+client and server use only the bounded ORBS v5 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
 revision-bound selection and vertical-preview events, never raw PTY output.
+One separately negotiated observer receives only an acknowledgement, bounded
+coalescible title/CWD metadata at exact presentation revisions, failures, and
+session exit.
 
 The default socket is `$XDG_RUNTIME_DIR/yazelix-orbit/orbit.sock`, falling back
 to `/tmp/yazelix-orbit-$UID/orbit.sock`. Its directory is user-owned and private,
 and the socket mode is `0600`. Orbit removes a connection-refused stale socket,
 serializes concurrent stale-socket claims, refuses to replace any non-socket
-path, rejects a simultaneous second client, retains the last PTY size while
-detached, reaps an exited child, and removes the socket after normal or
+path, admits at most one input-capable client and one metadata observer after
+role negotiation, rejects an excess role with `Busy`, retains the last PTY size
+while detached, reaps an exited child, and removes the socket after normal or
 signal-driven shutdown.
 
 The private same-boot management owner is enabled with
@@ -265,13 +269,15 @@ stale-socket ownership, all with bounded timeouts.
 ## Contract
 
 Orbit keeps a real terminal process and the sole authoritative libghostty state
-alive independently of its graphical client. One local client may attach at a
-time. On attachment, the client receives a coherent complete structured
+alive independently of its graphical client. One local input-capable client
+may attach at a time, while one read-only metadata observer may coexist. On
+attachment, the input-capable client receives a coherent complete structured
 presentation frame at one revision followed by later frame revisions in order.
-The client sends semantic input for Orbit to encode against authoritative
-terminal state. The initial contract covers surviving client exits and
-disconnections while Orbit continues running; it does not cover Orbit or
-machine restarts.
+The observer receives only live title, working directory, revision, and
+lifecycle metadata. The client sends semantic input for Orbit to encode against
+authoritative terminal state. The initial contract covers surviving client and
+observer exits and disconnections while Orbit continues running; it does not
+cover Orbit or machine restarts.
 
 Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` consumes canonical ORBF v1
 over ORBS v4 at exact Orbit proof
@@ -284,6 +290,12 @@ covers same-boot recovery, owner-routed Stop, and native Wayland delivery to the
 primary selection. Ordinary clipboard delivery, Wayland without data-control,
 broader compositors, and macOS remain unproved. No adapter, feature probe,
 dual-version support, or compatibility window exists.
+ORBS v5 is an owner-first breaking replacement proved by Orbit at
+`69c402737799f03e615473956954a043647a4713`. Venus issue
+`ven-render-live-pane-title-cwd-8c7` must consume that exact source before Eon
+issue `eon-adopt-pane-chrome-undecorated-tz0` updates the composed pair. The
+current v4 product pin remains valid and receives no v5 capability until that
+ordered adoption.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
@@ -305,7 +317,8 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   cross-repository contracts remain macOS-credible without promising a macOS
   backend, build, CI, packaging, or support
 - local Unix socket transport
-- one terminal session and one active client
+- one terminal session, one input-capable client, and one read-only metadata
+  observer
 - one product binary, one private canonical protocol library, and one isolated
   repository-governance tool; only the binary owns terminal and PTY authority
 - the `orb-bi4.3` gate passed at

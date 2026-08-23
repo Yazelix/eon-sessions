@@ -6,6 +6,16 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `69c402737799f03e615473956954a043647a4713` proof changes
+  `ORB-C3` and replaces ORBS v4 with exact-version ORBS v5. The existing
+  private presentation endpoint admits one input-capable attachment and one
+  bounded read-only observer for initial and changed terminal title, raw
+  working directory, exact presentation revision, and lifecycle. Observer
+  state is coalesced, capped by an 8 KiB metadata envelope, and grants no
+  terminal input, presentation, process, or lifecycle authority. Venus and
+  Eon adopt the owner proof in that order without an adapter, dual-version
+  window, or dependency change; current composed ORBS v4 sources remain valid
+  until adoption.
 - The accepted `b2fbfe1a718b77dbd37d9c82370bec83584384ae` proof hardens
   `ORB-C5`: under Kitty keyboard reporting, a text-bearing Space release is
   encoded as a release sequence instead of a second literal Space.

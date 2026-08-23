@@ -125,7 +125,13 @@ revision-bound adjacent-row previews and typed vertical-wheel outcomes in ORBS
 v4. Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` pins exact ORBS v4 proof
 `7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`; Eon acceptance
 `0bf0b165d06b4a8162be497011070f61f6c2000a` composes the exact accepted
-Orbit and Venus sources.
+Orbit and Venus sources. ORBS v5 replaces v4 at Orbit proof
+`69c402737799f03e615473956954a043647a4713`: the existing presentation socket
+negotiates either the sole input-capable attachment or one bounded read-only
+title/CWD observer. This is the minimum live inactive-pane result; it adds no
+second endpoint, terminal text observation, agent authorization, or process
+authority. Venus and Eon adopt the exact owner proof in that order without a
+dual-version window.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
 row contents, and stable anchors. Venus may own ephemeral pointer gestures over
