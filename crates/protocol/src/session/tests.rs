@@ -78,6 +78,7 @@ fn header(kind: u8, payload: usize) -> [u8; HEADER_BYTES] {
 fn every_client_message_round_trips() {
     let messages = [
         ClientMessage::Hello,
+        ClientMessage::ObserveMetadata,
         ClientMessage::Key(KeyEvent {
             action: KeyAction::Repeat,
             key: PhysicalKey::A,
@@ -134,6 +135,12 @@ fn every_client_message_round_trips() {
 fn every_server_message_round_trips() {
     let messages = [
         ServerMessage::Attached,
+        ServerMessage::ObservingMetadata,
+        ServerMessage::Metadata(Metadata {
+            revision: 8,
+            title: "Codex ◐".into(),
+            working_directory: "file:///tmp/eon session".into(),
+        }),
         ServerMessage::Busy,
         ServerMessage::Frame(Box::new(frame())),
         ServerMessage::Accepted,
@@ -250,7 +257,7 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    assert_eq!(VERSION, 4);
+    assert_eq!(VERSION, 5);
     let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
@@ -381,6 +388,19 @@ fn semantic_values_reject_invalid_states() {
             maximum: MAX_COPY_BYTES,
         })
     );
+
+    let oversized = ServerMessage::Metadata(Metadata {
+        revision: 1,
+        title: "x".repeat(MAX_METADATA_BYTES),
+        working_directory: String::new(),
+    });
+    assert!(matches!(
+        encode_server_message(&oversized),
+        Err(Error::PayloadTooLarge {
+            maximum: MAX_METADATA_BYTES,
+            ..
+        })
+    ));
 
     for invalid in [
         ServerMessage::ClipboardWrite {
@@ -620,6 +640,20 @@ fn malformed_typed_payloads_are_rejected() {
         decode_server_message(&copied),
         Err(Error::InvalidUtf8 {
             field: "copied text"
+        })
+    );
+
+    let mut metadata = encode_server_message(&ServerMessage::Metadata(Metadata {
+        revision: 1,
+        title: "text".into(),
+        working_directory: "file:///tmp".into(),
+    }))
+    .unwrap();
+    metadata[HEADER_BYTES + 12] = 0xff;
+    assert_eq!(
+        decode_server_message(&metadata),
+        Err(Error::InvalidUtf8 {
+            field: "metadata title",
         })
     );
 

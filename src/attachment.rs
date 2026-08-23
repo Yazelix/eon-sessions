@@ -1,7 +1,7 @@
 use crate::Result;
 use orbit_protocol::{
     Frame, MAX_FRAME_BYTES,
-    session::{self, ClientMessage, Failure, FailureCode, ServerMessage, WheelOutcome},
+    session::{self, ClientMessage, Failure, FailureCode, Metadata, ServerMessage, WheelOutcome},
 };
 use std::{
     collections::VecDeque,
@@ -14,10 +14,23 @@ const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_OUTPUT_BYTES: usize = 2 * (MAX_FRAME_BYTES + session::HEADER_BYTES) + 4096;
 
 pub(crate) enum Incoming {
-    Attached,
+    Negotiate(Negotiation),
     Message(ClientMessage),
     Pending,
     Disconnect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Negotiation {
+    Interactive,
+    Metadata,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Pending(Instant),
+    Interactive,
+    Metadata,
 }
 
 pub(crate) struct Client {
@@ -25,8 +38,10 @@ pub(crate) struct Client {
     input: Vec<u8>,
     output: OutputQueue,
     close_after_flush: bool,
-    negotiation_deadline: Option<Instant>,
+    role: Role,
     initial_frame_pending: bool,
+    initial_metadata_pending: bool,
+    last_metadata: Option<Metadata>,
 }
 
 impl Client {
@@ -36,22 +51,31 @@ impl Client {
             input: Vec::new(),
             output: OutputQueue::default(),
             close_after_flush: false,
-            negotiation_deadline,
+            role: negotiation_deadline.map_or(Role::Interactive, Role::Pending),
             initial_frame_pending: false,
+            initial_metadata_pending: false,
+            last_metadata: None,
         }
     }
 
     pub(crate) fn accepts_output(&self) -> bool {
-        self.negotiation_deadline.is_none() && !self.close_after_flush
+        self.role == Role::Interactive && !self.close_after_flush
+    }
+
+    pub(crate) fn accepts_metadata(&self) -> bool {
+        self.role == Role::Metadata && !self.close_after_flush
     }
 
     pub(crate) fn poll_stream(&self) -> Option<&UnixStream> {
         (!self.close_after_flush).then_some(&self.stream)
     }
 
+    pub(crate) fn has_input(&self) -> bool {
+        !self.input.is_empty()
+    }
+
     pub(crate) fn is_expired(&self, now: Instant) -> bool {
-        self.negotiation_deadline
-            .is_some_and(|deadline| now >= deadline)
+        matches!(self.role, Role::Pending(deadline) if now >= deadline)
     }
 
     pub(crate) fn read_ready(&mut self) -> Result<bool> {
@@ -63,6 +87,7 @@ impl Client {
             Ok(0) => return Ok(false),
             Ok(read) => read,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => return Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(true),
             Err(error) if is_disconnect(&error) => return Ok(false),
             Err(error) => return Err(error.into()),
         };
@@ -72,6 +97,9 @@ impl Client {
 
     pub(crate) fn next_incoming(&mut self) -> Result<Incoming> {
         let length = match session::client_message_len(&self.input) {
+            Ok(Some(_)) if self.role == Role::Metadata => {
+                return self.reject_protocol("metadata observers cannot send messages".into());
+            }
             Ok(Some(length)) if self.input.len() >= length => length,
             Ok(_) => return Ok(Incoming::Pending),
             Err(session::Error::UnsupportedVersion { .. }) => return Ok(Incoming::Disconnect),
@@ -83,23 +111,42 @@ impl Client {
         };
         drop(self.input.drain(..length));
 
-        if self.negotiation_deadline.is_some() {
+        if matches!(self.role, Role::Pending(_)) {
             return match message {
-                ClientMessage::Hello => {
-                    self.negotiation_deadline = None;
-                    if !self.push_message(&ServerMessage::Attached)? {
-                        return Ok(Incoming::Disconnect);
-                    }
-                    self.initial_frame_pending = true;
-                    Ok(Incoming::Attached)
-                }
-                _ => self.reject_protocol("first client message must be Hello".into()),
+                ClientMessage::Hello => Ok(Incoming::Negotiate(Negotiation::Interactive)),
+                ClientMessage::ObserveMetadata => Ok(Incoming::Negotiate(Negotiation::Metadata)),
+                _ => self.reject_protocol(
+                    "first client message must be Hello or ObserveMetadata".into(),
+                ),
             };
         }
-        if matches!(message, ClientMessage::Hello) {
-            return self.reject_protocol("Hello may only be sent once".into());
+        if matches!(
+            message,
+            ClientMessage::Hello | ClientMessage::ObserveMetadata
+        ) {
+            return self.reject_protocol("attachment role may only be sent once".into());
         }
         Ok(Incoming::Message(message))
+    }
+
+    pub(crate) fn begin_interactive(&mut self) -> Result<bool> {
+        debug_assert!(matches!(self.role, Role::Pending(_)));
+        if !self.push_message(&ServerMessage::Attached)? {
+            return Ok(false);
+        }
+        self.role = Role::Interactive;
+        self.initial_frame_pending = true;
+        Ok(true)
+    }
+
+    pub(crate) fn begin_metadata(&mut self) -> Result<bool> {
+        debug_assert!(matches!(self.role, Role::Pending(_)));
+        if !self.push_message(&ServerMessage::ObservingMetadata)? {
+            return Ok(false);
+        }
+        self.role = Role::Metadata;
+        self.initial_metadata_pending = true;
+        Ok(true)
     }
 
     fn reject_protocol(&mut self, detail: String) -> Result<Incoming> {
@@ -140,6 +187,26 @@ impl Client {
         Ok(queued)
     }
 
+    pub(crate) fn push_metadata(&mut self, metadata: Metadata) -> Result<bool> {
+        if self.last_metadata.as_ref().is_some_and(|previous| {
+            previous.title == metadata.title
+                && previous.working_directory == metadata.working_directory
+        }) {
+            return Ok(true);
+        }
+        let queued = if self.initial_metadata_pending {
+            self.output.push_initial_metadata(&metadata)
+        } else {
+            self.output
+                .push_message(&ServerMessage::Metadata(metadata.clone()))
+        }?;
+        if queued {
+            self.initial_metadata_pending = false;
+            self.last_metadata = Some(metadata);
+        }
+        Ok(queued)
+    }
+
     pub(crate) fn fail(&mut self, code: FailureCode, mut detail: String) -> Result<bool> {
         while detail.len() > session::MAX_FAILURE_BYTES {
             detail.pop();
@@ -157,7 +224,7 @@ impl Client {
     }
 
     pub(crate) fn finish_session(&mut self, code: i32) -> Result {
-        if self.negotiation_deadline.is_none() {
+        if !matches!(self.role, Role::Pending(_)) {
             if !self.close_after_flush {
                 let _ = self.push_message(&ServerMessage::Exited { code })?;
             }
@@ -189,16 +256,21 @@ impl Client {
     }
 }
 
-pub(crate) fn accept(listener: &UnixListener, active: &mut Option<Client>) -> Result {
+pub(crate) fn accept(
+    listener: &UnixListener,
+    active: &Option<Client>,
+    observer: &Option<Client>,
+    pending: &mut Option<Client>,
+) -> Result {
     loop {
         match listener.accept() {
-            Ok((mut stream, _)) if active.is_some() => {
+            Ok((mut stream, _)) if pending.is_some() || active.is_some() && observer.is_some() => {
                 let busy = session::encode_server_message(&ServerMessage::Busy)?;
                 let _ = stream.write_all(&busy);
             }
             Ok((stream, _)) => {
                 stream.set_nonblocking(true)?;
-                *active = Some(Client::new(
+                *pending = Some(Client::new(
                     stream,
                     Some(Instant::now() + NEGOTIATION_TIMEOUT),
                 ));
@@ -229,6 +301,7 @@ enum MessageClass {
     Ordered,
     Preview,
     Frame,
+    Metadata,
 }
 
 #[derive(Default)]
@@ -263,6 +336,7 @@ impl OutputQueue {
         let class = match message {
             ServerMessage::VerticalPreview(_) => MessageClass::Preview,
             ServerMessage::WheelOutcome(WheelOutcome::Viewport { .. }) => MessageClass::Frame,
+            ServerMessage::Metadata(_) => MessageClass::Metadata,
             _ => MessageClass::Ordered,
         };
         Ok(self.push_replaceable(session::encode_server_message(message)?, class))
@@ -278,6 +352,13 @@ impl OutputQueue {
     fn push_frame(&mut self, frame: Frame) -> Result<bool> {
         let message = session::encode_server_message(&ServerMessage::Frame(Box::new(frame)))?;
         Ok(self.push_replaceable(message, MessageClass::Frame))
+    }
+
+    fn push_initial_metadata(&mut self, metadata: &Metadata) -> Result<bool> {
+        Ok(self.push(
+            session::encode_server_message(&ServerMessage::Metadata(metadata.clone()))?,
+            MessageClass::Ordered,
+        ))
     }
 
     fn push_replaceable(&mut self, message: Vec<u8>, class: MessageClass) -> bool {
@@ -304,6 +385,7 @@ impl OutputQueue {
             MessageClass::Frame => {
                 matches!(back.class, MessageClass::Preview | MessageClass::Frame)
             }
+            MessageClass::Metadata => back.class == MessageClass::Metadata,
         };
         let mut remove = 0;
         let mut removed_bytes = 0usize;
@@ -358,6 +440,56 @@ impl OutputQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_observer_is_read_only_and_keeps_only_the_latest_change() -> Result {
+        let (mut observer, mut peer) =
+            Client::test_pair(Some(Instant::now() + NEGOTIATION_TIMEOUT))?;
+        peer.write_all(&session::encode_client_message(
+            &ClientMessage::ObserveMetadata,
+        )?)?;
+        assert!(observer.read_ready()?);
+        assert!(matches!(
+            observer.next_incoming()?,
+            Incoming::Negotiate(Negotiation::Metadata)
+        ));
+        assert!(observer.begin_metadata()?);
+
+        for (revision, title) in [(1, "initial"), (2, "middle"), (3, "latest")] {
+            assert!(observer.push_metadata(session::Metadata {
+                revision,
+                title: title.into(),
+                working_directory: "file:///tmp/eon".into(),
+            })?);
+        }
+        let _ = observer.flush()?;
+        assert_eq!(
+            crate::diagnostic::read_message(&mut peer)?,
+            Some(ServerMessage::ObservingMetadata)
+        );
+        assert!(matches!(
+            crate::diagnostic::read_message(&mut peer)?,
+            Some(ServerMessage::Metadata(session::Metadata {
+                revision: 1,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            crate::diagnostic::read_message(&mut peer)?,
+            Some(ServerMessage::Metadata(session::Metadata {
+                revision: 3,
+                ..
+            }))
+        ));
+
+        peer.write_all(&session::encode_client_message(&ClientMessage::Focus(
+            session::FocusEvent::Gained,
+        ))?)?;
+        assert!(observer.read_ready()?);
+        assert!(matches!(observer.next_incoming()?, Incoming::Pending));
+        assert!(observer.is_closing());
+        Ok(())
+    }
 
     #[test]
     fn pending_frames_keep_the_initial_and_only_the_latest_revision() {

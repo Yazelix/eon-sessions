@@ -144,6 +144,70 @@ struct Client {
     frame: Frame,
 }
 
+struct MetadataObserver {
+    reader: BufReader<UnixStream>,
+    metadata: session::Metadata,
+}
+
+impl MetadataObserver {
+    fn attach(socket: &Path) -> TestResult<Self> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let observe = encode_client_message(&ClientMessage::ObserveMetadata)?;
+        loop {
+            let stream = connect_bounded(socket, deadline)?;
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+            let mut reader = BufReader::new(stream);
+            reader.get_mut().write_all(&observe)?;
+            let mut observing = false;
+            loop {
+                match read_message(&mut reader) {
+                    Ok(ServerMessage::ObservingMetadata) if !observing => observing = true,
+                    Ok(ServerMessage::Metadata(metadata)) if observing => {
+                        return Ok(Self { reader, metadata });
+                    }
+                    Ok(ServerMessage::Busy) if !observing && Instant::now() < deadline => break,
+                    Ok(message) => {
+                        return Err(format!("unexpected observe response: {message:?}").into());
+                    }
+                    Err(error) if Instant::now() < deadline && error.is::<std::io::Error>() => {
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            thread::yield_now();
+        }
+    }
+
+    fn wait_metadata(&mut self, title: &str, working_directory: &str) -> TestResult {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if self.metadata.title == title && self.metadata.working_directory == working_directory
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "metadata never became ({title:?}, {working_directory:?}); last: {:?}",
+                    self.metadata
+                )
+                .into());
+            }
+            match read_message(&mut self.reader)? {
+                ServerMessage::Metadata(metadata) => {
+                    assert!(metadata.revision > self.metadata.revision);
+                    self.metadata = metadata;
+                }
+                ServerMessage::Exited { code } => {
+                    return Err(format!("shell exited with {code}").into());
+                }
+                message => return Err(format!("unexpected observer message: {message:?}").into()),
+            }
+        }
+    }
+}
+
 impl Client {
     fn attach(socket: &Path) -> TestResult<Self> {
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -729,6 +793,131 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
 }
 
 #[test]
+fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> TestResult {
+    let dir = TestDir::new("metadata-observer")?;
+    let socket = dir.0.join("orbit.sock");
+    let ready = dir.0.join("ready");
+    let begin = dir.0.join("begin");
+    let partial = dir.0.join("partial");
+    let complete = dir.0.join("complete");
+    let slow = dir.0.join("slow");
+    let slow_done = dir.0.join("slow-done");
+    let exit = dir.0.join("exit");
+    let server = Server(
+        server_command()
+            .arg(&socket)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(
+                "printf '\\033]2;initial\\033\\\\\\033]7;file:///tmp/eon-initial\\033\\\\'; \
+                 printf ready > \"$ORBIT_READY\"; \
+                 while [ ! -e \"$ORBIT_BEGIN\" ]; do sleep 0.01; done; \
+                 printf '\\033]2;split'; printf partial > \"$ORBIT_PARTIAL\"; \
+                 while [ ! -e \"$ORBIT_COMPLETE\" ]; do sleep 0.01; done; \
+                 printf '%b' '-complete\\033\\\\'; \
+                 i=0; while [ \"$i\" -lt 300 ]; do \
+                   printf '\\033]2;rapid-%03d\\033\\\\' \"$i\"; i=$((i + 1)); \
+                 done; \
+                 printf '\\033]2;rapid-final\\033\\\\\\033]7;file:///tmp/eon-rapid\\033\\\\'; \
+                 while [ ! -e \"$ORBIT_SLOW\" ]; do sleep 0.01; done; \
+                 padding=$(printf '%01000d' 0); i=0; \
+                 while [ \"$i\" -lt 1000 ]; do \
+                   printf '\\033]2;slow-%04d-%s\\033\\\\' \"$i\" \"$padding\"; i=$((i + 1)); \
+                 done; \
+                 printf '\\033]2;slow-final\\033\\\\\\033]7;file:///tmp/eon-slow\\033\\\\'; \
+                 printf done > \"$ORBIT_SLOW_DONE\"; \
+                 while [ ! -e \"$ORBIT_EXIT\" ]; do sleep 0.01; done; exit 17",
+            )
+            .env("ORBIT_READY", &ready)
+            .env("ORBIT_BEGIN", &begin)
+            .env("ORBIT_PARTIAL", &partial)
+            .env("ORBIT_COMPLETE", &complete)
+            .env("ORBIT_SLOW", &slow)
+            .env("ORBIT_SLOW_DONE", &slow_done)
+            .env("ORBIT_EXIT", &exit)
+            .spawn()?,
+    );
+    assert_eq!(wait_file_text(&ready)?, "ready");
+
+    let mut interactive = Client::attach(&socket)?;
+    interactive.wait_title("initial")?;
+    let mut rejected = MetadataObserver::attach(&socket)?;
+    assert_eq!(
+        (
+            rejected.metadata.title.as_str(),
+            rejected.metadata.working_directory.as_str(),
+        ),
+        ("initial", "file:///tmp/eon-initial")
+    );
+    write_message(
+        rejected.reader.get_mut(),
+        &ClientMessage::Focus(FocusEvent::Gained),
+    )?;
+    match read_message(&mut rejected.reader)? {
+        ServerMessage::Failure(failure) => assert_eq!(failure.code, FailureCode::Protocol),
+        message => return Err(format!("observer input was not rejected: {message:?}").into()),
+    }
+    drop(rejected);
+
+    let mut observer = MetadataObserver::attach(&socket)?;
+    let mut excess = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
+    excess.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let _ = write_message(&mut excess, &ClientMessage::ObserveMetadata);
+    assert_eq!(read_message(&mut excess)?, ServerMessage::Busy);
+
+    fs::write(&begin, b"begin")?;
+    assert_eq!(wait_file_text(&partial)?, "partial");
+    observer
+        .reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_millis(150)))?;
+    let error = read_message(&mut observer.reader).expect_err("split OSC published metadata");
+    assert!(error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        )
+    }));
+    observer
+        .reader
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_secs(5)))?;
+
+    let interactive = thread::spawn(move || {
+        interactive
+            .wait_title("slow-final")
+            .map(|_| interactive)
+            .map_err(|error| error.to_string())
+    });
+    fs::write(&complete, b"complete")?;
+    observer.wait_metadata("rapid-final", "file:///tmp/eon-rapid")?;
+
+    fs::write(&slow, b"slow")?;
+    assert_eq!(wait_file_text(&slow_done)?, "done");
+    let _interactive = interactive
+        .join()
+        .map_err(|_| "interactive metadata-pressure reader panicked")?
+        .map_err(|error| format!("interactive metadata-pressure reader failed: {error}"))?;
+    observer.wait_metadata("slow-final", "file:///tmp/eon-slow")?;
+
+    fs::write(&exit, b"exit")?;
+    loop {
+        match read_message(&mut observer.reader)? {
+            ServerMessage::Metadata(metadata) => observer.metadata = metadata,
+            ServerMessage::Exited { code } => {
+                assert_eq!(code, 17);
+                break;
+            }
+            message => return Err(format!("unexpected observer exit message: {message:?}").into()),
+        }
+    }
+    assert_eq!(server.wait()?.code(), Some(17));
+    assert!(UnixStream::connect(&socket).is_err());
+    Ok(())
+}
+
+#[test]
 fn pty_pressure_disconnect_ignores_stale_client_readiness() -> TestResult {
     let dir = TestDir::new("stale-client-readiness")?;
     let socket = dir.0.join("orbit.sock");
@@ -907,6 +1096,7 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
 
     let mut rejected = UnixStream::connect(&socket)?;
     rejected.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write_message(&mut rejected, &ClientMessage::Hello)?;
     assert_eq!(read_message(&mut rejected)?, ServerMessage::Busy);
     first.request(&ClientMessage::Focus(FocusEvent::Gained))?;
 
@@ -1211,6 +1401,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     fs::write(&pressure, b"pressure")?;
     let mut busy = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
     busy.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write_message(&mut busy, &ClientMessage::Hello)?;
     assert_eq!(read_message(&mut busy)?, ServerMessage::Busy);
     drop(busy);
     drop(second);

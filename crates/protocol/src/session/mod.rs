@@ -16,7 +16,7 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
@@ -29,6 +29,8 @@ pub const MAX_COPY_BYTES: usize = 1024 * 1024;
 pub const MAX_KEY_TEXT_BYTES: usize = 4096;
 /// Largest client-visible failure detail.
 pub const MAX_FAILURE_BYTES: usize = 1024;
+/// Largest complete title/CWD metadata payload.
+pub const MAX_METADATA_BYTES: usize = 8 * 1024;
 
 /// A local-session validation or framing failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +129,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum ClientMessage {
     /// Opens a session using the exact revision in the ORBS header.
     Hello,
+    /// Opens one read-only title/CWD metadata observation.
+    ObserveMetadata,
     /// One physical key event and its text meaning.
     Key(KeyEvent),
     /// One pointer event in surface pixels.
@@ -151,6 +155,10 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     /// The client owns the single attachment at this exact ORBS revision.
     Attached,
+    /// The client owns the single read-only metadata observation.
+    ObservingMetadata,
+    /// One authoritative title/CWD observation at a presentation revision.
+    Metadata(Metadata),
     /// Another client already owns the single attachment.
     Busy,
     /// One canonical, complete Orbit presentation frame.
@@ -172,6 +180,14 @@ pub enum ServerMessage {
     VerticalPreview(VerticalPreview),
     /// Typed result of one accepted vertical wheel event.
     WheelOutcome(WheelOutcome),
+}
+
+/// One bounded, read-only terminal metadata observation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Metadata {
+    pub revision: u64,
+    pub title: String,
+    pub working_directory: String,
 }
 
 /// One row direction in the authoritative scrollback.

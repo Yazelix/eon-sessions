@@ -536,6 +536,7 @@ fn encode_input(
             Ok(output)
         }
         ClientMessage::Hello
+        | ClientMessage::ObserveMetadata
         | ClientMessage::Resize(_)
         | ClientMessage::Selection(_)
         | ClientMessage::PreviewVertical { .. } => Err("message is not terminal input".into()),

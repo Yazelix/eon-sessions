@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use attachment::{Client, Incoming};
+use attachment::{Client, Incoming, Negotiation};
 use interaction::{SelectionState, apply_pty_output, clear_selection, handle_client_message};
 use platform::{Pty, PtyIo};
 use presentation::Extractor;
@@ -90,6 +90,24 @@ impl Presentation {
             }
         };
         client.push_frame(frame)
+    }
+
+    fn publish_metadata(
+        &self,
+        observer: Option<&mut Client>,
+        terminal: &Terminal<'static, '_>,
+    ) -> Result<bool> {
+        if self.synchronized_until.is_some() {
+            return Ok(true);
+        }
+        let Some(observer) = observer.filter(|observer| observer.accepts_metadata()) else {
+            return Ok(true);
+        };
+        observer.push_metadata(session::Metadata {
+            revision: self.revision,
+            title: terminal.title()?.to_owned(),
+            working_directory: terminal.pwd()?.to_owned(),
+        })
     }
 
     fn release_if_expired(
@@ -241,6 +259,8 @@ pub(super) fn run(
 
     let mut presentation = Presentation::new()?;
     let mut client: Option<Client> = None;
+    let mut observer: Option<Client> = None;
+    let mut pending: Option<Client> = None;
     let mut management_owner = prepared_management
         .map(|prepared| prepared.publish(socket))
         .transpose()?;
@@ -255,6 +275,9 @@ pub(super) fn run(
             let status = pty
                 .stop_and_reap()?
                 .ok_or("PTY child status unavailable after explicit shutdown")?;
+            if let Some(observer) = &mut observer {
+                observer.finish_session(status.code().unwrap_or(1))?;
+            }
             if let Some(owner) = &mut management_owner {
                 owner.finish_explicit(status)?;
             }
@@ -274,23 +297,32 @@ pub(super) fn run(
             if !presentation.release(client.as_mut(), &mut terminal)? {
                 disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
+            if !presentation.publish_metadata(observer.as_mut(), &terminal)? {
+                observer = None;
+            }
             let code = status.code().unwrap_or(1);
             if let Some(client) = &mut client {
                 client.finish_session(code)?;
+            }
+            if let Some(observer) = &mut observer {
+                observer.finish_session(code)?;
             }
             if let Some(owner) = &mut management_owner {
                 owner.finish_natural(status)?;
             }
             return Ok(code);
         }
-        if client
+        if pending
             .as_ref()
             .is_some_and(|client| client.is_expired(Instant::now()))
         {
-            disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
+            pending = None;
         }
         if !presentation.release_if_expired(client.as_mut(), &mut terminal, Instant::now())? {
             disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
+        }
+        if !presentation.publish_metadata(observer.as_mut(), &terminal)? {
+            observer = None;
         }
 
         let readiness = platform::poll(
@@ -305,7 +337,17 @@ pub(super) fn run(
         let pty_was_open = pty_open;
 
         if readiness.listener {
-            attachment::accept(&listener, &mut client)?;
+            attachment::accept(&listener, &client, &observer, &mut pending)?;
+        }
+        read_pending(
+            &mut pending,
+            &mut client,
+            &mut observer,
+            &mut presentation,
+            &terminal,
+        )?;
+        if !read_observer(&mut observer)? {
+            observer = None;
         }
         if readiness.management_listener
             && let Some(owner) = &mut management_owner
@@ -322,6 +364,9 @@ pub(super) fn run(
             if changed && !presentation.publish_change(client.as_mut(), &terminal)? {
                 disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
+            if changed && !presentation.publish_metadata(observer.as_mut(), &terminal)? {
+                observer = None;
+            }
         }
         if readiness.pty_write && pty_open {
             pty_open = flush_pty(&mut pty, &mut writes.borrow_mut())?;
@@ -329,7 +374,7 @@ pub(super) fn run(
         if pty_was_open && !pty_open {
             discard_pty_writes(&writes);
         }
-        if readiness.client
+        if (readiness.client || client.as_ref().is_some_and(Client::has_input))
             && let Some(active) = client.as_mut()
             && !read_client(
                 active,
@@ -357,6 +402,9 @@ pub(super) fn run(
             let status = pty
                 .stop_and_reap()?
                 .ok_or("PTY child status unavailable after management stop")?;
+            if let Some(observer) = &mut observer {
+                observer.finish_session(status.code().unwrap_or(1))?;
+            }
             let owner = management_owner
                 .as_mut()
                 .expect("management stop has one owner");
@@ -372,7 +420,83 @@ pub(super) fn run(
         {
             disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
         }
+        flush_or_drop(&mut observer)?;
+        flush_or_drop(&mut pending)?;
     }
+}
+
+fn read_pending(
+    pending: &mut Option<Client>,
+    client: &mut Option<Client>,
+    observer: &mut Option<Client>,
+    presentation: &mut Presentation,
+    terminal: &Terminal<'static, '_>,
+) -> Result {
+    let Some(mut candidate) = pending.take() else {
+        return Ok(());
+    };
+    if !candidate.read_ready()? {
+        return Ok(());
+    }
+    match candidate.next_incoming()? {
+        Incoming::Negotiate(role) => {
+            let occupied = match role {
+                Negotiation::Interactive => client.is_some(),
+                Negotiation::Metadata => observer.is_some(),
+            };
+            if occupied {
+                let _ = candidate.push_message(&ServerMessage::Busy)?;
+                candidate.close_when_flushed();
+                *pending = Some(candidate);
+                return Ok(());
+            }
+            match role {
+                Negotiation::Interactive => {
+                    if candidate.begin_interactive()?
+                        && presentation.publish(Some(&mut candidate), terminal)?
+                    {
+                        *client = Some(candidate);
+                    }
+                }
+                Negotiation::Metadata => {
+                    if candidate.begin_metadata()?
+                        && presentation.publish_metadata(Some(&mut candidate), terminal)?
+                    {
+                        *observer = Some(candidate);
+                    }
+                }
+            }
+        }
+        Incoming::Pending => *pending = Some(candidate),
+        Incoming::Disconnect => {}
+        Incoming::Message(_) => unreachable!("pending client cannot send attached input"),
+    }
+    Ok(())
+}
+
+fn read_observer(observer: &mut Option<Client>) -> Result<bool> {
+    let Some(observer) = observer.as_mut() else {
+        return Ok(true);
+    };
+    if !observer.read_ready()? {
+        return Ok(false);
+    }
+    match observer.next_incoming()? {
+        Incoming::Pending => Ok(true),
+        Incoming::Disconnect => Ok(false),
+        Incoming::Negotiate(_) | Incoming::Message(_) => {
+            unreachable!("negotiated metadata observer accepts no messages")
+        }
+    }
+}
+
+fn flush_or_drop(connection: &mut Option<Client>) -> Result {
+    if let Some(active) = connection
+        && !active.flush()?
+    {
+        *connection = None;
+    }
+    Ok(())
 }
 
 fn discard_pty_writes(writes: &RefCell<VecDeque<u8>>) {
@@ -441,11 +565,6 @@ fn read_client(
     }
     loop {
         match client.next_incoming()? {
-            Incoming::Attached => {
-                if !presentation.publish(Some(client), terminal)? {
-                    return Ok(false);
-                }
-            }
             Incoming::Message(message) => {
                 if !handle_client_message(
                     client,
@@ -462,6 +581,7 @@ fn read_client(
             }
             Incoming::Pending => return Ok(true),
             Incoming::Disconnect => return Ok(false),
+            Incoming::Negotiate(_) => unreachable!("interactive client is already negotiated"),
         }
         if client.is_closing() {
             return Ok(true);
@@ -653,7 +773,11 @@ pub(crate) mod tests {
         let (mut attaching, mut attaching_peer) = Client::test_pair(Some(deadline))?;
         write_message(&mut attaching_peer, &ClientMessage::Hello)?;
         assert!(attaching.read_ready()?);
-        assert!(matches!(attaching.next_incoming()?, Incoming::Attached));
+        assert!(matches!(
+            attaching.next_incoming()?,
+            Incoming::Negotiate(Negotiation::Interactive)
+        ));
+        assert!(attaching.begin_interactive()?);
         assert!(presentation.publish(Some(&mut attaching), &terminal)?);
         assert!(matches!(
             flush_message(&mut attaching, &mut attaching_peer)?,

@@ -13,6 +13,7 @@ pub(super) const CLIENT_PASTE: u8 = 5;
 const CLIENT_RESIZE: u8 = 6;
 const CLIENT_SELECTION: u8 = 7;
 const CLIENT_PREVIEW_VERTICAL: u8 = 8;
+const CLIENT_OBSERVE_METADATA: u8 = 9;
 const SERVER_ATTACHED: u8 = 129;
 pub(super) const SERVER_BUSY: u8 = 130;
 pub(super) const SERVER_FRAME: u8 = 132;
@@ -26,6 +27,8 @@ const SERVER_WHEEL_VIEWPORT_UP: u8 = 139;
 const SERVER_WHEEL_VIEWPORT_STILL: u8 = 140;
 const SERVER_WHEEL_VIEWPORT_DOWN: u8 = 141;
 const SERVER_VERTICAL_PREVIEW: u8 = 142;
+const SERVER_OBSERVING_METADATA: u8 = 143;
+const SERVER_METADATA: u8 = 144;
 
 const SELECTION_BEGIN: u8 = 0;
 const SELECTION_UPDATE: u8 = 1;
@@ -73,6 +76,7 @@ fn message_len(
 fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
     match kind {
         CLIENT_HELLO => Ok((0, 0)),
+        CLIENT_OBSERVE_METADATA => Ok((0, 0)),
         CLIENT_KEY => Ok((16, 16 + MAX_KEY_TEXT_BYTES)),
         CLIENT_MOUSE => Ok((12, 12)),
         CLIENT_FOCUS => Ok((1, 1)),
@@ -90,7 +94,8 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
 fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     match kind {
         SERVER_ATTACHED => Ok((0, 0)),
-        SERVER_BUSY | SERVER_ACCEPTED => Ok((0, 0)),
+        SERVER_BUSY | SERVER_ACCEPTED | SERVER_OBSERVING_METADATA => Ok((0, 0)),
+        SERVER_METADATA => Ok((16, MAX_METADATA_BYTES)),
         SERVER_EXITED => Ok((4, 4)),
         SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_PAYLOAD_BYTES)),
         SERVER_FAILURE => Ok((5, 5 + MAX_FAILURE_BYTES)),
@@ -108,11 +113,12 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v4 header.
+/// Encodes one client message with an ORBS v5 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
         ClientMessage::Hello => CLIENT_HELLO,
+        ClientMessage::ObserveMetadata => CLIENT_OBSERVE_METADATA,
         ClientMessage::Key(event) => {
             validate_key(event)?;
             payload.push(key_action_tag(event.action));
@@ -213,6 +219,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     let mut reader = Reader::new(payload);
     let message = match kind {
         CLIENT_HELLO => ClientMessage::Hello,
+        CLIENT_OBSERVE_METADATA => ClientMessage::ObserveMetadata,
         CLIENT_KEY => {
             let action = decode_key_action(reader.u8()?)?;
             let raw_key = reader.u16()?;
@@ -336,11 +343,23 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v4 header.
+/// Encodes one server message with an ORBS v5 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
         ServerMessage::Attached => SERVER_ATTACHED,
+        ServerMessage::ObservingMetadata => SERVER_OBSERVING_METADATA,
+        ServerMessage::Metadata(metadata) => {
+            payload.extend_from_slice(&metadata.revision.to_le_bytes());
+            put_bounded_bytes(&mut payload, metadata.title.as_bytes(), MAX_METADATA_BYTES)?;
+            put_bounded_bytes(
+                &mut payload,
+                metadata.working_directory.as_bytes(),
+                MAX_METADATA_BYTES,
+            )?;
+            validate_bound(payload.len(), MAX_METADATA_BYTES)?;
+            SERVER_METADATA
+        }
         ServerMessage::Busy => SERVER_BUSY,
         ServerMessage::Frame(frame) => {
             payload = encode_frame(frame)?;
@@ -446,6 +465,13 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
     let mut reader = Reader::new(payload);
     let message = match kind {
         SERVER_ATTACHED => ServerMessage::Attached,
+        SERVER_OBSERVING_METADATA => ServerMessage::ObservingMetadata,
+        SERVER_METADATA => ServerMessage::Metadata(Metadata {
+            revision: u64::from_le_bytes(reader.array()?),
+            title: reader.bounded_text("metadata title", MAX_METADATA_BYTES)?,
+            working_directory: reader
+                .bounded_text("metadata working directory", MAX_METADATA_BYTES)?,
+        }),
         SERVER_BUSY => ServerMessage::Busy,
         SERVER_ACCEPTED => ServerMessage::Accepted,
         SERVER_FAILURE => {
