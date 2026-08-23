@@ -217,10 +217,12 @@ Stop; this mode does not promise logout, reboot, machine-restart, topology, or
 same-UID isolation.
 
 On Linux, Orbit requires a user-owned writable cgroup-v2 parent with
-`cgroup.kill`. Before PTY exec, the child enters one per-Session cgroup while
-Orbit remains outside it. SIGINT, SIGTERM, and SIGHUP send SIGHUP only to an
-unreaped direct PTY child and give the exact containment 500 ms to empty, kill
-any remaining contained descendants, reap the direct child, require
+`cgroup.kill`. Orbit permits up to one second for an external service manager
+to finish placing it, without relaxing the parent ownership, mode, or membership
+checks. Before PTY exec, the child enters one per-Session cgroup while Orbit
+remains outside it. SIGINT, SIGTERM, and SIGHUP send SIGHUP only to an unreaped
+direct PTY child and give the exact containment 500 ms to empty, kill any
+remaining contained descendants, reap the direct child, require
 `cgroup.events` to report `populated 0`, and remove the exact cgroup before
 reporting success. Orbit never targets a numeric process group and refuses to
 start the PTY command when containment cannot be established.
@@ -478,10 +480,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 12,223 |
+| Product Rust source and tests | 12,267 |
 | Governance Rust tool and tests | 577 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **12,276** |
-| **Total owned implementation source** | **12,983** |
+| **Total owned Rust** | **12,844** |
+| **Total owned implementation source** | **13,551** |

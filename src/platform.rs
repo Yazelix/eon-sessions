@@ -27,6 +27,8 @@ static TERMINATE: AtomicBool = AtomicBool::new(false);
 static NEXT_CONTAINMENT: AtomicU64 = AtomicU64::new(0);
 static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
+const CGROUP_PLACEMENT_LIMIT: Duration = Duration::from_secs(1);
+const CGROUP_PLACEMENT_POLL: Duration = Duration::from_millis(10);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 const SHUTDOWN_POLL: Duration = Duration::from_millis(10);
@@ -193,41 +195,10 @@ struct SessionContainment {
 
 impl SessionContainment {
     fn create() -> Result<(Self, File)> {
-        let memberships = fs::read_to_string("/proc/self/cgroup")?;
-        let relative = memberships
-            .lines()
-            .find_map(|line| line.strip_prefix("0::"))
-            .ok_or("Orbit requires a cgroup-v2 hierarchy")?
-            .strip_prefix('/')
-            .ok_or("current cgroup-v2 path is not absolute")?;
-        if !Path::new(relative)
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-        {
-            return Err("current cgroup-v2 path contains an unsafe component".into());
-        }
-        let parent = Path::new(CGROUP_ROOT).join(relative);
-        let parent_metadata = fs::metadata(&parent)?;
         let owner = unsafe { libc::geteuid() };
-        if !parent_metadata.is_dir()
-            || parent_metadata.uid() != owner
-            || parent_metadata.mode() & 0o022 != 0
-        {
-            return Err(format!(
-                "current cgroup {} is not a user-owned non-writable-by-others directory",
-                parent.display()
-            )
-            .into());
-        }
-        let own_pid = std::process::id().to_string();
-        if !fs::read_to_string(parent.join("cgroup.procs"))?
-            .lines()
-            .any(|pid| pid == own_pid)
-        {
-            return Err(
-                format!("current cgroup {} does not contain Orbit", parent.display()).into(),
-            );
-        }
+        let parent = wait_for_cgroup_parent(Instant::now() + CGROUP_PLACEMENT_LIMIT, || {
+            current_cgroup_parent(owner)
+        })?;
 
         let path = parent.join(format!(
             "_yazelix_orbit_{}_{}",
@@ -328,6 +299,61 @@ impl SessionContainment {
         self.path = None;
         Ok(())
     }
+}
+
+fn wait_for_cgroup_parent(
+    deadline: Instant,
+    mut inspect: impl FnMut() -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    loop {
+        match inspect() {
+            Ok(parent) => return Ok(parent),
+            Err(error) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(error);
+                }
+                thread::sleep(CGROUP_PLACEMENT_POLL.min(deadline.duration_since(now)));
+            }
+        }
+    }
+}
+
+fn current_cgroup_parent(owner: u32) -> Result<PathBuf> {
+    let memberships = fs::read_to_string("/proc/self/cgroup")?;
+    let relative = memberships
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .ok_or("Orbit requires a cgroup-v2 hierarchy")?
+        .strip_prefix('/')
+        .ok_or("current cgroup-v2 path is not absolute")?;
+    if !Path::new(relative)
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err("current cgroup-v2 path contains an unsafe component".into());
+    }
+    let parent = Path::new(CGROUP_ROOT).join(relative);
+    let parent_metadata = fs::metadata(&parent)?;
+    if !parent_metadata.is_dir()
+        || parent_metadata.uid() != owner
+        || parent_metadata.mode() & 0o022 != 0
+    {
+        return Err(format!(
+            "current cgroup {} is not a user-owned non-writable-by-others directory",
+            parent.display()
+        )
+        .into());
+    }
+    let own_pid = std::process::id().to_string();
+    if !fs::read_to_string(parent.join("cgroup.procs"))?
+        .lines()
+        .any(|pid| pid == own_pid)
+    {
+        return Err(format!("current cgroup {} does not contain Orbit", parent.display()).into());
+    }
+
+    Ok(parent)
 }
 
 impl Drop for SessionContainment {
@@ -839,6 +865,24 @@ mod tests {
 
         assert_eq!((size.ws_col, size.ws_row), (100, 40));
         assert_eq!((size.ws_xpixel, size.ws_ypixel), (920, 740));
+    }
+
+    #[test]
+    fn cgroup_parent_waits_for_service_manager_placement() -> Result {
+        let expected = PathBuf::from("/safe/app.scope");
+        let mut attempts = 0;
+        let parent = wait_for_cgroup_parent(Instant::now() + Duration::from_millis(100), || {
+            attempts += 1;
+            if attempts == 1 {
+                Err("inherited login scope is not user-owned".into())
+            } else {
+                Ok(expected.clone())
+            }
+        })?;
+
+        assert_eq!(parent, expected);
+        assert_eq!(attempts, 2);
+        Ok(())
     }
 
     #[test]
