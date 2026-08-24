@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::ExitCode,
@@ -117,8 +117,7 @@ fn markdown_table(
     rows
 }
 
-fn contract_id(cell: &str) -> Option<&str> {
-    let id = cell.strip_prefix('`')?.strip_suffix('`')?;
+fn contract_id(id: &str) -> Option<&str> {
     let number = id.strip_prefix("ORB-C")?;
     if !number.is_empty()
         && !number.starts_with('0')
@@ -130,6 +129,76 @@ fn contract_id(cell: &str) -> Option<&str> {
     }
 }
 
+#[derive(Debug)]
+struct ContractSection {
+    id: String,
+    title: String,
+    fields: BTreeMap<String, String>,
+}
+
+fn contract_sections(text: &str, errors: &mut Vec<String>) -> Vec<ContractSection> {
+    let mut sections = Vec::new();
+    let mut current: Option<ContractSection> = None;
+    let mut current_field: Option<String> = None;
+
+    for line in text.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            if let Some(section) = current.take() {
+                sections.push(section);
+            }
+            current_field = None;
+            if heading.starts_with("ORB-") {
+                let (id, title) = heading.split_once(" — ").unwrap_or((heading, ""));
+                current = Some(ContractSection {
+                    id: id.to_owned(),
+                    title: title.to_owned(),
+                    fields: BTreeMap::new(),
+                });
+            }
+            continue;
+        }
+
+        let Some(section) = current.as_mut() else {
+            continue;
+        };
+        let trimmed = line.trim_start();
+        if let Some(field) = trimmed.strip_prefix("- **") {
+            if let Some((name, value)) = field.split_once(":**") {
+                let name = name.to_owned();
+                if section
+                    .fields
+                    .insert(name.clone(), value.trim().to_owned())
+                    .is_some()
+                {
+                    errors.push(format!(
+                        "docs/CONTRACTS.md: {} has duplicate {name} field",
+                        section.id
+                    ));
+                }
+                current_field = Some(name);
+                continue;
+            }
+        }
+        if !trimmed.is_empty()
+            && !trimmed.starts_with("## ")
+            && let Some(name) = current_field.as_ref()
+        {
+            let value = section.fields.get_mut(name).expect("current field exists");
+            if !value.is_empty() {
+                value.push(' ');
+            }
+            value.push_str(trimmed);
+        }
+    }
+    if let Some(section) = current {
+        sections.push(section);
+    }
+    if sections.is_empty() {
+        errors.push("docs/CONTRACTS.md: no ORB-C* contract sections".to_owned());
+    }
+    sections
+}
+
 fn lowercase_hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
@@ -138,41 +207,79 @@ fn lowercase_hex(value: &str, length: usize) -> bool {
 }
 
 fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
-    let rows = markdown_table(
-        text,
-        "## Current contracts",
-        &[
-            "ID",
-            "Contract",
-            "Owner",
-            "Status",
-            "Accepted proof revision",
-            "Check or evidence",
-            "Gap",
-        ],
-        "docs/CONTRACTS.md",
-        errors,
-    );
+    const REQUIRED_FIELDS: &[&str] = &[
+        "Status",
+        "Consumer",
+        "Trigger",
+        "Result",
+        "Important failures",
+        "Owner",
+        "Boundary",
+        "Proof",
+    ];
+    const ALLOWED_FIELDS: &[&str] = &[
+        "Status",
+        "Consumer",
+        "Trigger",
+        "Result",
+        "Important failures",
+        "Owner",
+        "Consumes",
+        "Boundary",
+        "Proof",
+        "Evidence",
+        "Environment",
+        "Open proof",
+    ];
+
+    let sections = contract_sections(text, errors);
     let mut known = BTreeSet::new();
-    for row in rows {
-        let Some(id) = contract_id(&row[0]) else {
+    for section in sections {
+        let Some(id) = contract_id(&section.id) else {
             errors.push(format!(
                 "docs/CONTRACTS.md: malformed contract ID {}",
-                row[0]
+                section.id
             ));
             continue;
         };
         if !known.insert(id.to_owned()) {
             errors.push(format!("docs/CONTRACTS.md: duplicate contract ID {id}"));
         }
-        if !CONTRACT_STATUSES.contains(&row[3].as_str()) {
+        if section.title.is_empty() {
+            errors.push(format!("docs/CONTRACTS.md: {id} requires a title"));
+        }
+        for field in REQUIRED_FIELDS {
+            if !section
+                .fields
+                .get(*field)
+                .is_some_and(|value| !value.is_empty())
+            {
+                errors.push(format!(
+                    "docs/CONTRACTS.md: {id} requires a nonempty {field} field"
+                ));
+            }
+        }
+        for field in section.fields.keys() {
+            if !ALLOWED_FIELDS.contains(&field.as_str()) {
+                errors.push(format!("docs/CONTRACTS.md: {id} has unknown {field} field"));
+            }
+        }
+        let status = section
+            .fields
+            .get("Status")
+            .map(String::as_str)
+            .unwrap_or("");
+        if !CONTRACT_STATUSES.contains(&status) {
             errors.push(format!(
-                "docs/CONTRACTS.md: {id} has invalid contract status {}",
-                row[3]
+                "docs/CONTRACTS.md: {id} has invalid contract status {status}"
             ));
         }
-        if row[3] == "Proved" {
-            let proof = row[4]
+        if status == "Proved" {
+            let proof = section
+                .fields
+                .get("Proof")
+                .map(String::as_str)
+                .unwrap_or("")
                 .strip_prefix('`')
                 .and_then(|value| value.strip_suffix('`'));
             if !proof.is_some_and(|value| lowercase_hex(value, 40)) {
@@ -180,7 +287,11 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
                     "docs/CONTRACTS.md: Proved {id} requires a full 40-character proof commit"
                 ));
             }
-            if matches!(row[5].as_str(), "" | "—" | "-") {
+            if !section
+                .fields
+                .get("Evidence")
+                .is_some_and(|value| !matches!(value.as_str(), "" | "—" | "-"))
+            {
                 errors.push(format!(
                     "docs/CONTRACTS.md: Proved {id} requires a named check or evidence"
                 ));
@@ -454,10 +565,16 @@ mod tests {
             self.write(
                 "docs/CONTRACTS.md",
                 &format!(
-                    "# Contracts\n\n## Current contracts\n\n\
-                     | ID | Contract | Owner | Status | Accepted proof revision | Check or evidence | Gap |\n\
-                     | --- | --- | --- | --- | --- | --- | --- |\n\
-                     | `ORB-C1` | Durable session | Orbit | Proved | `{COMMIT}` | canonical contract test | None |\n"
+                    "# Contracts\n\n## ORB-C1 — Durable session\n\n\
+                     - **Status:** Proved\n\
+                     - **Consumer:** One local client.\n\
+                     - **Trigger:** The client disconnects and later reconnects.\n\
+                     - **Result:** The Session remains live.\n\
+                     - **Important failures:** Connection failure is explicit.\n\
+                     - **Owner:** Orbit.\n\
+                     - **Boundary:** Restart persistence is excluded.\n\
+                     - **Proof:** `{COMMIT}`\n\
+                       - **Evidence:** canonical contract test\n"
                 ),
             );
             self.write(
@@ -531,14 +648,47 @@ mod tests {
         repository.write(
             "docs/CONTRACTS.md",
             &format!(
-                "# Contracts\n\n## Current contracts\n\n\
-                 | ID | Contract | Owner | Status | Accepted proof revision | Check or evidence | Gap |\n\
-                 | --- | --- | --- | --- | --- | --- | --- |\n\
-                 | `ORB-C1` | One; see ORB-C8 | Orbit | Proved | `{COMMIT}` | canonical test | None |\n\
-                 | `ORB-C1` | Duplicate | Orbit | Done | `{COMMIT}` | canonical test | None |\n\
-                 | `ORB-X` | Malformed | Orbit | Planned | — | plan | Open |\n\
-                 | `ORB-C2` | Bad proof | Orbit | Proved | `edge` | — | None |\n\
-                 | Too | Short |\n"
+                "# Contracts\n\n\
+                 ## ORB-C1 — One\n\n\
+                 - **Status:** Proved\n\
+                 - **Consumer:** Client.\n\
+                 - **Trigger:** Input.\n\
+                 - **Result:** Preserve ORB-C8.\n\
+                 - **Important failures:** Explicit.\n\
+                 - **Owner:** Orbit.\n\
+                 - **Owner:** Duplicate owner.\n\
+                 - **Boundary:** None.\n\
+                 - **Proof:** `{COMMIT}`\n\
+                   - **Evidence:** canonical test\n\n\
+                 ## ORB-C1 — Duplicate\n\n\
+                 - **Status:** Done\n\
+                 - **Consumer:** Client.\n\
+                 - **Trigger:** Input.\n\
+                 - **Result:** Duplicate.\n\
+                 - **Important failures:** Explicit.\n\
+                 - **Owner:** Orbit.\n\
+                 - **Boundary:** None.\n\
+                 - **Proof:** `{COMMIT}`\n\
+                   - **Evidence:** canonical test\n\n\
+                 ## ORB-X — Malformed\n\n\
+                 - **Status:** Planned\n\
+                 - **Consumer:** Client.\n\
+                 - **Trigger:** Input.\n\
+                 - **Result:** Planned.\n\
+                 - **Important failures:** Explicit.\n\
+                 - **Owner:** Orbit.\n\
+                 - **Boundary:** Open.\n\
+                 - **Proof:** None.\n\n\
+                 ## ORB-C2 — Bad proof\n\n\
+                 - **Status:** Proved\n\
+                 - **Consumer:** Client.\n\
+                 - **Trigger:** Input.\n\
+                 - **Result:** Bad proof.\n\
+                 - **Important failures:** Explicit.\n\
+                 - **Boundary:** None.\n\
+                 - **Proof:** `edge`\n\
+                   - **Evidence:** —\n\
+                 - **Maybe:** typo\n"
             ),
         );
         repository.issue["description"] = json!("Preserve ORB-C1 and unknown ORB-C9.");
@@ -558,10 +708,12 @@ mod tests {
 
         let errors = repository.errors().join("\n");
 
-        assert!(errors.contains("Current contracts row 5 has the wrong column count"));
         assert!(errors.contains("duplicate contract ID ORB-C1"));
-        assert!(errors.contains("malformed contract ID `ORB-X`"));
+        assert!(errors.contains("ORB-C1 has duplicate Owner field"));
+        assert!(errors.contains("malformed contract ID ORB-X"));
         assert!(errors.contains("invalid contract status Done"));
+        assert!(errors.contains("ORB-C2 requires a nonempty Owner field"));
+        assert!(errors.contains("ORB-C2 has unknown Maybe field"));
         assert!(errors.contains("ORB-C2 requires a full 40-character proof commit"));
         assert!(errors.contains("ORB-C2 requires a named check or evidence"));
         assert!(errors.contains("unknown contract reference ORB-C9"));
