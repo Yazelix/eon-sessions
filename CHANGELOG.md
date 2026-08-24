@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `345fa7b87d0b5f332038140ce8d0e06d3faa9df3` proof replaces
+  `ORB-C12` and refreshes `ORB-C13`: ordinary Linux PTY Sessions no longer
+  require delegated cgroup access. Explicit Stop performs bounded process-group
+  cleanup and direct-child reaping without delayed forced signaling after the
+  shell exits during grace. Detached processes and SIGHUP-ignoring foreground
+  jobs may survive; client disconnection remains non-destructive.
 - The accepted `0ca0cc93b83793d08eadcca7eac6e947a80ce25d` proof hardens
   `ORB-C12`: Orbit permits up to one second for an external launcher to finish
   placing it in a cgroup before PTY startup, while retaining the exact parent
