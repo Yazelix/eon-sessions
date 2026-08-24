@@ -6,6 +6,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `e86a036a4481ea2be55012a38c13f75204b81278` proof extends
+  `ORB-C8`: each Session uses a 16 MiB primary-history byte budget. History is
+  allocated as needed, retained row count depends on content, and libghostty
+  may exceed the budget to preserve the active viewport.
 - The accepted `345fa7b87d0b5f332038140ce8d0e06d3faa9df3` proof replaces
   `ORB-C12` and refreshes `ORB-C13`: ordinary Linux PTY Sessions no longer
   require delegated cgroup access. Explicit Stop performs bounded process-group
