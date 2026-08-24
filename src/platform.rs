@@ -151,9 +151,6 @@ impl Pty {
             if foreground_group > 0 && foreground_group != child_group {
                 signal_process_group(foreground_group, libc::SIGKILL)?;
             }
-        }
-
-        if status.is_none() {
             let deadline = Instant::now() + SHUTDOWN_LIMIT;
             loop {
                 if let Some(exit) = child.try_wait()? {

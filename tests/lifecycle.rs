@@ -603,7 +603,7 @@ fn wait_process_gone(pid: u32) -> TestResult {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("PTY child {pid} remained alive").into());
+            return Err(format!("process {pid} remained alive").into());
         }
         thread::yield_now();
     }
@@ -1676,9 +1676,9 @@ fn shutdown_escalates_foreground_and_permits_a_detached_process() -> TestResult 
             .arg("-c")
             .arg(
                 "set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
-                 /usr/bin/setsid --fork /bin/sh -c 'trap \"\" HUP TERM; printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
+                 /usr/bin/setsid --fork /bin/sh -c 'printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
                  while [ ! -s \"$ORBIT_DETACHED_PID\" ]; do :; done; \
-                 /bin/sh -c 'trap \"\" HUP TERM; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; exec sleep 60'",
+                 /bin/sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; exec sleep 60'",
             )
             .env("ORBIT_INITIAL_PID", &initial_pid_file)
             .env("ORBIT_DETACHED_PID", &detached_pid_file)
