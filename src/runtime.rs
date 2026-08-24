@@ -22,6 +22,7 @@ use presentation::Extractor;
 pub(crate) const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 const MAX_EXIT_PTY_READS: usize = 4;
 const MAX_PENDING_CLIPBOARD_WRITES: usize = 64;
+const SCROLLBACK_BUDGET_BYTES: usize = 16 * 1024 * 1024;
 const SYNCHRONIZED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) const INITIAL_SIZE: SurfaceSize = SurfaceSize {
@@ -241,13 +242,8 @@ pub(super) fn run(
     let response_sink = Rc::clone(&writes);
     let response_overflow = Rc::new(Cell::new(false));
     let overflow_sink = Rc::clone(&response_overflow);
-    let mut terminal = Terminal::new(TerminalOptions {
-        cols: size.cols,
-        rows: size.rows,
-        max_scrollback: 1_000,
-    })?;
+    let mut terminal = new_terminal(size, SCROLLBACK_BUDGET_BYTES)?;
     install_ansi_palette(&mut terminal, ansi_palette)?;
-    terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
     terminal.on_pty_write(move |_, bytes| {
         if !queue_pty_write(&mut response_sink.borrow_mut(), bytes) {
             overflow_sink.set(true);
@@ -423,6 +419,19 @@ pub(super) fn run(
         flush_or_drop(&mut observer)?;
         flush_or_drop(&mut pending)?;
     }
+}
+
+fn new_terminal(
+    size: SurfaceSize,
+    scrollback_budget_bytes: usize,
+) -> Result<Terminal<'static, 'static>> {
+    let mut terminal = Terminal::new(TerminalOptions {
+        cols: size.cols,
+        rows: size.rows,
+        max_scrollback: scrollback_budget_bytes,
+    })?;
+    terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
+    Ok(terminal)
 }
 
 fn read_pending(
@@ -661,6 +670,7 @@ fn disconnect_client(
 pub(crate) mod tests {
     use super::*;
     use crate::diagnostic::{read_message, write_message};
+    use libghostty_vt::screen::Screen;
     use orbit_protocol::session::{
         ClientMessage, Failure, FailureCode, Modifiers, MouseAction, MouseButton,
     };
@@ -671,16 +681,81 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn terminal_with_scrollback(
-        max_scrollback: usize,
+        max_scrollback_bytes: usize,
     ) -> Result<Terminal<'static, 'static>> {
-        let size = INITIAL_SIZE;
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: size.cols,
-            rows: size.rows,
-            max_scrollback,
-        })?;
-        terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
-        Ok(terminal)
+        new_terminal(INITIAL_SIZE, max_scrollback_bytes)
+    }
+
+    fn measured_history(line: &str, rows: usize) -> Result<(Terminal<'static, 'static>, u64)> {
+        let size = SurfaceSize {
+            cols: 120,
+            rows: 40,
+            screen_width: 960,
+            screen_height: 640,
+            ..INITIAL_SIZE
+        };
+        let mut terminal = new_terminal(size, SCROLLBACK_BUDGET_BYTES)?;
+        terminal.vt_write(line.repeat(rows).as_bytes());
+        let live = terminal.scrollbar()?;
+        assert_eq!(live.offset + live.len, live.total);
+        Ok((terminal, live.total - live.len))
+    }
+
+    #[test]
+    fn configured_history_budget_preserves_primary_history_edges() -> Result {
+        let (mut terminal, plain_rows) = measured_history("x\r\n", 1_000)?;
+
+        let live = terminal.scrollbar()?;
+        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Top);
+        let top = terminal.scrollbar()?;
+        assert_eq!(top.offset, 0);
+        assert_eq!((top.total, top.len), (live.total, live.len));
+
+        terminal.vt_write(b"\x1b[?1049h");
+        assert_eq!(terminal.active_screen()?, Screen::Alternate);
+        terminal.vt_write(b"\x1b[?1049l");
+        assert_eq!(
+            {
+                let primary = terminal.scrollbar()?;
+                (primary.offset, primary.total, primary.len)
+            },
+            (top.offset, top.total, top.len)
+        );
+        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Bottom);
+        assert_eq!(
+            {
+                let bottom = terminal.scrollbar()?;
+                (bottom.offset, bottom.total, bottom.len)
+            },
+            (live.offset, live.total, live.len)
+        );
+
+        assert!(plain_rows >= 950);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "retained-history residency measurement"]
+    fn measure_configured_history_initial_residency() -> Result {
+        let (terminal, retained_rows) = measured_history("", 0)?;
+        assert_eq!(retained_rows, 0);
+        std::hint::black_box(&terminal);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "expensive retained-history capacity measurement"]
+    fn measure_configured_history_content_capacity() -> Result {
+        let (_, plain_rows) = measured_history("plain history row\r\n", 20_000)?;
+        let (_, styled_rows) =
+            measured_history("\x1b[1;38;5;42mstyled history row\x1b[0m\r\n", 20_000)?;
+        let (_, unicode_rows) = measured_history("unicode e\u{301} 界 👩🏽‍💻 history row\r\n", 20_000)?;
+        let budget_mib = SCROLLBACK_BUDGET_BYTES / (1024 * 1024);
+        eprintln!(
+            "{budget_mib} MiB history measurement at 120x40: plain={plain_rows}, styled={styled_rows}, unicode={unicode_rows} retained rows"
+        );
+        assert!(plain_rows >= 10_000);
+        Ok(())
     }
 
     pub(crate) fn attached_client() -> Result<(Client, UnixStream)> {
