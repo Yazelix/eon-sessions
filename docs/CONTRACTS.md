@@ -182,7 +182,8 @@ system must preserve.
   - Negative movement goes toward older history, positive movement goes toward
     the live area, and movement clamps at history boundaries.
   - A successful semantic key that emits PTY bytes returns primary history to
-    the live area; detach does not transfer or reset viewport ownership.
+    the live area; detach does not transfer, reconstruct, or reset viewport
+    ownership.
 - **Important failures:**
   - Terminal-owned mouse tracking or alternate-screen mode 1007 returns
     terminal-owned without PTY input, mutation, or revision advance.
@@ -213,15 +214,18 @@ system must preserve.
   - Orbit alone resolves selection, selected presentation, and copied text.
   - Finish freezes one bounded plain-text candidate that later output, resize,
     reflow, or screen transition cannot reinterpret or erase.
-  - A non-selection terminal mutation cancels active selection; read-only
-    preview does not.
-  - A newer Begin, client loss, or exit clears selection without resetting the
-    ORB-C8 viewport.
-- **Important failures:** Stale revisions, invalid coordinates or phase order,
-  formatting overflow, and pressure fail without partial state or text.
+  - A non-selection terminal mutation clears active selection and its
+    presentation before mutation; read-only preview does not.
+  - A newer valid Begin, client loss, or exit clears selection without resetting
+    the ORB-C8 viewport.
+- **Important failures:**
+  - Stale revisions, invalid coordinates or phase order, formatting overflow,
+    and pressure fail without partial state or text.
+  - Selection work and buffering remain bounded and cannot block authoritative
+    PTY processing or cleanup.
 - **Owner:** Orbit's semantic interaction owner with libghostty current-viewport
   selection and canonical ORBS v6.
-- **Consumes:** Canonical ORBS v6.
+- **Consumes:** Canonical ORBS v6 and ORB-C7 bounded-pressure behavior.
 - **Boundary:** Native clipboard effects, richer gestures, search, graphics, and
   restart persistence are excluded.
 - **Proof:** `413809cd6ac34e70bb3bf051d7a2a8d7da1aa357`
@@ -261,7 +265,8 @@ system must preserve.
   policy and delivery.
 - **Important failures:** Invalid UTF-8 or NUL text, clears, unsupported
   representations, payloads above 1 MiB, detached writes, and bounded pressure
-  fail without replay or silent coalescing; pressure disconnects the client.
+  fail without retention, replay, or silent coalescing; pressure disconnects the
+  client.
 - **Owner:** Orbit attachment transport and concrete runtime clipboard
   interpretation with libghostty normalized effects and canonical ORBS v6.
 - **Consumes:** Canonical ORBS v6.
@@ -282,18 +287,30 @@ system must preserve.
 - **Result:**
   - Orbit succeeds only after reaping its direct PTY child.
   - An already-exited child is reaped without signaling a recyclable PID.
-  - Otherwise Orbit sends SIGHUP to the initial PTY process group and distinct
-    foreground group, waits up to 500 ms, then SIGKILLs only still-stable groups
-    after rereading foreground ownership.
-  - Cleanup removes exact endpoints and leaves permitted detached and unrelated
-    processes alone.
-- **Important failures:** PID reuse, foreground-group changes, child exit during
-  grace, and writing descendants cannot cause delayed signaling or unbounded
-  server lifetime.
-- **Owner:** Orbit's concrete runtime coordinator; Linux PTY and process-group
+  - Otherwise Orbit sends SIGHUP to the initial PTY process group and, when
+    distinct and available, the terminal's current foreground process group,
+    then gives the direct child up to 500 ms to exit.
+  - If the child remains unreaped, Orbit SIGKILLs its still-stable initial group
+    and rereads the current foreground group before escalation. If the child
+    exits during grace, Orbit sends no later signal to a cached foreground-group
+    number.
+  - After escalation, Orbit requires the direct child to be reaped within two
+    seconds.
+- **Important failures:**
+  - An already-gone signal target is benign; every other signaling or reaping
+    failure is bounded non-success.
+  - PID reuse, foreground-group changes, child exit during grace, and writing
+    descendants cannot cause delayed signaling or unbounded server lifetime.
+  - Client disconnection remains the non-destructive ORB-C1 detach path.
+- **Owner:** Orbit's concrete runtime coordinator owns graceful timing,
+  escalation, direct-child reaping, and result truth; Linux PTY and process-group
   mechanics stay in the platform seam.
-- **Boundary:** Detached ordinary-disposition processes may survive; macOS is
-  unproved.
+- **Boundary:**
+  - Deliberately detached processes, non-foreground groups outside the initial
+    group, and SIGHUP-ignoring foreground jobs whose shell exits during grace may
+    survive.
+  - Orbit scans no process names, ancestry, session IDs, or procfs and claims no
+    whole-descendant cleanup. macOS remains unproved.
 - **Proof:** `7de9980ffbd6417758698d5c33356204eeb24de5`
   - **Environment:** x86_64 Linux
   - **Evidence:**
@@ -311,24 +328,59 @@ system must preserve.
 - **Trigger:** A launcher prepares an owned mode-0600 record, Orbit crosses Ready,
   the original supervisor disappears, or a replacement acquires management.
 - **Result:**
-  - Orbit serializes Ready with one exclusive lock, revalidates and marks the
-    retained inode, then atomically publishes the canonical live record.
+  - The launcher may retain an empty exact owned mode-0600 record inode before
+    spawn. Orbit serializes Ready by attempting one exclusive lock; a held claim
+    stops startup without marking or publishing.
+  - After winning, Orbit revalidates and marks the retained inode, then
+    atomically replaces its pathname with the canonical live record.
   - Only a launcher winning the still-empty retained inode may use pre-Ready
     local-child rollback.
   - After Ready, supervisor loss does not stop or hold open the Orbit run.
-  - One replacement may acquire the sole private management lease and request
-    canonical Stop without reconstructing Session authority.
-  - Stop completes only after ORB-C12 cleanup and exact tombstone/endpoint
-    publication.
-- **Important failures:** Held claims, replaced or malformed records, wrong UID,
-  generation, run identity, process identity, lease contention, and transport
-  loss fail closed without PID, process-name, process-group, cgroup, or pidfd
-  fallback authority.
+  - One replacement may acquire the sole private management lease only after a
+    live handshake matches:
+    - the bounded logical Session ID and fresh run ID;
+    - the exact record plus component and management generations;
+    - Orbit PID and start identity, both endpoint identities, and expected peer
+      UID.
+  - Files and process metadata locate or corroborate a candidate but never
+    authorize attach or Stop.
+  - Lease disconnect before Stop is non-destructive. Two replacements produce
+    one winner and one Busy loser; accepted Stop is not cancelled by disconnect.
+  - Management carries only bounded identity, live status, and explicit Stop,
+    with one request and response in flight.
+  - Canonical ORBS remains a separate one-input-client plus
+    one-metadata-observer boundary retaining ORB-C1 through ORB-C11.
+  - Stop succeeds only through the validated lease after ORB-C12 succeeds.
+  - Natural child exit and successful Stop atomically replace the live record
+    with one non-authoritative terminal tombstone containing termination reason
+    and exact exit-code-or-signal outcome, then remove only exact endpoints.
+- **Important failures:**
+  - Validation or transport failure authorizes no PID, process group, process
+    name, pathname, procfs scan, cgroup, or pidfd fallback.
+  - Bounds are explicit:
+    - Eon start and recovery: five seconds;
+    - Orbit incomplete handshake: one second;
+    - each management message and record: 4 KiB;
+    - each identity: 128 UTF-8 bytes;
+    - failure detail: 1 KiB.
+  - Runtime directories must be exact UID-owned mode-0700 directories; sockets
+    and regular records must be exact UID-owned mode-0600 objects.
+  - Symlinks, unexpected types, wrong ownership or mode, replacement, overflow,
+    malformed or incompatible state, and slow peers fail closed without blocking
+    PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   Linux mechanics remain isolated, while Eon owns consumer policy.
 - **Consumes:** Canonical management v1 and ORB-C12.
-- **Boundary:** Same-boot, same-login local recovery only; machine restart,
-  logout survival, remote authority, and macOS are excluded.
+- **Boundary:**
+  - The contract is per live Orbit run. Eon retains topology, enumeration,
+    cleanup, and recovery policy.
+  - No workspace topology, retained log, Orbit or machine restart, logout or
+    reboot survival, multiplayer, remote access, public protocol,
+    service-manager requirement, or same-UID sandbox is promised.
+  - Platform-neutral identity, lease, status, and failure values use isolated
+    Linux spawn/stdio, peer-credential, process/start-identity, endpoint,
+    permission, and polling mechanics. Linux is first and macOS remains
+    unproved.
 - **Proof:** `7de9980ffbd6417758698d5c33356204eeb24de5`
   - **Environment:** x86_64 Linux
   - **Evidence:**
@@ -378,9 +430,12 @@ remains owned by `orb-vt-unicode-baselines-i32`; performance remains owned by
 
 ## Rules
 
-- Each contract uses one `## ORB-CN — Name` heading and the semantic fields
+- Each contract uses one `## ORB-CN — Name` heading and the required fields
   `Status`, `Consumer`, `Trigger`, `Result`, `Important failures`, `Owner`,
-  `Boundary`, and `Proof`; use nested bullets instead of prose table cells.
+  `Boundary`, and `Proof`.
+- Add optional `Consumes` and `Open proof` fields when applicable; nest
+  `Environment` and `Evidence` under `Proof`, and use nested bullets instead of
+  prose table cells.
 - Contract IDs are stable and repository-qualified. Never renumber or reuse an
   ID; mark an explicitly removed contract retired.
 - Only user-approved user-visible behavior, correctness boundaries, ownership
