@@ -18,14 +18,15 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns candidate ORBS v6, extending the accepted ORBS v5 proof
-at `69c402737799f03e615473956954a043647a4713`, including one input-capable
+The same package owns canonical ORBS v6 at
+`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`, replacing the accepted ORBS v5
+proof `69c402737799f03e615473956954a043647a4713`, including one input-capable
 attachment, one bounded read-only title/CWD observer, frames, lifecycle,
 semantic input, selection and copy, terminal clipboard writes, revision-bound
 adjacent-row previews, typed vertical-wheel outcomes, and bounded signed
 whole-row viewport commits. The currently
 composed Venus, Eon, and Eonova sources remain on their exact accepted ORBS v4
-pair until owner-first Venus and Eon adoption consumes an accepted v6 proof.
+pair until owner-first Venus and Eon adoption consumes this proof.
 Orbit's server and diagnostic client use only the canonical values.
 Orbit resolves selection from the exact complete-frame revision and current
 viewport, publishes selected cells through normal frames, and returns only
@@ -149,7 +150,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The candidate ORBS v6 producer uses a 12-byte explicit little-endian header with `ORBS`
+The accepted ORBS v6 producer uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -297,11 +298,11 @@ covers same-boot recovery, owner-routed Stop, and native Wayland delivery to the
 primary selection. Ordinary clipboard delivery, Wayland without data-control,
 broader compositors, and macOS remain unproved. No adapter, feature probe,
 dual-version support, or compatibility window exists.
-ORBS v6 is an owner-first breaking candidate that replaces the unconsumed v5
-producer proof `69c402737799f03e615473956954a043647a4713`. A separate Venus
-consumer run must pin the accepted v6 source before Eon updates the composed
-pair. The current v4 product pin remains valid and receives no v5 or v6
-capability until that ordered adoption.
+ORBS v6 is an owner-first breaking replacement proved by Orbit at
+`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`. A separate Venus consumer run
+must pin that exact source before Eon updates the composed pair. The current v4
+product pin remains valid and receives no v5 or v6 capability until that
+ordered adoption.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches

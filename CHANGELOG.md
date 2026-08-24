@@ -6,6 +6,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `780f5d746175b4a9b71df57c51ed4bfcc4c4c375` proof changes
+  `ORB-C8` and replaces ORBS v5 with exact-version ORBS v6. One revision-bound
+  request commits up to 1,024 signed whole rows in one native viewport
+  operation and returns exact requested/applied rows, one complete frame, and
+  the next adjacent row or edge. A routing change returns terminal-owned
+  without PTY input or viewport mutation. Venus and Eon adopt the owner proof
+  separately without an adapter, dual-version window, or dependency change.
 - The accepted `e86a036a4481ea2be55012a38c13f75204b81278` proof extends
   `ORB-C8`: each Session uses a 16 MiB primary-history byte budget. History is
   allocated as needed, retained row count depends on content, and libghostty
