@@ -216,25 +216,23 @@ Eonova consume this owner for accepted same-boot recovery and owner-routed
 Stop; this mode does not promise logout, reboot, machine-restart, topology, or
 same-UID isolation.
 
-On Linux, Orbit requires a user-owned writable cgroup-v2 parent with
-`cgroup.kill`. Orbit permits up to one second for an external service manager
-to finish placing it, without relaxing the parent ownership, mode, or membership
-checks. Before PTY exec, the child enters one per-Session cgroup while Orbit
-remains outside it. SIGINT, SIGTERM, and SIGHUP send SIGHUP only to an unreaped
-direct PTY child and give the exact containment 500 ms to empty, kill any
-remaining contained descendants, reap the direct child, require
-`cgroup.events` to report `populated 0`, and remove the exact cgroup before
-reporting success. Orbit never targets a numeric process group and refuses to
-start the PTY command when containment cannot be established.
-The cgroup is a lifecycle scope rather than a hostile-code sandbox. `nohup`,
-`disown`, daemon-style forks, and `setsid` remain owned while they stay in that
-scope. A process launched or migrated into another lifecycle manager's scope is
-outside Orbit's shutdown result; deliberate same-user cgroup manipulation is
-not an escape-resistance claim. Cgroup handoff does not detach the process from
-the PTY: ordinary kernel hangup may still signal a foreground-attached process,
-and full signal isolation requires terminal-session detachment. Client
-disconnection remains non-destructive and separate from explicit Session stop.
-This is not a macOS support claim.
+Orbit starts a Linux PTY Session with ordinary user process permissions and no
+service-manager or delegated-cgroup requirement. SIGINT, SIGTERM, SIGHUP, and
+an authorized management Stop send SIGHUP to the initial PTY process group and
+the terminal's current foreground group. Orbit gives the child up to 500 ms to
+exit. If it remains unreaped, Orbit sends SIGKILL to its still-stable initial
+group and re-reads the terminal's foreground group before escalating it. If the
+child exits during the grace period, Orbit sends no later signal to the cached
+foreground-group number. Orbit requires the direct child to be reaped within
+two seconds before reporting success. A child that had already exited before
+shutdown is reaped without signaling its recyclable numeric identity.
+
+This is terminal cleanup, not whole-process-tree ownership. A deliberately
+detached process, a non-foreground group outside the initial group, or a
+SIGHUP-ignoring foreground job whose shell exits during the grace period may
+survive. Orbit does not scan process names, ancestry, session IDs, or procfs to
+find it. Client disconnection remains non-destructive and separate from
+explicit Session stop. This is not a macOS support claim.
 
 The proof pins `libc` 0.2.189 for the small Linux `openpty`, controlling-terminal,
 poll, resize, and signal boundary. This avoids `portable-pty` 0.9.0's general
@@ -264,6 +262,7 @@ observe output produced by a blocked foreground command after the client has
 disconnected, reconnect to the same shell PID, exercise second-client
 rejection, and check aborted attachment, stale-socket identity, permissions,
 child exit, startup and established SIGTERM cleanup, foreground-process reaping,
+intentional foreground-job survival after the shell exits during grace,
 replacement-socket ownership, and bounded recovery after a live child closes
 every PTY descriptor and later reopens its terminal, plus simultaneous
 stale-socket ownership, all with bounded timeouts.
@@ -480,10 +479,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 12,267 |
+| Product Rust source and tests | 11,900 |
 | Governance Rust tool and tests | 577 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **12,844** |
-| **Total owned implementation source** | **13,551** |
+| **Total owned Rust** | **12,477** |
+| **Total owned implementation source** | **13,184** |

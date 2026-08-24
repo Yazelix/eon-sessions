@@ -70,15 +70,7 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo check --locked --workspace
-          sudo systemd-run --quiet --wait --collect --pipe \
-            --service-type=exec \
-            --uid="$(id -u)" \
-            --gid="$(id -g)" \
-            --property=Delegate= \
-            --working-directory="$GITHUB_WORKSPACE" \
-            --setenv=HOME="$HOME" \
-            --setenv=PATH="$PATH" \
-            "$(command -v cargo)" test --locked --workspace
+          cargo test --locked --workspace
           cargo run --locked --quiet -p orbit-governance -- .
           "$RUNNER_TEMP/starcompass/bin/starcompass" check-consumer \
             --overlay .agent-protocols.local.md \
