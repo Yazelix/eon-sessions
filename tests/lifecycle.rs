@@ -1294,9 +1294,24 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     let mut first = Client::attach(&socket)?;
     first.wait_title("history-ready")?;
     let live_text = frame_text(&first.frame);
-    for _ in 0..6 {
-        first.wheel(session::MouseButton::Four)?;
-    }
+    write_message(
+        first.reader.get_mut(),
+        &ClientMessage::ScrollVertical {
+            frame_revision: first.frame.revision,
+            rows: -6,
+        },
+    )?;
+    let ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+        requested_rows: -6,
+        applied_rows: -6,
+        frame,
+        ..
+    }) = read_message(&mut first.reader)?
+    else {
+        return Err("large viewport movement expanded beyond one result".into());
+    };
+    assert!(frame.revision > first.frame.revision);
+    first.frame = *frame;
     let pinned = first.frame.clone();
     assert_ne!(frame_text(&pinned), live_text);
 

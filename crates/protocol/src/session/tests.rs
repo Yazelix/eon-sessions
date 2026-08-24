@@ -1,6 +1,6 @@
 use super::codec::{
     CLIENT_HELLO, CLIENT_PASTE, SERVER_BUSY, SERVER_CLIPBOARD_WRITE, SERVER_COPIED_TEXT,
-    SERVER_FAILURE, SERVER_FRAME, mouse_action_tag,
+    SERVER_FAILURE, SERVER_FRAME, SERVER_SCROLL_VIEWPORT, mouse_action_tag,
 };
 use super::*;
 use crate::{
@@ -257,7 +257,7 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    assert_eq!(VERSION, 5);
+    assert_eq!(VERSION, 6);
     let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
@@ -355,7 +355,14 @@ fn declared_payloads_are_validated_from_the_header() {
         })
     );
     assert_eq!(
-        server_message_len(&header(SERVER_FRAME, MAX_PAYLOAD_BYTES + 1)),
+        server_message_len(&header(SERVER_FRAME, MAX_FRAME_BYTES + 1)),
+        Err(Error::PayloadTooLarge {
+            size: MAX_FRAME_BYTES + 1,
+            maximum: MAX_FRAME_BYTES,
+        })
+    );
+    assert_eq!(
+        server_message_len(&header(SERVER_SCROLL_VIEWPORT, MAX_PAYLOAD_BYTES + 1)),
         Err(Error::PayloadTooLarge {
             size: MAX_PAYLOAD_BYTES + 1,
             maximum: MAX_PAYLOAD_BYTES,
@@ -810,6 +817,24 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
         })),
         Err(Error::Frame(crate::Error::FrameTooLarge { .. }))
     ));
+    let mut maximum_row = frame().rows.remove(0);
+    let remaining = MAX_FRAME_BYTES - crate::encode_canonical_row(&maximum_row, 1).unwrap().len();
+    maximum_row.cells[0].text.push_str(&"x".repeat(remaining));
+    assert!(matches!(
+        encode_server_message(&ServerMessage::VerticalPreview(VerticalPreview {
+            frame_revision: 7,
+            direction: VerticalDirection::Up,
+            outcome: PreviewOutcome::Viewport {
+                cols: 1,
+                edge_reached: false,
+                row: Some(maximum_row),
+            },
+        })),
+        Err(Error::PayloadTooLarge {
+            maximum: MAX_FRAME_BYTES,
+            ..
+        })
+    ));
 
     let preview = ServerMessage::VerticalPreview(VerticalPreview {
         frame_revision: 7,
@@ -845,5 +870,100 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
     assert_eq!(
         decode_server_message(&encoded[..encoded.len() - 1]),
         Err(Error::Truncated)
+    );
+}
+
+#[test]
+fn vertical_scroll_batches_are_bounded_and_canonical() {
+    for rows in [-MAX_SCROLL_ROWS, -1, 1, MAX_SCROLL_ROWS] {
+        let request = ClientMessage::ScrollVertical {
+            frame_revision: 7,
+            rows,
+        };
+        assert_eq!(
+            decode_client_message(&encode_client_message(&request).unwrap()).unwrap(),
+            request
+        );
+    }
+    for rows in [0, -MAX_SCROLL_ROWS - 1, MAX_SCROLL_ROWS + 1] {
+        assert!(
+            encode_client_message(&ClientMessage::ScrollVertical {
+                frame_revision: 7,
+                rows,
+            })
+            .is_err()
+        );
+    }
+
+    let terminal_owned = ServerMessage::ScrollOutcome(ScrollOutcome::TerminalOwned {
+        requested_rows: -MAX_SCROLL_ROWS,
+    });
+    let viewport = ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
+        requested_rows: -MAX_SCROLL_ROWS,
+        applied_rows: -3,
+        frame: Box::new(frame()),
+        next: PreviewOutcome::Viewport {
+            cols: 1,
+            edge_reached: false,
+            row: Some(frame().rows.remove(0)),
+        },
+    });
+    for message in [terminal_owned, viewport.clone()] {
+        let encoded = encode_server_message(&message).unwrap();
+        assert_eq!(server_message_len(&encoded).unwrap(), Some(encoded.len()));
+        assert_eq!(decode_server_message(&encoded).unwrap(), message);
+    }
+    let mut invalid = encode_server_message(&viewport).unwrap();
+    invalid[HEADER_BYTES + 2..HEADER_BYTES + 4].copy_from_slice(&1_i16.to_le_bytes());
+    assert_eq!(
+        decode_server_message(&invalid),
+        Err(Error::InvalidValue {
+            field: "applied scroll rows",
+        })
+    );
+
+    for (requested_rows, applied_rows) in [(0, 0), (2, 3), (2, -1), (-2, 1)] {
+        assert!(
+            encode_server_message(&ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
+                requested_rows,
+                applied_rows,
+                frame: Box::new(frame()),
+                next: PreviewOutcome::Viewport {
+                    cols: 1,
+                    edge_reached: true,
+                    row: None,
+                },
+            }))
+            .is_err()
+        );
+    }
+    assert!(
+        encode_server_message(&ServerMessage::ScrollOutcome(
+            ScrollOutcome::TerminalOwned { requested_rows: 0 }
+        ))
+        .is_err()
+    );
+    assert!(
+        encode_server_message(&ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
+            requested_rows: 1,
+            applied_rows: 1,
+            frame: Box::new(frame()),
+            next: PreviewOutcome::TerminalRouted,
+        }))
+        .is_err()
+    );
+
+    let request = ClientMessage::ScrollVertical {
+        frame_revision: 7,
+        rows: 1,
+    };
+    let mut invalid_request = encode_client_message(&request).unwrap();
+    invalid_request[HEADER_BYTES + 8..HEADER_BYTES + 10]
+        .copy_from_slice(&(MAX_SCROLL_ROWS + 1).to_le_bytes());
+    assert_eq!(
+        decode_client_message(&invalid_request),
+        Err(Error::InvalidValue {
+            field: "vertical scroll rows",
+        })
     );
 }

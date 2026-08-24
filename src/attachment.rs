@@ -167,6 +167,10 @@ impl Client {
         self.output.can_push_frame_message()
     }
 
+    pub(crate) fn can_push_scroll_outcome(&self) -> bool {
+        self.output.can_push_scroll_outcome()
+    }
+
     pub(crate) fn can_push_message(&self, message: &ServerMessage) -> Result<bool> {
         self.output.can_push_message(message)
     }
@@ -301,6 +305,7 @@ enum MessageClass {
     Ordered,
     Preview,
     Frame,
+    ScrollOutcome,
     Metadata,
 }
 
@@ -325,6 +330,13 @@ impl OutputQueue {
             <= MAX_OUTPUT_BYTES
     }
 
+    fn can_push_scroll_outcome(&self) -> bool {
+        self.bytes
+            .saturating_sub(self.replaceable_suffix(MessageClass::ScrollOutcome).1)
+            .saturating_add(session::MAX_PAYLOAD_BYTES + session::HEADER_BYTES)
+            <= MAX_OUTPUT_BYTES
+    }
+
     fn can_push_message(&self, message: &ServerMessage) -> Result<bool> {
         Ok(self
             .bytes
@@ -336,6 +348,9 @@ impl OutputQueue {
         let class = match message {
             ServerMessage::VerticalPreview(_) => MessageClass::Preview,
             ServerMessage::WheelOutcome(WheelOutcome::Viewport { .. }) => MessageClass::Frame,
+            ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport { .. }) => {
+                MessageClass::ScrollOutcome
+            }
             ServerMessage::Metadata(_) => MessageClass::Metadata,
             _ => MessageClass::Ordered,
         };
@@ -382,7 +397,7 @@ impl OutputQueue {
         let replaceable = |back: &Message| match class {
             MessageClass::Ordered => false,
             MessageClass::Preview => back.class == MessageClass::Preview,
-            MessageClass::Frame => {
+            MessageClass::Frame | MessageClass::ScrollOutcome => {
                 matches!(back.class, MessageClass::Preview | MessageClass::Frame)
             }
             MessageClass::Metadata => back.class == MessageClass::Metadata,
@@ -492,8 +507,9 @@ mod tests {
     }
 
     #[test]
-    fn pending_frames_keep_the_initial_and_only_the_latest_revision() {
+    fn pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision() {
         let mut output = OutputQueue::default();
+        assert!(output.can_push_scroll_outcome());
         assert!(output.push(vec![0], MessageClass::Ordered));
         assert!(output.push_replaceable(vec![1], MessageClass::Frame));
         assert!(output.push_replaceable(vec![2], MessageClass::Preview));
@@ -510,6 +526,14 @@ mod tests {
         assert!(output.push_replaceable(vec![5], MessageClass::Preview));
         assert_eq!(output.messages.len(), 3);
         assert!(output.messages.back().unwrap().bytes.ends_with(&[5]));
+
+        assert!(output.push_replaceable(vec![6], MessageClass::ScrollOutcome));
+        assert_eq!(output.messages.len(), 2);
+        assert!(output.push_replaceable(vec![7], MessageClass::Frame));
+        assert!(output.push_replaceable(vec![8], MessageClass::ScrollOutcome));
+        assert_eq!(output.messages.len(), 3);
+        assert!(output.messages[1].bytes.ends_with(&[6]));
+        assert!(output.messages[2].bytes.ends_with(&[8]));
 
         let mut full = OutputQueue::default();
         assert!(full.push(

@@ -16,11 +16,11 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
-pub const MAX_PAYLOAD_BYTES: usize = MAX_FRAME_BYTES;
+pub const MAX_PAYLOAD_BYTES: usize = 2 * MAX_FRAME_BYTES + 11;
 /// Largest paste accepted as one semantic event.
 pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
 /// Largest copied plain text returned as one semantic result.
@@ -31,6 +31,8 @@ pub const MAX_KEY_TEXT_BYTES: usize = 4096;
 pub const MAX_FAILURE_BYTES: usize = 1024;
 /// Largest complete title/CWD metadata payload.
 pub const MAX_METADATA_BYTES: usize = 8 * 1024;
+/// Largest absolute whole-row distance accepted in one viewport commit.
+pub const MAX_SCROLL_ROWS: i16 = 1024;
 
 /// A local-session validation or framing failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,6 +150,8 @@ pub enum ClientMessage {
         frame_revision: u64,
         direction: VerticalDirection,
     },
+    /// Commit one bounded whole-row movement; negative is toward older history.
+    ScrollVertical { frame_revision: u64, rows: i16 },
 }
 
 /// An Orbit-to-client session message.
@@ -180,6 +184,8 @@ pub enum ServerMessage {
     VerticalPreview(VerticalPreview),
     /// Typed result of one accepted vertical wheel event.
     WheelOutcome(WheelOutcome),
+    /// Typed result of one bounded vertical viewport commit.
+    ScrollOutcome(ScrollOutcome),
 }
 
 /// One bounded, read-only terminal metadata observation.
@@ -221,6 +227,20 @@ pub enum PreviewOutcome {
 pub enum WheelOutcome {
     TerminalRouted,
     Viewport { applied_rows: i8, frame: Box<Frame> },
+}
+
+/// Authoritative result of one bounded vertical viewport commit.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ScrollOutcome {
+    TerminalOwned {
+        requested_rows: i16,
+    },
+    Viewport {
+        requested_rows: i16,
+        applied_rows: i16,
+        frame: Box<Frame>,
+        next: PreviewOutcome,
+    },
 }
 
 /// Platform-neutral destination of a terminal-emitted clipboard write.

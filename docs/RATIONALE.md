@@ -131,7 +131,9 @@ negotiates either the sole input-capable attachment or one bounded read-only
 title/CWD observer. This is the minimum live inactive-pane result; it adds no
 second endpoint, terminal text observation, agent authorization, or process
 authority. Venus and Eon adopt the exact owner proof in that order without a
-dual-version window.
+dual-version window. Candidate ORBS v6 supersedes the unconsumed v5 producer
+and adds one bounded signed whole-row viewport commit with one resulting frame
+and adjacent preview; pixels, gesture timing, and momentum remain Venus-owned.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
 row contents, and stable anchors. Venus may own ephemeral pointer gestures over

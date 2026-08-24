@@ -56,6 +56,20 @@ pub(crate) fn handle_client_message(
     {
         return handle_vertical_preview(client, frame_revision, direction, terminal, presentation);
     }
+    if let ClientMessage::ScrollVertical {
+        frame_revision,
+        rows,
+    } = message
+    {
+        return handle_vertical_scroll(
+            client,
+            frame_revision,
+            rows,
+            terminal,
+            presentation,
+            selection,
+        );
+    }
     if let ClientMessage::Selection(action) = message {
         return handle_selection(client, action, terminal, *size, presentation, selection);
     }
@@ -159,31 +173,11 @@ fn handle_vertical_preview(
         if terminal.mode(Mode::SYNC_OUTPUT)? {
             return client.fail(FailureCode::Terminal, "presentation is synchronized".into());
         }
-        let scrollbar = terminal.scrollbar()?;
-        let target = match direction {
-            VerticalDirection::Up => scrollbar.offset.checked_sub(1),
-            VerticalDirection::Down => {
-                let below = scrollbar.offset.saturating_add(scrollbar.len);
-                (below < scrollbar.total).then_some(below)
+        match viewport_preview(terminal, presentation, direction) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return client.fail(FailureCode::Terminal, error.to_string());
             }
-        };
-        let cols = terminal.cols()?;
-        let row = match target {
-            Some(y) => match u32::try_from(y)
-                .map_err(|_| "preview row exceeds the terminal coordinate range".into())
-                .and_then(|y| presentation.extractor.row(terminal, y, cols))
-            {
-                Ok(row) => Some(row),
-                Err(error) => {
-                    return client.fail(FailureCode::Terminal, error.to_string());
-                }
-            },
-            None => None,
-        };
-        PreviewOutcome::Viewport {
-            cols,
-            edge_reached: row.is_none(),
-            row,
         }
     };
     client.push_message(&ServerMessage::VerticalPreview(VerticalPreview {
@@ -191,6 +185,102 @@ fn handle_vertical_preview(
         direction,
         outcome,
     }))
+}
+
+fn viewport_preview(
+    terminal: &Terminal<'static, '_>,
+    presentation: &Presentation,
+    direction: VerticalDirection,
+) -> Result<PreviewOutcome> {
+    let scrollbar = terminal.scrollbar()?;
+    let target = match direction {
+        VerticalDirection::Up => scrollbar.offset.checked_sub(1),
+        VerticalDirection::Down => {
+            let below = scrollbar.offset.saturating_add(scrollbar.len);
+            (below < scrollbar.total).then_some(below)
+        }
+    };
+    let cols = terminal.cols()?;
+    let row = target
+        .map(|y| {
+            u32::try_from(y)
+                .map_err(|_| "preview row exceeds the terminal coordinate range".into())
+                .and_then(|y| presentation.extractor.row(terminal, y, cols))
+        })
+        .transpose()?;
+    Ok(PreviewOutcome::Viewport {
+        cols,
+        edge_reached: row.is_none(),
+        row,
+    })
+}
+
+fn handle_vertical_scroll(
+    client: &mut Client,
+    frame_revision: u64,
+    rows: i16,
+    terminal: &mut Terminal<'static, '_>,
+    presentation: &mut Presentation,
+    selection: &mut SelectionState,
+) -> Result<bool> {
+    if frame_revision != presentation.revision {
+        return client.fail(
+            FailureCode::InvalidInput,
+            "scroll frame revision is stale".into(),
+        );
+    }
+    if routes_vertical_wheel_to_terminal(terminal)? {
+        let outcome = ServerMessage::ScrollOutcome(session::ScrollOutcome::TerminalOwned {
+            requested_rows: rows,
+        });
+        return client.push_message(&outcome);
+    }
+    if terminal.mode(Mode::SYNC_OUTPUT)? {
+        return client.fail(FailureCode::Terminal, "presentation is synchronized".into());
+    }
+    if !client.can_push_scroll_outcome() {
+        return client.fail(
+            FailureCode::Terminal,
+            "client output queue cannot admit scroll outcome".into(),
+        );
+    }
+    let next_revision = match next_revision(presentation.revision) {
+        Ok(next) => next,
+        Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
+    };
+    let before = terminal.scrollbar()?.offset;
+    clear_selection(terminal, selection, false)?;
+    terminal.scroll_viewport(ScrollViewport::Delta(isize::from(rows)));
+    let after = terminal.scrollbar()?.offset;
+    let applied_rows = i16::try_from(i128::from(after) - i128::from(before))
+        .map_err(|_| "terminal applied an invalid scroll delta")?;
+    if applied_rows != 0
+        && (applied_rows.is_negative() != rows.is_negative()
+            || applied_rows.unsigned_abs() > rows.unsigned_abs())
+    {
+        return Err("terminal applied rows outside the requested scroll distance".into());
+    }
+
+    let direction = if rows.is_negative() {
+        VerticalDirection::Up
+    } else {
+        VerticalDirection::Down
+    };
+    presentation.revision = next_revision;
+    presentation.synchronized_until = None;
+    let frame = presentation.extractor.frame(next_revision, terminal)?;
+    let next = viewport_preview(terminal, presentation, direction)?;
+    if !client.push_message(&ServerMessage::ScrollOutcome(
+        session::ScrollOutcome::Viewport {
+            requested_rows: rows,
+            applied_rows,
+            frame: Box::new(frame),
+            next,
+        },
+    ))? {
+        return Err("scroll outcome admission contradicted its preflight".into());
+    }
+    Ok(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -539,7 +629,8 @@ fn encode_input(
         | ClientMessage::ObserveMetadata
         | ClientMessage::Resize(_)
         | ClientMessage::Selection(_)
-        | ClientMessage::PreviewVertical { .. } => Err("message is not terminal input".into()),
+        | ClientMessage::PreviewVertical { .. }
+        | ClientMessage::ScrollVertical { .. } => Err("message is not terminal input".into()),
     }
 }
 
@@ -1171,6 +1262,195 @@ mod tests {
         )?);
         assert_eq!(size, resized);
         assert_eq!(presentation.revision, 7);
+        Ok(())
+    }
+
+    #[test]
+    fn conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let mut terminal = terminal_with_scrollback(16 * 1024 * 1024)?;
+        for line in 0..120 {
+            terminal.vt_write(format!("history-{line:03}\r\n").as_bytes());
+        }
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut presentation = Presentation::new()?;
+        let mut selection = SelectionState::default();
+        macro_rules! scroll {
+            ($rows:expr) => {{
+                let frame_revision = presentation.revision;
+                assert!(handle_client_message(
+                    &mut client,
+                    ClientMessage::ScrollVertical {
+                        frame_revision,
+                        rows: $rows,
+                    },
+                    &mut terminal,
+                    Some(&pty),
+                    &mut size,
+                    &writes,
+                    &mut presentation,
+                    &mut selection,
+                )?);
+                flush_message(&mut client, &mut peer)?
+            }};
+        }
+
+        let live = terminal.scrollbar()?.offset;
+        let selected = viewport_selection(
+            &terminal,
+            ViewportCell { x: 0, y: 0 },
+            ViewportCell { x: 1, y: 0 },
+        )?;
+        terminal.set_selection(Some(&selected))?;
+        selection.anchor = Some(ViewportCell { x: 0, y: 0 });
+        selection.visible = true;
+
+        let ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+            requested_rows: -32,
+            applied_rows: -32,
+            frame,
+            next,
+        }) = scroll!(-32)
+        else {
+            return Err("signed scroll did not return one viewport result".into());
+        };
+        assert_eq!(frame.revision, presentation.revision);
+        assert_eq!(terminal.scrollbar()?.offset + 32, live);
+        assert!(!selection.visible);
+        assert!(client.output_is_empty());
+
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::PreviewVertical {
+                frame_revision: presentation.revision,
+                direction: VerticalDirection::Up,
+            },
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::VerticalPreview(VerticalPreview {
+                direction: VerticalDirection::Up,
+                outcome,
+                ..
+            }) if outcome == next
+        ));
+
+        let previous_revision = presentation.revision;
+        assert!(matches!(
+            scroll!(session::MAX_SCROLL_ROWS),
+            ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+                requested_rows: session::MAX_SCROLL_ROWS,
+                applied_rows: 32,
+                frame,
+                next: PreviewOutcome::Viewport {
+                    edge_reached: true,
+                    row: None,
+                    ..
+                },
+            }) if frame.revision == previous_revision + 1
+        ));
+        assert_eq!(terminal.scrollbar()?.offset, live);
+
+        let previous_revision = presentation.revision;
+        let expected_to_top = -i16::try_from(live)?;
+        assert!(matches!(
+            scroll!(-session::MAX_SCROLL_ROWS),
+            ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+                requested_rows,
+                applied_rows,
+                frame,
+                next: PreviewOutcome::Viewport {
+                    edge_reached: true,
+                    row: None,
+                    ..
+                },
+            }) if requested_rows == -session::MAX_SCROLL_ROWS
+                && applied_rows == expected_to_top
+                && frame.revision == previous_revision + 1
+        ));
+        assert_eq!(terminal.scrollbar()?.offset, 0);
+
+        let stable_revision = presentation.revision;
+        let stable_offset = terminal.scrollbar()?.offset;
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::ScrollVertical {
+                frame_revision: stable_revision - 1,
+                rows: -1,
+            },
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::InvalidInput,
+                ..
+            })
+        ));
+
+        terminal.vt_write(b"\x1b[?1000h\x1b[?1006h");
+        assert_eq!(
+            scroll!(-8),
+            ServerMessage::ScrollOutcome(session::ScrollOutcome::TerminalOwned {
+                requested_rows: -8,
+            })
+        );
+        assert!(writes.borrow().is_empty());
+        assert_eq!(presentation.revision, stable_revision);
+        assert_eq!(terminal.scrollbar()?.offset, stable_offset);
+        terminal.vt_write(b"\x1b[?1000l\x1b[?1006l");
+
+        terminal.vt_write(b"\x1b[?1049h\x1b[?1007h");
+        assert_eq!(
+            scroll!(8),
+            ServerMessage::ScrollOutcome(session::ScrollOutcome::TerminalOwned {
+                requested_rows: 8,
+            })
+        );
+        assert!(writes.borrow().is_empty());
+        assert_eq!(presentation.revision, stable_revision);
+        terminal.vt_write(b"\x1b[?1007l\x1b[?1049l");
+
+        terminal.vt_write(b"\x1b[?2026h");
+        assert!(matches!(
+            scroll!(-8),
+            ServerMessage::Failure(Failure {
+                code: FailureCode::Terminal,
+                ..
+            })
+        ));
+        terminal.vt_write(b"\x1b[?2026l");
+
+        let (mut blocked, _) = attached_client()?;
+        fill_output(&mut blocked)?;
+        assert!(!handle_client_message(
+            &mut blocked,
+            ClientMessage::ScrollVertical {
+                frame_revision: stable_revision,
+                rows: -8,
+            },
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert_eq!(presentation.revision, stable_revision);
+        assert_eq!(terminal.scrollbar()?.offset, stable_offset);
         Ok(())
     }
 

@@ -14,6 +14,7 @@ const CLIENT_RESIZE: u8 = 6;
 const CLIENT_SELECTION: u8 = 7;
 const CLIENT_PREVIEW_VERTICAL: u8 = 8;
 const CLIENT_OBSERVE_METADATA: u8 = 9;
+const CLIENT_SCROLL_VERTICAL: u8 = 10;
 const SERVER_ATTACHED: u8 = 129;
 pub(super) const SERVER_BUSY: u8 = 130;
 pub(super) const SERVER_FRAME: u8 = 132;
@@ -29,6 +30,8 @@ const SERVER_WHEEL_VIEWPORT_DOWN: u8 = 141;
 const SERVER_VERTICAL_PREVIEW: u8 = 142;
 const SERVER_OBSERVING_METADATA: u8 = 143;
 const SERVER_METADATA: u8 = 144;
+const SERVER_SCROLL_TERMINAL_OWNED: u8 = 145;
+pub(super) const SERVER_SCROLL_VIEWPORT: u8 = 146;
 
 const SELECTION_BEGIN: u8 = 0;
 const SELECTION_UPDATE: u8 = 1;
@@ -84,6 +87,7 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
         CLIENT_RESIZE => Ok((36, 36)),
         CLIENT_SELECTION => Ok((1, 13)),
         CLIENT_PREVIEW_VERTICAL => Ok((9, 9)),
+        CLIENT_SCROLL_VERTICAL => Ok((10, 10)),
         value => Err(Error::InvalidTag {
             field: "client message",
             value,
@@ -97,15 +101,17 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
         SERVER_BUSY | SERVER_ACCEPTED | SERVER_OBSERVING_METADATA => Ok((0, 0)),
         SERVER_METADATA => Ok((16, MAX_METADATA_BYTES)),
         SERVER_EXITED => Ok((4, 4)),
-        SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_PAYLOAD_BYTES)),
+        SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_FRAME_BYTES)),
         SERVER_FAILURE => Ok((5, 5 + MAX_FAILURE_BYTES)),
         SERVER_COPIED_TEXT => Ok((0, MAX_COPY_BYTES)),
         SERVER_CLIPBOARD_WRITE => Ok((2, 1 + MAX_COPY_BYTES)),
         SERVER_WHEEL_TERMINAL_ROUTED => Ok((0, 0)),
         SERVER_WHEEL_VIEWPORT_UP | SERVER_WHEEL_VIEWPORT_STILL | SERVER_WHEEL_VIEWPORT_DOWN => {
-            Ok((MIN_FRAME_BYTES, MAX_PAYLOAD_BYTES))
+            Ok((MIN_FRAME_BYTES, MAX_FRAME_BYTES))
         }
-        SERVER_VERTICAL_PREVIEW => Ok((10, MAX_PAYLOAD_BYTES)),
+        SERVER_VERTICAL_PREVIEW => Ok((10, MAX_FRAME_BYTES)),
+        SERVER_SCROLL_TERMINAL_OWNED => Ok((2, 2)),
+        SERVER_SCROLL_VIEWPORT => Ok((MIN_FRAME_BYTES + 11, MAX_PAYLOAD_BYTES)),
         value => Err(Error::InvalidTag {
             field: "server message",
             value,
@@ -113,7 +119,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v5 header.
+/// Encodes one client message with an ORBS v6 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -209,8 +215,17 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
             payload.push(vertical_direction_tag(*direction));
             CLIENT_PREVIEW_VERTICAL
         }
+        ClientMessage::ScrollVertical {
+            frame_revision,
+            rows,
+        } => {
+            validate_scroll_rows(*rows)?;
+            payload.extend_from_slice(&frame_revision.to_le_bytes());
+            put_i16(&mut payload, *rows);
+            CLIENT_SCROLL_VERTICAL
+        }
     };
-    frame_message(kind, payload)
+    frame_message(kind, payload, client_payload_limits(kind)?.1)
 }
 
 /// Decodes exactly one client message.
@@ -332,6 +347,15 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
             frame_revision: u64::from_le_bytes(reader.array()?),
             direction: decode_vertical_direction(reader.u8()?)?,
         },
+        CLIENT_SCROLL_VERTICAL => {
+            let frame_revision = u64::from_le_bytes(reader.array()?);
+            let rows = reader.i16()?;
+            validate_scroll_rows(rows)?;
+            ClientMessage::ScrollVertical {
+                frame_revision,
+                rows,
+            }
+        }
         value => {
             return Err(Error::InvalidTag {
                 field: "client message",
@@ -343,7 +367,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v5 header.
+/// Encodes one server message with an ORBS v6 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -391,27 +415,9 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             payload.push(vertical_direction_tag(preview.direction));
             match &preview.outcome {
                 PreviewOutcome::TerminalRouted => payload.push(0),
-                PreviewOutcome::Viewport {
-                    cols,
-                    edge_reached,
-                    row,
-                } => {
-                    if *edge_reached != row.is_none() {
-                        return Err(Error::InvalidValue {
-                            field: "preview edge row",
-                        });
-                    }
+                next @ PreviewOutcome::Viewport { .. } => {
                     payload.push(1);
-                    put_u16(&mut payload, *cols);
-                    payload.push(u8::from(*edge_reached));
-                    if *cols == 0 {
-                        return Err(Error::InvalidValue {
-                            field: "preview columns",
-                        });
-                    }
-                    if let Some(row) = row {
-                        payload.extend_from_slice(&encode_canonical_row(row, *cols)?);
-                    }
+                    encode_adjacent_row(&mut payload, next)?;
                 }
             }
             SERVER_VERTICAL_PREVIEW
@@ -433,8 +439,31 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
                 }
             }
         }
+        ServerMessage::ScrollOutcome(ScrollOutcome::TerminalOwned { requested_rows }) => {
+            validate_scroll_rows(*requested_rows)?;
+            put_i16(&mut payload, *requested_rows);
+            SERVER_SCROLL_TERMINAL_OWNED
+        }
+        ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
+            requested_rows,
+            applied_rows,
+            frame,
+            next,
+        }) => {
+            validate_applied_scroll_rows(*requested_rows, *applied_rows)?;
+            put_i16(&mut payload, *requested_rows);
+            put_i16(&mut payload, *applied_rows);
+            let frame = encode_frame(frame)?;
+            put_u32(
+                &mut payload,
+                u32::try_from(frame.len()).expect("frame bound fits u32"),
+            );
+            payload.extend_from_slice(&frame);
+            encode_adjacent_row(&mut payload, next)?;
+            SERVER_SCROLL_VIEWPORT
+        }
     };
-    frame_message(kind, payload)
+    frame_message(kind, payload, server_payload_limits(kind)?.1)
 }
 
 /// Decodes exactly one server message.
@@ -461,6 +490,23 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
                 frame,
             })
         });
+    }
+    if kind == SERVER_SCROLL_VIEWPORT {
+        let mut reader = Reader::new(payload);
+        let requested_rows = reader.i16()?;
+        let applied_rows = reader.i16()?;
+        validate_applied_scroll_rows(requested_rows, applied_rows)?;
+        let frame_length = reader.u32()? as usize;
+        validate_bound(frame_length, MAX_FRAME_BYTES)?;
+        let frame = Box::new(decode_frame(reader.take(frame_length)?)?);
+        let next = decode_adjacent_row(&mut reader)?;
+        reader.finish()?;
+        return Ok(ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
+            requested_rows,
+            applied_rows,
+            frame,
+            next,
+        }));
     }
     let mut reader = Reader::new(payload);
     let message = match kind {
@@ -504,32 +550,17 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
             }
         }
         SERVER_WHEEL_TERMINAL_ROUTED => ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted),
+        SERVER_SCROLL_TERMINAL_OWNED => {
+            let requested_rows = reader.i16()?;
+            validate_scroll_rows(requested_rows)?;
+            ServerMessage::ScrollOutcome(ScrollOutcome::TerminalOwned { requested_rows })
+        }
         SERVER_VERTICAL_PREVIEW => {
             let frame_revision = u64::from_le_bytes(reader.array()?);
             let direction = decode_vertical_direction(reader.u8()?)?;
             let outcome = match reader.u8()? {
                 0 => PreviewOutcome::TerminalRouted,
-                1 => {
-                    let cols = reader.u16()?;
-                    let edge_reached = decode_bool(reader.u8()?, "preview edge")?;
-                    let row = if edge_reached {
-                        None
-                    } else {
-                        let row = decode_canonical_row(reader.remaining(), cols)?;
-                        reader.take_remaining();
-                        Some(row)
-                    };
-                    if cols == 0 {
-                        return Err(Error::InvalidValue {
-                            field: "preview columns",
-                        });
-                    }
-                    PreviewOutcome::Viewport {
-                        cols,
-                        edge_reached,
-                        row,
-                    }
-                }
+                1 => decode_adjacent_row(&mut reader)?,
                 value => {
                     return Err(Error::InvalidTag {
                         field: "preview outcome",
@@ -554,8 +585,8 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
     Ok(message)
 }
 
-fn frame_message(kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
-    validate_bound(payload.len(), MAX_PAYLOAD_BYTES)?;
+fn frame_message(kind: u8, payload: Vec<u8>, maximum: usize) -> Result<Vec<u8>> {
+    validate_bound(payload.len(), maximum)?;
     let mut framed = Vec::with_capacity(HEADER_BYTES + payload.len());
     framed.extend_from_slice(MAGIC);
     put_u16(&mut framed, VERSION);
@@ -601,6 +632,81 @@ fn validate_clipboard_text(text: &str) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn validate_scroll_rows(rows: i16) -> Result<()> {
+    if rows == 0 || !(-MAX_SCROLL_ROWS..=MAX_SCROLL_ROWS).contains(&rows) {
+        Err(Error::InvalidValue {
+            field: "vertical scroll rows",
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_applied_scroll_rows(requested: i16, applied: i16) -> Result<()> {
+    validate_scroll_rows(requested)?;
+    if applied == 0
+        || requested.is_negative() == applied.is_negative()
+            && applied.unsigned_abs() <= requested.unsigned_abs()
+    {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue {
+            field: "applied scroll rows",
+        })
+    }
+}
+
+fn encode_adjacent_row(target: &mut Vec<u8>, next: &PreviewOutcome) -> Result<()> {
+    let PreviewOutcome::Viewport {
+        cols,
+        edge_reached,
+        row,
+    } = next
+    else {
+        return Err(Error::InvalidValue {
+            field: "next vertical preview",
+        });
+    };
+    if *edge_reached != row.is_none() {
+        return Err(Error::InvalidValue {
+            field: "preview edge row",
+        });
+    }
+    if *cols == 0 {
+        return Err(Error::InvalidValue {
+            field: "preview columns",
+        });
+    }
+    put_u16(target, *cols);
+    target.push(u8::from(*edge_reached));
+    if let Some(row) = row {
+        target.extend_from_slice(&encode_canonical_row(row, *cols)?);
+    }
+    Ok(())
+}
+
+fn decode_adjacent_row(reader: &mut Reader<'_>) -> Result<PreviewOutcome> {
+    let cols = reader.u16()?;
+    let edge_reached = decode_bool(reader.u8()?, "preview edge")?;
+    let row = if edge_reached {
+        None
+    } else {
+        let row = decode_canonical_row(reader.remaining(), cols)?;
+        reader.take_remaining();
+        Some(row)
+    };
+    if cols == 0 {
+        return Err(Error::InvalidValue {
+            field: "preview columns",
+        });
+    }
+    Ok(PreviewOutcome::Viewport {
+        cols,
+        edge_reached,
+        row,
+    })
 }
 
 fn validate_key(event: &KeyEvent) -> Result<()> {
@@ -847,6 +953,10 @@ fn put_u16(target: &mut Vec<u8>, value: u16) {
     target.extend_from_slice(&value.to_le_bytes());
 }
 
+fn put_i16(target: &mut Vec<u8>, value: i16) {
+    target.extend_from_slice(&value.to_le_bytes());
+}
+
 fn put_u32(target: &mut Vec<u8>, value: u32) {
     target.extend_from_slice(&value.to_le_bytes());
 }
@@ -867,6 +977,10 @@ impl<'a> Reader<'a> {
 
     fn u16(&mut self) -> Result<u16> {
         Ok(u16::from_le_bytes(self.array()?))
+    }
+
+    fn i16(&mut self) -> Result<i16> {
+        Ok(i16::from_le_bytes(self.array()?))
     }
 
     fn u32(&mut self) -> Result<u32> {
