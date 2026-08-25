@@ -137,7 +137,7 @@ adjacent preview; pixels, gesture timing, and momentum remain Venus-owned.
 Accepted ORBS v7 replaces that adjacent row with up to one active viewport
 of nearest-first canonical rows. Orbit still owns history and mutation; Venus
 uses the bounded window only for compositor-paced fractional presentation.
-The ORBS v8 candidate replaces client-authored selection cells with bounded
+Accepted ORBS v8 replaces client-authored selection cells with bounded
 surface positions and monotonic press time. Orbit maps positions through the
 authoritative surface geometry, and the pinned libghostty gesture state owns
 cell, word, logical-line, and matching drag granularity. Native event routing

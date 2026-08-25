@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted ORBS v8 at `d9b22eb294f8f42b4f49324fd5467eab239c2917`
+  replaces client-resolved selection cells with bounded surface positions and
+  monotonic press time. Orbit delegates cell, word, logical-line, and matching
+  drag behavior to pinned libghostty, while explicit cancel resets abandoned
+  gestures. Native input routing and clipboard effects remain Venus-owned.
 - The accepted `baf8aa28dcaa50484cd221aa7730defedc2356bb` proof changes
   `ORB-C8` and replaces ORBS v6 with exact-version ORBS v7. Revision-bound
   preview and signed-scroll results expose up to one active viewport of

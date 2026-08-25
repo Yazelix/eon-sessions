@@ -47,7 +47,7 @@ policy.
 
 Orbit owns the wire schema and its state-transition rules. The
 `orbit-protocol` package owns accepted canonical ORBF v1 values, bounded
-decoding, complete-frame reduction, and candidate exact-version ORBS v8
+decoding, complete-frame reduction, and accepted exact-version ORBS v8
 messages for one input-capable attachment, one bounded title/CWD observer,
 frames, lifecycle, semantic input, selection and copy, terminal clipboard
 writes, bounded multi-row previews, typed vertical-wheel outcomes, and bounded

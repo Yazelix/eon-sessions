@@ -19,9 +19,10 @@ Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
 ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
 `baf8aa28dcaa50484cd221aa7730defedc2356bb`.
 
-Candidate exact-version ORBS v8 changes ORB-C9 from client-resolved cells to
-Orbit-resolved pointer gestures. It preserves every other ORBS v7 contract and
-has no compatibility window.
+Accepted exact-version ORBS v8 changes ORB-C9 from client-resolved cells to
+Orbit-resolved pointer gestures at
+`d9b22eb294f8f42b4f49324fd5467eab239c2917`. It preserves every other ORBS v7
+contract and has no compatibility window.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -215,7 +216,7 @@ has no compatibility window.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version ORBS v8 attachment.
 - **Trigger:** The client presses, drags, releases, or copies one host selection
   using bounded surface coordinates against the exact current frame revision
@@ -227,7 +228,7 @@ has no compatibility window.
   - One press-drag selects cells, two select words, and three select logical
     lines; the repeat distance is one cell width and the repeat interval is 500
     milliseconds.
-  - Release freezes one bounded plain-text candidate that later output, resize,
+  - Release freezes one bounded plain-text value that later output, resize,
     reflow, or screen transition cannot reinterpret or erase.
   - A non-selection terminal mutation clears active selection and its
     presentation and resets gesture state before mutation; read-only preview
@@ -249,13 +250,13 @@ has no compatibility window.
 - **Boundary:** Native clipboard effects, custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
-- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb` (prior cell-selection slice)
+- **Proof:** `d9b22eb294f8f42b4f49324fd5467eab239c2917`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
+    - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** ORBS v8 implementation, Orbit lifecycle proof, and exact Venus
-  and Eon consumer adoption are pending.
+- **Open proof:** Exact Venus and Eon consumer adoption is pending.
 
 ## ORB-C10 — Eon terminal identity
 

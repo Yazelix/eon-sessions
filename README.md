@@ -18,8 +18,8 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package carries the exact-version ORBS v8 candidate owned by
-`orb-orbit-native-selection-gestures-qf3`. It replaces accepted ORBS v7 proof
+The same package owns canonical ORBS v8 at
+`d9b22eb294f8f42b4f49324fd5467eab239c2917`, replacing accepted ORBS v7 proof
 `baf8aa28dcaa50484cd221aa7730defedc2356bb`, including one input-capable
 attachment, one bounded read-only title/CWD observer, frames, lifecycle,
 semantic input, selection and copy, terminal clipboard writes, revision-bound
@@ -152,7 +152,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The ORBS v8 candidate uses a 12-byte explicit little-endian header with `ORBS`
+The accepted ORBS v8 producer uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -308,10 +308,11 @@ ORBS v7 is an owner-first breaking replacement proved by Orbit at
 one-row preview into a bounded row window. Venus must pin that exact revision
 before Eon and Eonova update the composed pair; no adapter or dual-version
 window is maintained.
-ORBS v8 is the owner-first candidate for richer host selection. It replaces
+ORBS v8 is the owner-first replacement proved by Orbit at
+`d9b22eb294f8f42b4f49324fd5467eab239c2917`. It replaces
 client-authored viewport cells with bounded pointer positions and monotonic
 press time while preserving every other v7 message family. Venus and Eon
-remain on v7 until the Orbit candidate has an immutable accepted revision.
+remain on v7 until they consume that exact revision.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
