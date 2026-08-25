@@ -93,13 +93,16 @@ Mars, Mars Next, or another project by default.
 - WezTerm
   [`f93d90350075d3e42566e0557ca36e82ffdcbec1`](https://github.com/wez/wezterm/blob/f93d90350075d3e42566e0557ca36e82ffdcbec1/docs/config/mouse.md),
   Kitty
-  [`32ea1041921607836e37815e0ab3692264a6cc81`](https://github.com/kovidgoyal/kitty/blob/32ea1041921607836e37815e0ab3692264a6cc81/docs/overview.rst),
+  [`479872838f7536ab87b8133471eb49d06804951b`](https://github.com/kovidgoyal/kitty/blob/479872838f7536ab87b8133471eb49d06804951b/docs/overview.rst),
   and Alacritty
   [`7dd7b5b09e06ca58daadfb12bd45a9aa8fa716f2`](https://github.com/alacritty/alacritty/blob/7dd7b5b09e06ca58daadfb12bd45a9aa8fa716f2/docs/features.md)
   are comparison evidence for single-cell, double-word, triple-line, matching
-  drag granularity, and Shift bypass of terminal mouse reporting. Native event
-  routing and clipboard targets remain Venus-owned; Orbit adopts no binding or
-  configuration surface from these clients.
+  drag granularity, and Shift bypass of terminal mouse reporting. Ghostty
+  [`8867c37c55b578b9eb4cfaba41cb9023e557176d`](https://github.com/ghostty-org/ghostty/blob/8867c37c55b578b9eb4cfaba41cb9023e557176d/src/Surface.zig)
+  additionally confirms release-time copy-on-select and semantic selection
+  clipboard targeting. Orbit owns terminal-versus-host routing and copy
+  destination tags; Venus owns native event and clipboard delivery. Orbit
+  adopts no binding or configuration surface from these clients.
 - Zellij
   [`b0bd3e1e7f530db8879e8cbde79de245e6101a8a`](https://github.com/zellij-org/zellij/blob/b0bd3e1e7f530db8879e8cbde79de245e6101a8a/zellij-server/src/tab/mouse_handler.rs)
   is comparison evidence for copy-on-release and terminal-owned mouse routing.

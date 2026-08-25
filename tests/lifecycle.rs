@@ -350,7 +350,18 @@ impl Client {
     }
 
     fn select(&mut self, action: SelectionAction) -> TestResult {
-        self.request_frame(&ClientMessage::Selection(action))
+        let finishing = matches!(action, SelectionAction::Finish { .. });
+        self.request_frame(&ClientMessage::Selection(action))?;
+        if finishing {
+            assert!(matches!(
+                read_message(&mut self.reader)?,
+                ServerMessage::CopiedText {
+                    location: session::ClipboardLocation::Selection,
+                    ..
+                }
+            ));
+        }
+        Ok(())
     }
 
     fn copy(&mut self) -> TestResult<Result<String, FailureCode>> {
@@ -360,7 +371,10 @@ impl Client {
         )?;
         loop {
             match read_message(&mut self.reader)? {
-                ServerMessage::CopiedText(text) => return Ok(Ok(text)),
+                ServerMessage::CopiedText {
+                    location: session::ClipboardLocation::Standard,
+                    text,
+                } => return Ok(Ok(text)),
                 ServerMessage::Frame(frame) => self.frame = *frame,
                 ServerMessage::Failure(failure) => return Ok(Err(failure.code)),
                 message => return Err(format!("unexpected copy response: {message:?}").into()),
@@ -1189,12 +1203,15 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
         frame_revision: first.frame.revision,
         position: position(17, 3),
         time_ns: 1_000_000_000,
+        modifiers: session::Modifiers::empty(),
     })?;
     first.select(SelectionAction::Update {
         position: position(0, 3),
+        modifiers: session::Modifiers::empty(),
     })?;
     first.select(SelectionAction::Finish {
         position: position(0, 3),
+        modifiers: session::Modifiers::empty(),
     })?;
     assert!(
         first
@@ -1225,12 +1242,15 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
         frame_revision: second.frame.revision,
         position: position(17, 3),
         time_ns: 1_000_000_000,
+        modifiers: session::Modifiers::empty(),
     })?;
     second.select(SelectionAction::Update {
         position: position(0, 3),
+        modifiers: session::Modifiers::empty(),
     })?;
     second.select(SelectionAction::Finish {
         position: position(0, 3),
+        modifiers: session::Modifiers::empty(),
     })?;
     fs::write(&activity, b"activity")?;
     second.wait_title("selection-activity")?;

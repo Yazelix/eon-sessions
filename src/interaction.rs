@@ -2,7 +2,7 @@ use crate::{
     Result,
     attachment::Client,
     platform::Pty,
-    runtime::{Presentation, next_revision, queue_pty_write},
+    runtime::{Presentation, can_queue_pty_write, next_revision, queue_pty_write},
 };
 use libghostty_vt::{
     Terminal,
@@ -39,9 +39,15 @@ const CLICK_REPEAT_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Debug, Default)]
 pub(crate) struct SelectionState {
     gesture: Option<GestureState>,
-    active: bool,
+    route: Option<PointerRoute>,
     copied: Option<String>,
     visible: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PointerRoute {
+    Host,
+    Terminal,
 }
 
 #[derive(Debug)]
@@ -99,11 +105,19 @@ pub(crate) fn handle_client_message(
         );
     }
     if let ClientMessage::Selection(action) = message {
-        return handle_selection(client, action, terminal, *size, presentation, selection);
+        return handle_selection(
+            client,
+            action,
+            terminal,
+            *size,
+            writes,
+            presentation,
+            selection,
+        );
     }
     let message = match message {
         ClientMessage::Resize(surface) => {
-            clear_selection(terminal, selection, false)?;
+            clear_pointer_sequence(terminal, selection, false)?;
             pty.resize(surface)?;
             terminal.resize(
                 surface.cols,
@@ -436,12 +450,16 @@ fn handle_selection(
     action: SelectionAction,
     terminal: &Terminal<'static, '_>,
     size: SurfaceSize,
+    writes: &RefCell<VecDeque<u8>>,
     presentation: &mut Presentation,
     state: &mut SelectionState,
 ) -> Result<bool> {
     if matches!(action, SelectionAction::Copy) {
         return match &state.copied {
-            Some(text) => client.push_message(&ServerMessage::CopiedText(text.clone())),
+            Some(text) => client.push_message(&ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Standard,
+                text: text.clone(),
+            }),
             None => client.fail(
                 FailureCode::InvalidInput,
                 "no finished selection to copy".into(),
@@ -459,7 +477,7 @@ fn handle_selection(
             Ok(next) => next,
             Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
         };
-        clear_selection(terminal, state, false)?;
+        clear_pointer_sequence(terminal, state, false)?;
         presentation.revision = next;
         if !client.push_message(&ServerMessage::Accepted)? {
             return Ok(false);
@@ -467,10 +485,11 @@ fn handle_selection(
         return presentation.publish(Some(client), terminal);
     }
 
-    let position = match action {
+    let (position, modifiers) = match action {
         SelectionAction::Begin {
             frame_revision,
             position,
+            modifiers,
             ..
         } => {
             if frame_revision != presentation.revision {
@@ -479,42 +498,76 @@ fn handle_selection(
                     "selection frame revision is stale".into(),
                 );
             }
-            if state.active {
+            if state.route.is_some() {
                 return client.fail(
                     FailureCode::InvalidInput,
                     "selection press has an active gesture".into(),
                 );
             }
-            position
+            (position, modifiers)
         }
-        SelectionAction::Update { position } => {
-            if !state.active {
+        SelectionAction::Update {
+            position,
+            modifiers,
+        } => {
+            if state.route.is_none() {
                 return client.fail(
                     FailureCode::InvalidInput,
                     "selection update has no active selection".into(),
                 );
             }
-            position
+            (position, modifiers)
         }
-        SelectionAction::Finish { position } => {
-            if !state.active {
+        SelectionAction::Finish {
+            position,
+            modifiers,
+        } => {
+            if state.route.is_none() {
                 return client.fail(
                     FailureCode::InvalidInput,
                     "selection finish has no active selection".into(),
                 );
             }
-            position
+            (position, modifiers)
         }
         SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
     };
 
+    let route = match action {
+        SelectionAction::Begin { .. } => {
+            if terminal.is_mouse_tracking()? && !modifiers.contains(Modifiers::SHIFT) {
+                PointerRoute::Terminal
+            } else {
+                PointerRoute::Host
+            }
+        }
+        _ => state.route.expect("active route was checked"),
+    };
+    if route == PointerRoute::Terminal {
+        return handle_terminal_pointer(
+            client,
+            action,
+            position,
+            modifiers,
+            terminal,
+            size,
+            writes,
+            presentation,
+            state,
+        );
+    }
     let Some(point) = viewport_point(position, size) else {
         return client.fail(
             FailureCode::InvalidInput,
             "selection position is outside the current viewport".into(),
         );
     };
-    if !client.can_push_result_frame() {
+    let finishing = matches!(action, SelectionAction::Finish { .. });
+    if if finishing {
+        !client.can_push_selection_result()
+    } else {
+        !client.can_push_result_frame()
+    } {
         return client.fail(
             FailureCode::Terminal,
             "client output queue cannot admit selection frame".into(),
@@ -535,13 +588,96 @@ fn handle_selection(
     }
     debug_assert_eq!(
         matches!(action, SelectionAction::Finish { .. }),
-        !state.active
+        state.route.is_none()
     );
     presentation.revision = next;
     if !client.push_message(&ServerMessage::Accepted)? {
         return Ok(false);
     }
-    presentation.publish(Some(client), terminal)
+    if !presentation.publish(Some(client), terminal)? {
+        return Ok(false);
+    }
+    if finishing && let Some(text) = &state.copied {
+        return client.push_message(&ServerMessage::CopiedText {
+            location: session::ClipboardLocation::Selection,
+            text: text.clone(),
+        });
+    }
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_terminal_pointer(
+    client: &mut Client,
+    action: SelectionAction,
+    position: SelectionPosition,
+    modifiers: Modifiers,
+    terminal: &Terminal<'static, '_>,
+    size: SurfaceSize,
+    writes: &RefCell<VecDeque<u8>>,
+    presentation: &mut Presentation,
+    state: &mut SelectionState,
+) -> Result<bool> {
+    let changed = matches!(action, SelectionAction::Begin { .. }) && state.visible;
+    let admitted = if changed {
+        client.can_push_result_frame()
+    } else {
+        client.can_push_message(&ServerMessage::Accepted)?
+    };
+    if !admitted {
+        return client.fail(
+            FailureCode::Terminal,
+            "client output queue cannot admit pointer result".into(),
+        );
+    }
+    let next = if changed {
+        match next_revision(presentation.revision) {
+            Ok(next) => Some(next),
+            Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
+        }
+    } else {
+        None
+    };
+    let input = ClientMessage::Mouse(session::MouseEvent {
+        action: match action {
+            SelectionAction::Begin { .. } => MouseAction::Press,
+            SelectionAction::Update { .. } => MouseAction::Motion,
+            SelectionAction::Finish { .. } => MouseAction::Release,
+            SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
+        },
+        button: Some(MouseButton::Left),
+        modifiers,
+        x: position.x,
+        y: position.y,
+    });
+    let encoded = match encode_input(terminal, size, input) {
+        Ok(encoded) => encoded,
+        Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
+    };
+    if !can_queue_pty_write(&writes.borrow(), &encoded) {
+        let queued = client.fail(FailureCode::Terminal, "PTY input queue is full".into())?;
+        client.close_when_flushed();
+        return Ok(queued);
+    }
+    if matches!(action, SelectionAction::Begin { .. }) {
+        clear_selection(terminal, state, true)?;
+        state.route = Some(PointerRoute::Terminal);
+        if let Some(next) = next {
+            presentation.revision = next;
+        }
+    } else if matches!(action, SelectionAction::Finish { .. }) {
+        state.route = None;
+    }
+    if !queue_pty_write(&mut writes.borrow_mut(), &encoded) {
+        return Err("PTY input queue admission contradicted its preflight".into());
+    }
+    if !client.push_message(&ServerMessage::Accepted)? {
+        return Ok(false);
+    }
+    if changed {
+        return presentation.publish(Some(client), terminal);
+    }
+    Ok(true)
 }
 
 fn apply_selection_gesture(
@@ -565,20 +701,22 @@ fn apply_selection_gesture(
             .set_repeat_distance(f64::from(size.cell_width))?
             .set_repeat_interval(CLICK_REPEAT_INTERVAL)?
             .apply(&mut gesture.gesture, terminal, grid_ref.clone())?,
-        SelectionAction::Update { position } | SelectionAction::Finish { position } => gesture
-            .drag
-            .set_position(f64::from(position.x), f64::from(position.y))?
-            .apply(
-                &mut gesture.gesture,
-                terminal,
-                grid_ref.clone(),
-                Geometry {
-                    columns: u32::from(size.cols),
-                    cell_width: size.cell_width,
-                    padding_left: size.padding_left,
-                    screen_height: size.screen_height,
-                },
-            )?,
+        SelectionAction::Update { position, .. } | SelectionAction::Finish { position, .. } => {
+            gesture
+                .drag
+                .set_position(f64::from(position.x), f64::from(position.y))?
+                .apply(
+                    &mut gesture.gesture,
+                    terminal,
+                    grid_ref.clone(),
+                    Geometry {
+                        columns: u32::from(size.cols),
+                        cell_width: size.cell_width,
+                        padding_left: size.padding_left,
+                        screen_height: size.screen_height,
+                    },
+                )?
+        }
         SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
     };
 
@@ -587,12 +725,12 @@ fn apply_selection_gesture(
 
     if matches!(action, SelectionAction::Begin { .. }) {
         state.copied = None;
-        state.active = true;
+        state.route = Some(PointerRoute::Host);
     } else if matches!(action, SelectionAction::Finish { .. }) {
         gesture
             .release
             .apply(&mut gesture.gesture, terminal, Some(grid_ref))?;
-        state.active = false;
+        state.route = None;
         state.copied = state
             .visible
             .then(|| format_selection(terminal))
@@ -636,7 +774,7 @@ fn format_selection(terminal: &Terminal<'_, '_>) -> Result<String> {
     Ok(String::from_utf8(bytes)?)
 }
 
-pub(crate) fn clear_selection(
+fn clear_selection(
     terminal: &Terminal<'_, '_>,
     state: &mut SelectionState,
     forget_copy: bool,
@@ -648,11 +786,23 @@ pub(crate) fn clear_selection(
     if let Some(gesture) = &mut state.gesture {
         gesture.gesture.reset(terminal);
     }
-    state.active = false;
+    if state.route == Some(PointerRoute::Host) {
+        state.route = None;
+    }
     state.visible = false;
     if forget_copy {
         state.copied = None;
     }
+    Ok(changed)
+}
+
+pub(crate) fn clear_pointer_sequence(
+    terminal: &Terminal<'_, '_>,
+    state: &mut SelectionState,
+    forget_copy: bool,
+) -> Result<bool> {
+    let changed = clear_selection(terminal, state, forget_copy)?;
+    state.route = None;
     Ok(changed)
 }
 
@@ -909,7 +1059,7 @@ mod tests {
                     &mut selection,
                 )?);
                 assert_eq!(presentation.revision, unchanged);
-                assert!(!selection.active);
+                assert!(selection.route.is_none());
                 assert!(!selection.visible);
                 assert!(selection.copied.is_none());
                 assert!(matches!(
@@ -948,9 +1098,11 @@ mod tests {
             frame_revision: 0,
             position: position(size, 0, 0),
             time_ns: 0,
+            modifiers: Modifiers::empty(),
         });
         reject!(session::SelectionAction::Update {
             position: position(size, 0, 0),
+            modifiers: Modifiers::empty(),
         });
         reject!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
@@ -959,43 +1111,58 @@ mod tests {
                 y: position(size, 0, 0).y,
             },
             time_ns: 0,
+            modifiers: Modifiers::empty(),
         });
 
         let frame = select!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
             position: position(size, 0, 0),
             time_ns: 0,
+            modifiers: Modifiers::empty(),
         });
         assert!(!frame.rows[0].cells[0].style.selected);
         select!(session::SelectionAction::Cancel);
         reject!(session::SelectionAction::Finish {
             position: position(size, 0, 0),
+            modifiers: Modifiers::empty(),
         });
 
         select!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
             position: position(size, 0, 0),
             time_ns: 0,
+            modifiers: Modifiers::empty(),
         });
         apply_pty_output(&mut terminal, &mut selection, b"!")?;
-        assert!(!selection.active);
+        assert!(selection.route.is_none());
         assert!(!selection.visible);
         assert!(selection.copied.is_none());
         reject!(session::SelectionAction::Finish {
             position: position(size, 7, 0),
+            modifiers: Modifiers::empty(),
         });
 
         select!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
             position: position(size, 0, 0),
             time_ns: 1_000_000_000,
+            modifiers: Modifiers::empty(),
         });
         select!(session::SelectionAction::Update {
             position: position(size, 7, 0),
+            modifiers: Modifiers::empty(),
         });
         select!(session::SelectionAction::Finish {
             position: position(size, 7, 0),
+            modifiers: Modifiers::empty(),
         });
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Selection,
+                text: "alpha 界".into(),
+            }
+        );
 
         assert!(handle_client_message(
             &mut client,
@@ -1009,7 +1176,10 @@ mod tests {
         )?);
         assert_eq!(
             flush_message(&mut client, &mut peer)?,
-            ServerMessage::CopiedText("alpha 界".into())
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Standard,
+                text: "alpha 界".into(),
+            }
         );
 
         apply_pty_output(&mut terminal, &mut selection, b"later")?;
@@ -1032,6 +1202,7 @@ mod tests {
                 frame_revision: presentation.revision,
                 position: position(size, 1, 0),
                 time_ns: 2_000_000_000,
+                modifiers: Modifiers::empty(),
             }),
             &mut terminal,
             Some(&pty),
@@ -1046,8 +1217,287 @@ mod tests {
         apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1049h")?;
         assert_eq!(terminal.active_screen()?, Screen::Alternate);
         assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
-        assert!(!selection.active);
+        assert!(selection.route.is_none());
         assert!(!selection.visible);
+        Ok(())
+    }
+
+    #[test]
+    fn authoritative_left_pointer_route_is_pinned_and_shift_selects() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let mut terminal = terminal()?;
+        terminal.vt_write(b"alpha beta\r\n\x1b[?1000h\x1b[?1006h");
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut presentation = Presentation::new()?;
+        presentation.revision = 1;
+        let mut selection = SelectionState::default();
+
+        macro_rules! send {
+            ($action:expr) => {{
+                assert!(handle_client_message(
+                    &mut client,
+                    ClientMessage::Selection($action),
+                    &mut terminal,
+                    Some(&pty),
+                    &mut size,
+                    &writes,
+                    &mut presentation,
+                    &mut selection,
+                )?);
+                assert_eq!(
+                    flush_message(&mut client, &mut peer)?,
+                    ServerMessage::Accepted
+                );
+            }};
+        }
+
+        let stable_revision = presentation.revision;
+        send!(SelectionAction::Begin {
+            frame_revision: stable_revision,
+            position: position(size, 0, 0),
+            time_ns: 1,
+            modifiers: Modifiers::empty(),
+        });
+        assert_eq!(selection.route, Some(PointerRoute::Terminal));
+        assert_eq!(
+            writes.take().into_iter().collect::<Vec<_>>(),
+            b"\x1b[<0;1;1M"
+        );
+        send!(SelectionAction::Update {
+            position: SelectionPosition {
+                x: size.screen_width as f32 + 1.0,
+                y: position(size, 0, 0).y,
+            },
+            modifiers: Modifiers::empty(),
+        });
+        assert_eq!(selection.route, Some(PointerRoute::Terminal));
+        assert!(writes.borrow().is_empty());
+
+        apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1000l\x1b[?1006l")?;
+        send!(SelectionAction::Update {
+            position: position(size, 4, 0),
+            modifiers: Modifiers::SHIFT,
+        });
+        assert_eq!(selection.route, Some(PointerRoute::Terminal));
+        assert!(writes.borrow().is_empty());
+
+        apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1000h\x1b[?1006h")?;
+        send!(SelectionAction::Finish {
+            position: position(size, 4, 0),
+            modifiers: Modifiers::empty(),
+        });
+        assert!(selection.route.is_none());
+        assert_eq!(presentation.revision, stable_revision);
+        assert_eq!(
+            writes.take().into_iter().collect::<Vec<_>>(),
+            b"\x1b[<0;5;1m"
+        );
+
+        send!(SelectionAction::Begin {
+            frame_revision: presentation.revision,
+            position: position(size, 0, 0),
+            time_ns: 2,
+            modifiers: Modifiers::empty(),
+        });
+        assert_eq!(
+            writes.take().into_iter().collect::<Vec<_>>(),
+            b"\x1b[<0;1;1M"
+        );
+        send!(SelectionAction::Cancel);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(_)
+        ));
+        assert!(selection.route.is_none());
+        assert!(writes.borrow().is_empty());
+
+        send!(SelectionAction::Begin {
+            frame_revision: presentation.revision,
+            position: position(size, 0, 0),
+            time_ns: 3,
+            modifiers: Modifiers::SHIFT,
+        });
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(_)
+        ));
+        assert_eq!(selection.route, Some(PointerRoute::Host));
+        send!(SelectionAction::Update {
+            position: position(size, 5, 0),
+            modifiers: Modifiers::empty(),
+        });
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(_)
+        ));
+        send!(SelectionAction::Finish {
+            position: position(size, 5, 0),
+            modifiers: Modifiers::empty(),
+        });
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(_)
+        ));
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Selection,
+                text: "alpha".into(),
+            }
+        );
+        assert!(writes.borrow().is_empty());
+
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Selection(SelectionAction::Copy),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Standard,
+                text: "alpha".into(),
+            }
+        );
+
+        let selected = selection_between(&terminal, (0, 0), (0, 0))?;
+        terminal.set_selection(Some(&selected))?;
+        selection.visible = true;
+        let saved_revision = presentation.revision;
+        presentation.revision = u64::MAX;
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Selection(SelectionAction::Begin {
+                frame_revision: presentation.revision,
+                position: position(size, 0, 0),
+                time_ns: 4,
+                modifiers: Modifiers::empty(),
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::Terminal,
+                detail,
+            }) if detail == "presentation revision exhausted"
+        ));
+        assert!(writes.borrow().is_empty());
+        assert!(selection.visible);
+        assert!(selection.route.is_none());
+        presentation.revision = saved_revision;
+
+        let (mut blocked, _) = attached_client()?;
+        fill_output(&mut blocked)?;
+        assert!(!handle_client_message(
+            &mut blocked,
+            ClientMessage::Selection(SelectionAction::Begin {
+                frame_revision: presentation.revision,
+                position: position(size, 0, 0),
+                time_ns: 5,
+                modifiers: Modifiers::empty(),
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(writes.borrow().is_empty());
+        assert!(selection.route.is_none());
+
+        writes.borrow_mut().resize(MAX_PTY_WRITE_BYTES, b'x');
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Selection(SelectionAction::Begin {
+                frame_revision: presentation.revision,
+                position: position(size, 0, 0),
+                time_ns: 6,
+                modifiers: Modifiers::empty(),
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert_eq!(writes.borrow().len(), MAX_PTY_WRITE_BYTES);
+        assert!(selection.route.is_none());
+        assert!(selection.visible);
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::Terminal,
+                detail: "PTY input queue is full".into(),
+            })
+        );
+
+        writes.borrow_mut().clear();
+        let (mut pressured, mut pressured_peer) = attached_client()?;
+        assert!(handle_client_message(
+            &mut pressured,
+            ClientMessage::Selection(SelectionAction::Begin {
+                frame_revision: presentation.revision,
+                position: position(size, 0, 0),
+                time_ns: 7,
+                modifiers: Modifiers::SHIFT,
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert_eq!(
+            flush_message(&mut pressured, &mut pressured_peer)?,
+            ServerMessage::Accepted
+        );
+        assert!(matches!(
+            flush_message(&mut pressured, &mut pressured_peer)?,
+            ServerMessage::Frame(_)
+        ));
+        let pressure = ServerMessage::Failure(Failure {
+            code: FailureCode::Terminal,
+            detail: "x".repeat(session::MAX_FAILURE_BYTES),
+        });
+        while pressured.can_push_selection_result() {
+            assert!(pressured.push_message(&pressure)?);
+        }
+        assert!(pressured.can_push_result_frame());
+        let stable_revision = presentation.revision;
+        assert!(handle_client_message(
+            &mut pressured,
+            ClientMessage::Selection(SelectionAction::Finish {
+                position: position(size, 4, 0),
+                modifiers: Modifiers::empty(),
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert_eq!(presentation.revision, stable_revision);
+        assert_eq!(selection.route, Some(PointerRoute::Host));
+        assert!(selection.visible);
+        assert!(selection.copied.is_none());
+        assert!(writes.borrow().is_empty());
         Ok(())
     }
 
@@ -1070,8 +1520,8 @@ mod tests {
                 let action = $action;
                 let position = match action {
                     SelectionAction::Begin { position, .. }
-                    | SelectionAction::Update { position }
-                    | SelectionAction::Finish { position } => position,
+                    | SelectionAction::Update { position, .. }
+                    | SelectionAction::Finish { position, .. } => position,
                     SelectionAction::Cancel | SelectionAction::Copy => {
                         unreachable!("test applies pointer gestures only")
                     }
@@ -1086,12 +1536,15 @@ mod tests {
             frame_revision: 1,
             position: position(size, 0, 0),
             time_ns: 1_000_000_000,
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Update {
             position: position(size, 5, 0),
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Finish {
             position: position(size, 5, 0),
+            modifiers: Modifiers::empty(),
         });
         assert_eq!(selection.copied.as_deref(), Some("alpha"));
 
@@ -1099,20 +1552,25 @@ mod tests {
             frame_revision: 2,
             position: position(size, 1, 0),
             time_ns: 2_000_000_000,
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Finish {
             position: position(size, 1, 0),
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Begin {
             frame_revision: 3,
             position: position(size, 1, 0),
             time_ns: 2_100_000_000,
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Update {
             position: position(size, 9, 0),
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Finish {
             position: position(size, 9, 0),
+            modifiers: Modifiers::empty(),
         });
         assert_eq!(selection.copied.as_deref(), Some("alpha beta"));
 
@@ -1120,12 +1578,15 @@ mod tests {
             frame_revision: 4,
             position: position(size, 1, 0),
             time_ns: 2_200_000_000,
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Update {
             position: position(size, 5, 1),
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Finish {
             position: position(size, 5, 1),
+            modifiers: Modifiers::empty(),
         });
         assert_eq!(
             selection.copied.as_deref(),
@@ -1136,12 +1597,15 @@ mod tests {
             frame_revision: 5,
             position: position(size, 1, 0),
             time_ns: 2_000_000_000,
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Update {
             position: position(size, 2, 0),
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Finish {
             position: position(size, 2, 0),
+            modifiers: Modifiers::empty(),
         });
         assert_eq!(selection.copied.as_deref(), Some("l"));
 
@@ -1149,17 +1613,21 @@ mod tests {
             frame_revision: 6,
             position: position(size, 0, 0),
             time_ns: 3_000_000_000,
+            modifiers: Modifiers::empty(),
         });
         gesture!(SelectionAction::Update {
             position: position(size, 5, 0),
+            modifiers: Modifiers::empty(),
         });
         assert!(selection.visible);
         gesture!(SelectionAction::Update {
             position: position(size, 0, 0),
+            modifiers: Modifiers::empty(),
         });
         assert!(!selection.visible);
         gesture!(SelectionAction::Finish {
             position: position(size, 0, 0),
+            modifiers: Modifiers::empty(),
         });
         assert!(selection.copied.is_none());
         Ok(())
@@ -1258,7 +1726,7 @@ mod tests {
             let selected = selection_between(&terminal, (0, 0), (1, 0))?;
             terminal.set_selection(Some(&selected))?;
         }
-        selection.active = true;
+        selection.route = Some(PointerRoute::Host);
         selection.visible = true;
         assert!(handle_client_message(
             &mut client,
@@ -1616,7 +2084,7 @@ mod tests {
         let live = terminal.scrollbar()?.offset;
         let selected = selection_between(&terminal, (0, 0), (1, 0))?;
         terminal.set_selection(Some(&selected))?;
-        selection.active = true;
+        selection.route = Some(PointerRoute::Host);
         selection.visible = true;
 
         let ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {

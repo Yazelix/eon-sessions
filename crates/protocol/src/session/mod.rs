@@ -16,7 +16,7 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 8;
+pub const VERSION: u16 = 9;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
@@ -143,7 +143,7 @@ pub enum ClientMessage {
     Paste(Vec<u8>),
     /// A requested terminal and drawing-surface size.
     Resize(SurfaceSize),
-    /// One authoritative current-viewport selection or copy action.
+    /// One routed left-pointer or copy action.
     Selection(SelectionAction),
     /// Read one bounded vertical row window adjacent to an exact complete frame.
     PreviewVertical {
@@ -173,8 +173,11 @@ pub enum ServerMessage {
     Failure(Failure),
     /// The authoritative child process exited.
     Exited { code: i32 },
-    /// One complete bounded plain-text copy result.
-    CopiedText(String),
+    /// One complete bounded plain-text copy result and its native destination.
+    CopiedText {
+        location: ClipboardLocation,
+        text: String,
+    },
     /// One ordered terminal-emitted plain-text clipboard write.
     ClipboardWrite {
         location: ClipboardLocation,
@@ -244,7 +247,7 @@ pub enum ScrollOutcome {
     },
 }
 
-/// Platform-neutral destination of a terminal-emitted clipboard write.
+/// Platform-neutral native clipboard destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardLocation {
     Standard,
@@ -583,7 +586,7 @@ pub struct SelectionPosition {
     pub y: f32,
 }
 
-/// Host selection gestures and explicit copy actions.
+/// Routed left-pointer gestures and explicit copy actions.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SelectionAction {
     /// Press against the exact complete frame the client used for hit testing.
@@ -592,11 +595,18 @@ pub enum SelectionAction {
         position: SelectionPosition,
         /// Monotonic event-delivery time since the client-defined origin.
         time_ns: u64,
+        modifiers: Modifiers,
     },
-    /// Drag the active selection endpoint.
-    Update { position: SelectionPosition },
-    /// Freeze the selection and its bounded plain text.
-    Finish { position: SelectionPosition },
+    /// Update the active left-pointer sequence.
+    Update {
+        position: SelectionPosition,
+        modifiers: Modifiers,
+    },
+    /// Finish the active left-pointer sequence.
+    Finish {
+        position: SelectionPosition,
+        modifiers: Modifiers,
+    },
     /// Cancel active gesture state and selected presentation.
     Cancel,
     /// Request the last successfully frozen plain text.

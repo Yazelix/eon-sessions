@@ -140,9 +140,13 @@ uses the bounded window only for compositor-paced fractional presentation.
 Accepted ORBS v8 replaces client-authored selection cells with bounded
 surface positions and monotonic press time. Orbit maps positions through the
 authoritative surface geometry, and the pinned libghostty gesture state owns
-cell, word, logical-line, and matching drag granularity. Native event routing
-and clipboard effects remain Venus-owned; Venus explicitly cancels an
-abandoned Orbit gesture when it loses focus or pointer capture.
+cell, word, logical-line, and matching drag granularity. Candidate ORBS v9 adds
+current modifiers to every positional phase and moves terminal-versus-host
+routing into Orbit, where authoritative mouse tracking already lives. Shift
+forces host selection, the Begin route remains fixed, release returns frozen
+text for the semantic selection clipboard, and explicit Copy targets the
+ordinary clipboard. Venus still owns native event delivery, focus and pointer
+capture cancellation, and native clipboard effects.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
 row contents, and stable anchors. Venus owns native pointer events, but sends

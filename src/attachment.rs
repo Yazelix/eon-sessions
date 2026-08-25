@@ -163,6 +163,10 @@ impl Client {
         self.output.can_push_result_frame()
     }
 
+    pub(crate) fn can_push_selection_result(&self) -> bool {
+        self.output.can_push_selection_result()
+    }
+
     pub(crate) fn can_push_frame_message(&self) -> bool {
         self.output.can_push_frame_message()
     }
@@ -321,6 +325,12 @@ impl OutputQueue {
         self.bytes
             .saturating_add(MAX_FRAME_BYTES + 2 * session::HEADER_BYTES)
             <= MAX_OUTPUT_BYTES
+    }
+
+    fn can_push_selection_result(&self) -> bool {
+        self.bytes.saturating_add(
+            MAX_FRAME_BYTES + session::MAX_COPY_BYTES + 1 + 3 * session::HEADER_BYTES,
+        ) <= MAX_OUTPUT_BYTES
     }
 
     fn can_push_frame_message(&self) -> bool {
@@ -510,6 +520,7 @@ mod tests {
     fn pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision() {
         let mut output = OutputQueue::default();
         assert!(output.can_push_scroll_outcome());
+        assert!(output.can_push_selection_result());
         assert!(output.push(vec![0], MessageClass::Ordered));
         assert!(output.push_replaceable(vec![1], MessageClass::Frame));
         assert!(output.push_replaceable(vec![2], MessageClass::Preview));
@@ -545,6 +556,7 @@ mod tests {
             MessageClass::Frame
         ));
         assert!(full.can_push_frame_message());
+        assert!(!full.can_push_selection_result());
     }
 
     #[test]

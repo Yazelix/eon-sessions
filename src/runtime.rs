@@ -15,7 +15,9 @@ use std::{
 };
 
 use attachment::{Client, Incoming, Negotiation};
-use interaction::{SelectionState, apply_pty_output, clear_selection, handle_client_message};
+use interaction::{
+    SelectionState, apply_pty_output, clear_pointer_sequence, handle_client_message,
+};
 use platform::{Pty, PtyIo};
 use presentation::Extractor;
 
@@ -281,7 +283,7 @@ pub(super) fn run(
         }
         if let Some(status) = pty.try_wait()? {
             let _ = pty.stop_and_reap()?;
-            let changed = clear_selection(&terminal, &mut selection, true)?
+            let changed = clear_pointer_sequence(&terminal, &mut selection, true)?
                 | drain_exited_pty(&mut pty, &mut terminal, &mut selection)?;
             fail_on_pty_write_overflow(&response_overflow)?;
             if !publish_clipboard_writes(&mut client, &clipboard_writes)? {
@@ -369,6 +371,9 @@ pub(super) fn run(
         }
         if pty_was_open && !pty_open {
             discard_pty_writes(&writes);
+            if clear_pointer_sequence(&terminal, &mut selection, false)? {
+                presentation.advance()?;
+            }
         }
         if (readiness.client || client.as_ref().is_some_and(Client::has_input))
             && let Some(active) = client.as_mut()
@@ -513,11 +518,15 @@ fn discard_pty_writes(writes: &RefCell<VecDeque<u8>>) {
 }
 
 pub(crate) fn queue_pty_write(writes: &mut VecDeque<u8>, bytes: &[u8]) -> bool {
-    if writes.len().saturating_add(bytes.len()) > MAX_PTY_WRITE_BYTES {
+    if !can_queue_pty_write(writes, bytes) {
         return false;
     }
     writes.extend(bytes);
     true
+}
+
+pub(crate) fn can_queue_pty_write(writes: &VecDeque<u8>, bytes: &[u8]) -> bool {
+    writes.len().saturating_add(bytes.len()) <= MAX_PTY_WRITE_BYTES
 }
 
 fn fail_on_pty_write_overflow(overflow: &Cell<bool>) -> Result {
@@ -660,7 +669,7 @@ fn disconnect_client(
     presentation: &mut Presentation,
 ) -> Result {
     *client = None;
-    if clear_selection(terminal, selection, true)? {
+    if clear_pointer_sequence(terminal, selection, true)? {
         presentation.advance()?;
     }
     Ok(())

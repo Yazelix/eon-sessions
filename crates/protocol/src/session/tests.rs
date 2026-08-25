@@ -115,12 +115,15 @@ fn every_client_message_round_trips() {
             frame_revision: 42,
             position: SelectionPosition { x: 31.5, y: 72.25 },
             time_ns: 1_000_000_000,
+            modifiers: Modifiers::SHIFT,
         }),
         ClientMessage::Selection(SelectionAction::Update {
             position: SelectionPosition { x: 49.5, y: 108.25 },
+            modifiers: Modifiers::CTRL,
         }),
         ClientMessage::Selection(SelectionAction::Finish {
             position: SelectionPosition { x: 67.5, y: 144.25 },
+            modifiers: Modifiers::ALT,
         }),
         ClientMessage::Selection(SelectionAction::Cancel),
         ClientMessage::Selection(SelectionAction::Copy),
@@ -150,7 +153,14 @@ fn every_server_message_round_trips() {
             code: FailureCode::InvalidInput,
             detail: "bad key".into(),
         }),
-        ServerMessage::CopiedText("first\n界e\u{301}".into()),
+        ServerMessage::CopiedText {
+            location: ClipboardLocation::Selection,
+            text: "first\n界e\u{301}".into(),
+        },
+        ServerMessage::CopiedText {
+            location: ClipboardLocation::Standard,
+            text: String::new(),
+        },
         ServerMessage::ClipboardWrite {
             location: ClipboardLocation::Primary,
             text: "copied by zellij".into(),
@@ -259,7 +269,7 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    assert_eq!(VERSION, 8);
+    assert_eq!(VERSION, 9);
     let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
@@ -389,7 +399,10 @@ fn semantic_values_reject_invalid_states() {
         })
     );
 
-    let oversized = ServerMessage::CopiedText("x".repeat(MAX_COPY_BYTES + 1));
+    let oversized = ServerMessage::CopiedText {
+        location: ClipboardLocation::Standard,
+        text: "x".repeat(MAX_COPY_BYTES + 1),
+    };
     assert_eq!(
         encode_server_message(&oversized),
         Err(Error::PayloadTooLarge {
@@ -633,6 +646,7 @@ fn malformed_typed_payloads_are_rejected() {
         frame_revision: 1,
         position: SelectionPosition { x: 0.0, y: 0.0 },
         time_ns: 0,
+        modifiers: Modifiers::empty(),
     }))
     .unwrap();
     selection[HEADER_BYTES] = u8::MAX;
@@ -649,6 +663,7 @@ fn malformed_typed_payloads_are_rejected() {
             x: f32::NAN,
             y: 0.0,
         },
+        modifiers: Modifiers::empty(),
     });
     assert_eq!(
         encode_client_message(&invalid_selection),
@@ -660,17 +675,46 @@ fn malformed_typed_payloads_are_rejected() {
             frame_revision: 1,
             position: SelectionPosition { x: 0.0, y: 0.0 },
             time_ns: 0,
+            modifiers: Modifiers::empty(),
         }))
         .unwrap();
-    invalid_selection[HEADER_BYTES + 17..HEADER_BYTES + 21]
+    invalid_selection[HEADER_BYTES + 19..HEADER_BYTES + 23]
         .copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
     assert_eq!(
         decode_client_message(&invalid_selection),
         Err(Error::InvalidCoordinates)
     );
 
-    let mut copied = encode_server_message(&ServerMessage::CopiedText("text".into())).unwrap();
-    copied[HEADER_BYTES] = 0xff;
+    let mut invalid_modifiers =
+        encode_client_message(&ClientMessage::Selection(SelectionAction::Begin {
+            frame_revision: 1,
+            position: SelectionPosition { x: 0.0, y: 0.0 },
+            time_ns: 0,
+            modifiers: Modifiers::empty(),
+        }))
+        .unwrap();
+    invalid_modifiers[HEADER_BYTES + 17..HEADER_BYTES + 19]
+        .copy_from_slice(&u16::MAX.to_le_bytes());
+    assert_eq!(
+        decode_client_message(&invalid_modifiers),
+        Err(Error::InvalidValue { field: "modifiers" })
+    );
+
+    let mut copied = encode_server_message(&ServerMessage::CopiedText {
+        location: ClipboardLocation::Selection,
+        text: "text".into(),
+    })
+    .unwrap();
+    let mut invalid_copied_location = copied.clone();
+    invalid_copied_location[HEADER_BYTES] = u8::MAX;
+    assert_eq!(
+        decode_server_message(&invalid_copied_location),
+        Err(Error::InvalidTag {
+            field: "clipboard location",
+            value: u8::MAX,
+        })
+    );
+    copied[HEADER_BYTES + 1] = 0xff;
     assert_eq!(
         decode_server_message(&copied),
         Err(Error::InvalidUtf8 {
@@ -716,10 +760,10 @@ fn malformed_typed_payloads_are_rejected() {
     );
 
     assert_eq!(
-        server_message_len(&header(SERVER_COPIED_TEXT, MAX_COPY_BYTES + 1)),
+        server_message_len(&header(SERVER_COPIED_TEXT, MAX_COPY_BYTES + 2)),
         Err(Error::PayloadTooLarge {
-            size: MAX_COPY_BYTES + 1,
-            maximum: MAX_COPY_BYTES,
+            size: MAX_COPY_BYTES + 2,
+            maximum: MAX_COPY_BYTES + 1,
         })
     );
     assert_eq!(

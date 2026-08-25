@@ -86,7 +86,7 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
         CLIENT_FOCUS => Ok((1, 1)),
         CLIENT_PASTE => Ok((0, MAX_PASTE_BYTES)),
         CLIENT_RESIZE => Ok((36, 36)),
-        CLIENT_SELECTION => Ok((1, 25)),
+        CLIENT_SELECTION => Ok((1, 27)),
         CLIENT_PREVIEW_VERTICAL => Ok((9, 9)),
         CLIENT_SCROLL_VERTICAL => Ok((10, 10)),
         value => Err(Error::InvalidTag {
@@ -104,7 +104,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
         SERVER_EXITED => Ok((4, 4)),
         SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_FRAME_BYTES)),
         SERVER_FAILURE => Ok((5, 5 + MAX_FAILURE_BYTES)),
-        SERVER_COPIED_TEXT => Ok((0, MAX_COPY_BYTES)),
+        SERVER_COPIED_TEXT => Ok((1, 1 + MAX_COPY_BYTES)),
         SERVER_CLIPBOARD_WRITE => Ok((2, 1 + MAX_COPY_BYTES)),
         SERVER_WHEEL_TERMINAL_ROUTED => Ok((0, 0)),
         SERVER_WHEEL_VIEWPORT_UP | SERVER_WHEEL_VIEWPORT_STILL | SERVER_WHEEL_VIEWPORT_DOWN => {
@@ -120,7 +120,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v8 header.
+/// Encodes one client message with an ORBS v9 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -190,20 +190,30 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
                     frame_revision,
                     position,
                     time_ns,
+                    modifiers,
                 } => {
                     payload.push(SELECTION_BEGIN);
                     payload.extend_from_slice(&frame_revision.to_le_bytes());
                     payload.extend_from_slice(&time_ns.to_le_bytes());
+                    put_u16(&mut payload, modifiers.bits());
                     put_u32(&mut payload, position.x.to_bits());
                     put_u32(&mut payload, position.y.to_bits());
                 }
-                SelectionAction::Update { position } => {
+                SelectionAction::Update {
+                    position,
+                    modifiers,
+                } => {
                     payload.push(SELECTION_UPDATE);
+                    put_u16(&mut payload, modifiers.bits());
                     put_u32(&mut payload, position.x.to_bits());
                     put_u32(&mut payload, position.y.to_bits());
                 }
-                SelectionAction::Finish { position } => {
+                SelectionAction::Finish {
+                    position,
+                    modifiers,
+                } => {
                     payload.push(SELECTION_FINISH);
+                    put_u16(&mut payload, modifiers.bits());
                     put_u32(&mut payload, position.x.to_bits());
                     put_u32(&mut payload, position.y.to_bits());
                 }
@@ -300,9 +310,9 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
             }
         }),
         CLIENT_PASTE => {
-            validate_bound(payload.len(), MAX_PASTE_BYTES)?;
-            reader.take_remaining();
-            ClientMessage::Paste(payload.to_vec())
+            let data = reader.take_remaining();
+            validate_bound(data.len(), MAX_PASTE_BYTES)?;
+            ClientMessage::Paste(data.to_vec())
         }
         CLIENT_RESIZE => {
             let size = SurfaceSize {
@@ -325,18 +335,21 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
                 SELECTION_BEGIN => SelectionAction::Begin {
                     frame_revision: u64::from_le_bytes(reader.array()?),
                     time_ns: u64::from_le_bytes(reader.array()?),
+                    modifiers: checked_modifiers(reader.u16()?)?,
                     position: SelectionPosition {
                         x: f32::from_bits(reader.u32()?),
                         y: f32::from_bits(reader.u32()?),
                     },
                 },
                 SELECTION_UPDATE => SelectionAction::Update {
+                    modifiers: checked_modifiers(reader.u16()?)?,
                     position: SelectionPosition {
                         x: f32::from_bits(reader.u32()?),
                         y: f32::from_bits(reader.u32()?),
                     },
                 },
                 SELECTION_FINISH => SelectionAction::Finish {
+                    modifiers: checked_modifiers(reader.u16()?)?,
                     position: SelectionPosition {
                         x: f32::from_bits(reader.u32()?),
                         y: f32::from_bits(reader.u32()?),
@@ -378,7 +391,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v8 header.
+/// Encodes one server message with an ORBS v9 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -410,8 +423,9 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             payload.extend_from_slice(&code.to_le_bytes());
             SERVER_EXITED
         }
-        ServerMessage::CopiedText(text) => {
+        ServerMessage::CopiedText { location, text } => {
             validate_bound(text.len(), MAX_COPY_BYTES)?;
+            payload.push(clipboard_location_tag(*location));
             payload.extend_from_slice(text.as_bytes());
             SERVER_COPIED_TEXT
         }
@@ -540,21 +554,20 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
             code: i32::from_le_bytes(reader.array()?),
         },
         SERVER_COPIED_TEXT => {
-            let text = str::from_utf8(payload)
+            let location = decode_clipboard_location(reader.u8()?)?;
+            let text = str::from_utf8(reader.take_remaining())
                 .map_err(|_| Error::InvalidUtf8 {
                     field: "copied text",
                 })?
                 .to_owned();
-            reader.take_remaining();
-            ServerMessage::CopiedText(text)
+            ServerMessage::CopiedText { location, text }
         }
         SERVER_CLIPBOARD_WRITE => {
             let location = decode_clipboard_location(reader.u8()?)?;
-            let text = str::from_utf8(&payload[1..]).map_err(|_| Error::InvalidUtf8 {
+            let text = str::from_utf8(reader.take_remaining()).map_err(|_| Error::InvalidUtf8 {
                 field: "clipboard text",
             })?;
             validate_clipboard_text(text)?;
-            reader.take_remaining();
             ServerMessage::ClipboardWrite {
                 location,
                 text: text.to_owned(),
@@ -721,8 +734,7 @@ fn decode_preview_window(reader: &mut Reader<'_>) -> Result<PreviewOutcome> {
             field: "preview cell count",
         });
     }
-    let rows = decode_canonical_rows(reader.remaining(), cols, row_count)?;
-    reader.take_remaining();
+    let rows = decode_canonical_rows(reader.take_remaining(), cols, row_count)?;
     Ok(PreviewOutcome::Viewport {
         cols,
         edge_reached,
@@ -771,9 +783,22 @@ fn validate_mouse(event: &MouseEvent) -> Result<()> {
 
 fn validate_selection(action: &SelectionAction) -> Result<()> {
     match action {
-        SelectionAction::Begin { position, .. }
-        | SelectionAction::Update { position }
-        | SelectionAction::Finish { position } => validate_surface_position(position.x, position.y),
+        SelectionAction::Begin {
+            position,
+            modifiers,
+            ..
+        }
+        | SelectionAction::Update {
+            position,
+            modifiers,
+        }
+        | SelectionAction::Finish {
+            position,
+            modifiers,
+        } => {
+            checked_modifiers(modifiers.bits())?;
+            validate_surface_position(position.x, position.y)
+        }
         SelectionAction::Cancel | SelectionAction::Copy => Ok(()),
     }
 }
@@ -1032,12 +1057,10 @@ impl<'a> Reader<'a> {
         Ok(value)
     }
 
-    fn take_remaining(&mut self) {
+    fn take_remaining(&mut self) -> &'a [u8] {
+        let value = &self.bytes[self.offset..];
         self.offset = self.bytes.len();
-    }
-
-    fn remaining(&self) -> &'a [u8] {
-        &self.bytes[self.offset..]
+        value
     }
 
     fn optional_text(&mut self, field: &'static str, maximum: usize) -> Result<Option<String>> {

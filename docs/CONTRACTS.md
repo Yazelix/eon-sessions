@@ -24,6 +24,11 @@ Orbit-resolved pointer gestures at
 `d9b22eb294f8f42b4f49324fd5467eab239c2917`. It preserves every other ORBS v7
 contract and has no compatibility window.
 
+Candidate exact-version ORBS v9 changes ORB-C5 and ORB-C9 so Orbit routes one
+left-pointer sequence from authoritative terminal mouse state and tags host
+selection copy destinations. It intentionally replaces ORBS v8 without a
+compatibility window; exact consumer proof remains open.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -117,23 +122,36 @@ contract and has no compatibility window.
 
 ## ORB-C5 — Semantic terminal interaction
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
   interaction.
-- **Trigger:** Orbit accepts one canonical semantic input message.
-- **Result:** Orbit encodes the interaction against its authoritative terminal
-  state.
+- **Trigger:** Orbit accepts one canonical semantic input message or begins one
+  revision-bound left-pointer sequence.
+- **Result:**
+  - Orbit encodes terminal interaction against its authoritative terminal
+    state.
+  - When mouse tracking is active and Shift is absent, Orbit pins the
+    left-pointer sequence to terminal input and encodes each positional phase
+    once through its existing terminal-aware mouse encoder.
+  - Otherwise Orbit pins the sequence to host selection; Shift always selects
+    host text.
 - **Important failures:** Invalid or terminal-forbidden input fails without
-  fallback text or duplicate insertion.
+  fallback text or duplicate insertion. Invalid phase order, pressure, cancel,
+  endpoint loss, or a terminal-mode change cannot switch an active sequence,
+  emit partial input, or synthesize terminal input.
 - **Owner:** Canonical platform-neutral `orbit-protocol` values and Orbit's
   semantic interaction owner.
-- **Consumes:** Canonical ORBS v7 semantic input.
+- **Consumes:** Candidate canonical ORBS v9 semantic input; accepted ORBS v7
+  remains the prior proof.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
 - **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux with Codex CLI 0.149.0 dogfood
   - **Evidence:**
     - [`kitty_release_never_falls_back_to_text`](../src/interaction.rs)
     - Accepted real-PTY semantic-input lifecycle checks
+- **Open proof:** Candidate routing check
+  [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
+  passes; exact consumer proof remains open.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
@@ -216,12 +234,14 @@ contract and has no compatibility window.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
-- **Consumer:** One healthy exact-version ORBS v8 attachment.
-- **Trigger:** The client presses, drags, releases, or copies one host selection
-  using bounded surface coordinates against the exact current frame revision
-  and a monotonic press timestamp.
+- **Status:** Partially proved
+- **Consumer:** One healthy exact-version ORBS v9 attachment.
+- **Trigger:** The client begins, updates, finishes, cancels, or copies one
+  left-pointer sequence using bounded surface coordinates and current modifiers;
+  Begin names the exact current frame revision and a monotonic press timestamp.
 - **Result:**
+  - Orbit chooses host selection when authoritative terminal mouse tracking is
+    absent or Shift is present, and keeps that route through Finish or Cancel.
   - Orbit alone resolves pointer positions, click repetition, cell, word, and
     logical-line boundaries, selected presentation, and copied text through
     libghostty's default gesture behavior.
@@ -229,7 +249,9 @@ contract and has no compatibility window.
     lines; the repeat distance is one cell width and the repeat interval is 500
     milliseconds.
   - Release freezes one bounded plain-text value that later output, resize,
-    reflow, or screen transition cannot reinterpret or erase.
+    reflow, or screen transition cannot reinterpret or erase, and returns it
+    for the semantic selection clipboard. Explicit Copy returns the same frozen
+    text for the ordinary clipboard.
   - A non-selection terminal mutation clears active selection and its
     presentation and resets gesture state before mutation; read-only preview
     does not.
@@ -241,13 +263,16 @@ contract and has no compatibility window.
   - A backwards press timestamp safely starts a new single-click sequence.
   - Stale revisions, invalid surface coordinates or phase order, formatting
     overflow, pressure, focus loss, or pointer capture loss reject or explicitly
-    cancel the gesture without partial state or text.
+    cancel the gesture without partial state, text, mixed routing, or invented
+    terminal input.
   - Selection work and buffering remain bounded and cannot block authoritative
     PTY processing or cleanup.
-- **Owner:** Orbit's semantic interaction owner with libghostty current-viewport
-  gesture selection and canonical ORBS v8.
-- **Consumes:** Canonical ORBS v8 and ORB-C7 bounded-pressure behavior.
-- **Boundary:** Native clipboard effects, custom word separators or click
+- **Owner:** Orbit's semantic interaction owner with authoritative mouse modes,
+  libghostty current-viewport gesture selection, and canonical ORBS v9. Venus
+  owns native event delivery and clipboard effects.
+- **Consumes:** Candidate canonical ORBS v9 and ORB-C7 bounded-pressure behavior;
+  accepted ORBS v8 remains the prior host-selection proof.
+- **Boundary:** Custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
 - **Proof:** `d9b22eb294f8f42b4f49324fd5467eab239c2917`
@@ -256,7 +281,9 @@ contract and has no compatibility window.
     - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
     - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus and Eon consumer adoption is pending.
+- **Open proof:** Candidate routing check
+  [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
+  passes; exact Venus and Eon consumer adoption is pending.
 
 ## ORB-C10 — Eon terminal identity
 
