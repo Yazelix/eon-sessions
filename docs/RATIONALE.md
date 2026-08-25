@@ -140,7 +140,7 @@ uses the bounded window only for compositor-paced fractional presentation.
 Accepted ORBS v8 replaces client-authored selection cells with bounded
 surface positions and monotonic press time. Orbit maps positions through the
 authoritative surface geometry, and the pinned libghostty gesture state owns
-cell, word, logical-line, and matching drag granularity. Candidate ORBS v9 adds
+cell, word, logical-line, and matching drag granularity. Accepted ORBS v9 adds
 current modifiers to every positional phase and moves terminal-versus-host
 routing into Orbit, where authoritative mouse tracking already lives. Shift
 forces host selection, the Begin route remains fixed, release returns frozen

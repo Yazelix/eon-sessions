@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted ORBS v9 at `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`
+  moves terminal-versus-host left-pointer routing into Orbit, uses Shift as the
+  host-selection bypass, pins each route through completion, and tags frozen
+  text for the semantic selection or ordinary clipboard. Terminal phases reuse
+  Orbit's existing terminal-aware mouse encoder; native delivery remains
+  Venus-owned.
 - Accepted ORBS v8 at `d9b22eb294f8f42b4f49324fd5467eab239c2917`
   replaces client-resolved selection cells with bounded surface positions and
   monotonic press time. Orbit delegates cell, word, logical-line, and matching

@@ -18,15 +18,15 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns accepted canonical ORBS v8 at
-`d9b22eb294f8f42b4f49324fd5467eab239c2917` and candidate ORBS v9 in this
-working tree, including one input-capable
+The same package owns accepted canonical ORBS v9 at
+`aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`, replacing accepted ORBS v8 proof
+`d9b22eb294f8f42b4f49324fd5467eab239c2917`, including one input-capable
 attachment, one bounded read-only title/CWD observer, frames, lifecycle,
 semantic input, selection and copy, terminal clipboard writes, revision-bound
 multi-row previews, typed vertical-wheel outcomes, and bounded signed
 whole-row viewport commits. The currently composed Venus, Eon, and Eonova
-sources remain on exact accepted ORBS v7 until owner-first adoption consumes an
-immutable v9 proof.
+sources remain on exact accepted ORBS v7 until owner-first adoption consumes
+that v9 proof.
 Orbit's server and diagnostic client use only the canonical values.
 Orbit chooses terminal input at left press when authoritative mouse tracking is
 active and Shift is absent; otherwise it chooses host selection. That route is
@@ -154,7 +154,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The candidate ORBS v9 producer uses a 12-byte explicit little-endian header with `ORBS`
+The accepted ORBS v9 producer uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -316,10 +316,12 @@ ORBS v8 is the owner-first replacement proved by Orbit at
 client-authored viewport cells with bounded pointer positions and monotonic
 press time while preserving every other v7 message family. Venus and Eon
 remain on v7 until they consume that exact revision.
-Candidate ORBS v9 moves terminal-versus-host left-pointer routing into Orbit,
-uses Shift as the host-selection bypass, pins each route through completion,
-and tags release copy for the semantic selection clipboard while explicit copy
-targets the ordinary clipboard. It has no adapter or dual-version window.
+ORBS v9 is the owner-first replacement proved by Orbit at
+`aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`. It moves terminal-versus-host
+left-pointer routing into Orbit, uses Shift as the host-selection bypass, pins
+each route through completion, and tags release copy for the semantic selection
+clipboard while explicit copy targets the ordinary clipboard. It has no
+adapter or dual-version window.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
