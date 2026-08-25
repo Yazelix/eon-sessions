@@ -28,7 +28,7 @@ use orbit_protocol::{
     },
     session::{
         self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, PhysicalKey,
-        SelectionAction, ServerMessage, SurfaceSize, ViewportCell, decode_server_message,
+        SelectionAction, SelectionPosition, ServerMessage, SurfaceSize, decode_server_message,
         encode_client_message,
     },
 };
@@ -1151,6 +1151,10 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
         padding_left: 0,
         padding_right: 0,
     };
+    let position = |x: u16, y: u16| SelectionPosition {
+        x: (u32::from(x) * surface.cell_width) as f32 + surface.cell_width as f32 / 2.0,
+        y: (u32::from(y) * surface.cell_height) as f32 + surface.cell_height as f32 / 2.0,
+    };
     first.request_frame(&ClientMessage::Resize(surface))?;
     fs::write(&release, b"release")?;
     first.wait_title("selection-ready")?;
@@ -1183,13 +1187,14 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
 
     first.select(SelectionAction::Begin {
         frame_revision: first.frame.revision,
-        cell: ViewportCell { x: 16, y: 3 },
+        position: position(17, 3),
+        time_ns: 1_000_000_000,
     })?;
     first.select(SelectionAction::Update {
-        cell: ViewportCell { x: 0, y: 3 },
+        position: position(0, 3),
     })?;
     first.select(SelectionAction::Finish {
-        cell: ViewportCell { x: 0, y: 3 },
+        position: position(0, 3),
     })?;
     assert!(
         first
@@ -1218,13 +1223,14 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
 
     second.select(SelectionAction::Begin {
         frame_revision: second.frame.revision,
-        cell: ViewportCell { x: 16, y: 3 },
+        position: position(17, 3),
+        time_ns: 1_000_000_000,
     })?;
     second.select(SelectionAction::Update {
-        cell: ViewportCell { x: 0, y: 3 },
+        position: position(0, 3),
     })?;
     second.select(SelectionAction::Finish {
-        cell: ViewportCell { x: 0, y: 3 },
+        position: position(0, 3),
     })?;
     fs::write(&activity, b"activity")?;
     second.wait_title("selection-activity")?;

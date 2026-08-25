@@ -19,6 +19,10 @@ Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
 ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
 `baf8aa28dcaa50484cd221aa7730defedc2356bb`.
 
+Candidate exact-version ORBS v8 changes ORB-C9 from client-resolved cells to
+Orbit-resolved pointer gestures. It preserves every other ORBS v7 contract and
+has no compatibility window.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -211,33 +215,47 @@ ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
-- **Consumer:** One healthy ORBS v7 attachment.
-- **Trigger:** The client begins, updates, finishes, or copies one linear cell
-  selection against the exact current frame revision.
+- **Status:** Partially proved
+- **Consumer:** One healthy exact-version ORBS v8 attachment.
+- **Trigger:** The client presses, drags, releases, or copies one host selection
+  using bounded surface coordinates against the exact current frame revision
+  and a monotonic press timestamp.
 - **Result:**
-  - Orbit alone resolves selection, selected presentation, and copied text.
-  - Finish freezes one bounded plain-text candidate that later output, resize,
+  - Orbit alone resolves pointer positions, click repetition, cell, word, and
+    logical-line boundaries, selected presentation, and copied text through
+    libghostty's default gesture behavior.
+  - One press-drag selects cells, two select words, and three select logical
+    lines; the repeat distance is one cell width and the repeat interval is 500
+    milliseconds.
+  - Release freezes one bounded plain-text candidate that later output, resize,
     reflow, or screen transition cannot reinterpret or erase.
   - A non-selection terminal mutation clears active selection and its
-    presentation before mutation; read-only preview does not.
-  - A newer valid Begin, client loss, or exit clears selection without resetting
-    the ORB-C8 viewport.
+    presentation and resets gesture state before mutation; read-only preview
+    does not.
+  - An ordered client cancel resets an abandoned gesture and clears its partial
+    selected presentation without producing copied text.
+  - A newer valid press replaces prior selected presentation and frozen text;
+    client loss or exit clears them without resetting the ORB-C8 viewport.
 - **Important failures:**
-  - Stale revisions, invalid coordinates or phase order, formatting overflow,
-    and pressure fail without partial state or text.
+  - A backwards press timestamp safely starts a new single-click sequence.
+  - Stale revisions, invalid surface coordinates or phase order, formatting
+    overflow, pressure, focus loss, or pointer capture loss reject or explicitly
+    cancel the gesture without partial state or text.
   - Selection work and buffering remain bounded and cannot block authoritative
     PTY processing or cleanup.
 - **Owner:** Orbit's semantic interaction owner with libghostty current-viewport
-  selection and canonical ORBS v7.
-- **Consumes:** Canonical ORBS v7 and ORB-C7 bounded-pressure behavior.
-- **Boundary:** Native clipboard effects, richer gestures, search, graphics, and
-  restart persistence are excluded.
-- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
+  gesture selection and canonical ORBS v8.
+- **Consumes:** Canonical ORBS v8 and ORB-C7 bounded-pressure behavior.
+- **Boundary:** Native clipboard effects, custom word separators or click
+  thresholds, block selection, autoscroll, semantic command-output selection,
+  search, graphics, and restart persistence are excluded.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb` (prior cell-selection slice)
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
+- **Open proof:** ORBS v8 implementation, Orbit lifecycle proof, and exact Venus
+  and Eon consumer adoption are pending.
 
 ## ORB-C10 — Eon terminal identity
 

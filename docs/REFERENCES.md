@@ -81,6 +81,30 @@ Mars, Mars Next, or another project by default.
   scrollbar state unchanged. Orbit therefore uses the existing read-only grid
   API and rejects temporary viewport mutation, a new dependency, and a second
   row schema.
+- Host-selection gestures use the existing
+  [`libghostty-vt` 0.2.1 gesture API](https://docs.rs/libghostty-vt/0.2.1/libghostty_vt/selection/gesture/index.html)
+  and pinned Ghostty
+  [`a887df42c56f6de86c0fe6da9c4eeca37931e083`](https://github.com/ghostty-org/ghostty/tree/a887df42c56f6de86c0fe6da9c4eeca37931e083).
+  `SelectionGesture.zig`, its C binding, and `Surface.zig` establish the adopted
+  cell, word, and line behavior table, matching drag granularity, tracked-anchor
+  reset, one-cell repeat distance, and 500-millisecond Linux repeat interval.
+  Orbit supplies bounded surface position and monotonic press time, derives the
+  grid reference from authoritative geometry, and reuses those APIs unchanged.
+- WezTerm
+  [`f93d90350075d3e42566e0557ca36e82ffdcbec1`](https://github.com/wez/wezterm/blob/f93d90350075d3e42566e0557ca36e82ffdcbec1/docs/config/mouse.md),
+  Kitty
+  [`32ea1041921607836e37815e0ab3692264a6cc81`](https://github.com/kovidgoyal/kitty/blob/32ea1041921607836e37815e0ab3692264a6cc81/docs/overview.rst),
+  and Alacritty
+  [`7dd7b5b09e06ca58daadfb12bd45a9aa8fa716f2`](https://github.com/alacritty/alacritty/blob/7dd7b5b09e06ca58daadfb12bd45a9aa8fa716f2/docs/features.md)
+  are comparison evidence for single-cell, double-word, triple-line, matching
+  drag granularity, and Shift bypass of terminal mouse reporting. Native event
+  routing and clipboard targets remain Venus-owned; Orbit adopts no binding or
+  configuration surface from these clients.
+- Zellij
+  [`b0bd3e1e7f530db8879e8cbde79de245e6101a8a`](https://github.com/zellij-org/zellij/blob/b0bd3e1e7f530db8879e8cbde79de245e6101a8a/zellij-server/src/tab/mouse_handler.rs)
+  is comparison evidence for copy-on-release and terminal-owned mouse routing.
+  Its configurable separators and OSC 133 command-output selection are
+  deliberately excluded until dogfood establishes a separate need.
 - [Ghostty at `d760ee96e546`](https://github.com/ghostty-org/ghostty/tree/d760ee96e54657416eb427b793c7e839f003df7d)
   is conditional evidence when a slice proposes WebAssembly, terminal-model
   reconstruction, or checkpoint-plus-tail replication. Its

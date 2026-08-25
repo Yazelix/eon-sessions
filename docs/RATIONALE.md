@@ -137,15 +137,21 @@ adjacent preview; pixels, gesture timing, and momentum remain Venus-owned.
 Accepted ORBS v7 replaces that adjacent row with up to one active viewport
 of nearest-first canonical rows. Orbit still owns history and mutation; Venus
 uses the bounded window only for compositor-paced fractional presentation.
+The ORBS v8 candidate replaces client-authored selection cells with bounded
+surface positions and monotonic press time. Orbit maps positions through the
+authoritative surface geometry, and the pinned libghostty gesture state owns
+cell, word, logical-line, and matching drag granularity. Native event routing
+and clipboard effects remain Venus-owned; Venus explicitly cancels an
+abandoned Orbit gesture when it loses focus or pointer capture.
 
 Orbit owns history because the authoritative terminal supplies wrap metadata,
-row contents, and stable anchors. Venus may own ephemeral pointer gestures over
-materialized rows, but sends their revision and current-viewport cells to Orbit;
-Orbit owns selection resolution, selected presentation, copy extraction, and
-content semantics. Once extraction succeeds, Orbit keeps that bounded frozen
-text independent of later terminal output, resize or reflow, and active-screen
-transitions until a new selection or client-lifecycle boundary clears it. Agent
-observation or durable session history
+row contents, and stable anchors. Venus owns native pointer events, but sends
+their revision, bounded surface position, and monotonic press time to Orbit;
+Orbit owns position mapping, gesture semantics, selected presentation, copy
+extraction, and content semantics. Once extraction succeeds, Orbit keeps that
+bounded frozen text independent of later terminal output, resize or reflow, and
+active-screen transitions until a new selection or client-lifecycle boundary
+clears it. Agent observation or durable session history
 needs a separate Eon or Orbit observer contract; the presentation stream is
 not a durable event log.
 

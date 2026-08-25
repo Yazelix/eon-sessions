@@ -249,10 +249,10 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
             errors.push(format!("docs/CONTRACTS.md: {id} requires a title"));
         }
         for field in REQUIRED_FIELDS {
-            if !section
+            if section
                 .fields
                 .get(*field)
-                .is_some_and(|value| !value.is_empty())
+                .is_none_or(|value| value.is_empty())
             {
                 errors.push(format!(
                     "docs/CONTRACTS.md: {id} requires a nonempty {field} field"
@@ -287,10 +287,10 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
                     "docs/CONTRACTS.md: Proved {id} requires a full 40-character proof commit"
                 ));
             }
-            if !section
+            if section
                 .fields
                 .get("Evidence")
-                .is_some_and(|value| !matches!(value.as_str(), "" | "—" | "-"))
+                .is_none_or(|value| matches!(value.as_str(), "" | "—" | "-"))
             {
                 errors.push(format!(
                     "docs/CONTRACTS.md: Proved {id} requires a named check or evidence"

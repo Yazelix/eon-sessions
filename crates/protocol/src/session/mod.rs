@@ -16,7 +16,7 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
@@ -576,25 +576,29 @@ pub struct SurfaceSize {
     pub padding_right: u32,
 }
 
-/// One cell in the current authoritative viewport.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ViewportCell {
-    pub x: u16,
-    pub y: u16,
+/// Pointer position in surface pixels within the terminal mapper's `u16` domain.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelectionPosition {
+    pub x: f32,
+    pub y: f32,
 }
 
-/// Cell-granular host selection and explicit copy actions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Host selection gestures and explicit copy actions.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SelectionAction {
-    /// Start against the exact complete frame the client used for hit testing.
+    /// Press against the exact complete frame the client used for hit testing.
     Begin {
         frame_revision: u64,
-        cell: ViewportCell,
+        position: SelectionPosition,
+        /// Monotonic event-delivery time since the client-defined origin.
+        time_ns: u64,
     },
-    /// Move the active selection endpoint.
-    Update { cell: ViewportCell },
+    /// Drag the active selection endpoint.
+    Update { position: SelectionPosition },
     /// Freeze the selection and its bounded plain text.
-    Finish { cell: ViewportCell },
+    Finish { position: SelectionPosition },
+    /// Cancel active gesture state and selected presentation.
+    Cancel,
     /// Request the last successfully frozen plain text.
     Copy,
 }

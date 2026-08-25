@@ -18,19 +18,21 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns canonical ORBS v7 at
-`baf8aa28dcaa50484cd221aa7730defedc2356bb`, replacing the accepted ORBS v6
-proof `780f5d746175b4a9b71df57c51ed4bfcc4c4c375`, including one input-capable
+The same package carries the exact-version ORBS v8 candidate owned by
+`orb-orbit-native-selection-gestures-qf3`. It replaces accepted ORBS v7 proof
+`baf8aa28dcaa50484cd221aa7730defedc2356bb`, including one input-capable
 attachment, one bounded read-only title/CWD observer, frames, lifecycle,
 semantic input, selection and copy, terminal clipboard writes, revision-bound
 multi-row previews, typed vertical-wheel outcomes, and bounded signed
-whole-row viewport commits. The currently
-composed Venus, Eon, and Eonova sources remain on their exact accepted ORBS v6
-pair until owner-first adoption consumes this proof.
+whole-row viewport commits. The currently composed Venus, Eon, and Eonova
+sources remain on exact accepted ORBS v7 until owner-first adoption consumes an
+immutable v8 proof.
 Orbit's server and diagnostic client use only the canonical values.
-Orbit resolves selection from the exact complete-frame revision and current
-viewport, publishes selected cells through normal frames, and returns only
-bounded plain text frozen at Finish.
+Orbit resolves bounded surface positions against the exact complete-frame
+revision and delegates cell, word, and logical-line gesture semantics to
+libghostty. An explicit cancel resets abandoned pointer gestures. Orbit
+publishes selected cells through normal frames and returns only bounded plain
+text frozen at release.
 That frozen value survives later terminal output, resize or reflow, and active-
 screen transitions; a new selection, client loss, or exit clears it.
 Its canonical key validation rejects C0,
@@ -150,7 +152,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The accepted ORBS v7 producer uses a 12-byte explicit little-endian header with `ORBS`
+The ORBS v8 candidate uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -160,9 +162,12 @@ Complete-message decoding then rejects
 malformed typed values, truncation, and trailing bytes.
 Arbitrary paste bytes remain opaque; key events retain physical identity,
 action, active and consumed modifiers, composition, multi-codepoint text, and
-an optional unshifted codepoint. Cell selection is revision-bound at Begin,
-ordered through Update and Finish, and copied explicitly without transferring
-terminal authority. A vertical preview carries up to one active viewport of
+an optional unshifted codepoint. Host selection carries bounded surface
+positions and monotonic press time; Orbit maps positions and libghostty owns
+single cell, double word, and triple logical-line press-drag behavior. Copy
+and gesture cancellation remain explicit without transferring terminal
+authority. A vertical preview
+carries up to one active viewport of
 nearest-first canonical rows tied to an exact current frame without moving the
 viewport or sending PTY input. An
 accepted vertical wheel returns either terminal-routed or an atomic applied-row
@@ -189,7 +194,7 @@ the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v7 codec. An exact-version
+client and server use only the bounded ORBS v8 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
@@ -303,6 +308,10 @@ ORBS v7 is an owner-first breaking replacement proved by Orbit at
 one-row preview into a bounded row window. Venus must pin that exact revision
 before Eon and Eonova update the composed pair; no adapter or dual-version
 window is maintained.
+ORBS v8 is the owner-first candidate for richer host selection. It replaces
+client-authored viewport cells with bounded pointer positions and monotonic
+press time while preserving every other v7 message family. Venus and Eon
+remain on v7 until the Orbit candidate has an immutable accepted revision.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
@@ -485,10 +494,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 12,654 |
+| Product Rust source and tests | 12,993 |
 | Governance Rust tool and tests | 729 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **13,383** |
-| **Total owned implementation source** | **14,090** |
+| **Total owned Rust** | **13,722** |
+| **Total owned implementation source** | **14,429** |

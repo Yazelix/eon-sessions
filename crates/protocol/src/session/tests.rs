@@ -113,14 +113,16 @@ fn every_client_message_round_trips() {
         }),
         ClientMessage::Selection(SelectionAction::Begin {
             frame_revision: 42,
-            cell: ViewportCell { x: 3, y: 4 },
+            position: SelectionPosition { x: 31.5, y: 72.25 },
+            time_ns: 1_000_000_000,
         }),
         ClientMessage::Selection(SelectionAction::Update {
-            cell: ViewportCell { x: 5, y: 6 },
+            position: SelectionPosition { x: 49.5, y: 108.25 },
         }),
         ClientMessage::Selection(SelectionAction::Finish {
-            cell: ViewportCell { x: 7, y: 8 },
+            position: SelectionPosition { x: 67.5, y: 144.25 },
         }),
+        ClientMessage::Selection(SelectionAction::Cancel),
         ClientMessage::Selection(SelectionAction::Copy),
     ];
 
@@ -257,7 +259,7 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    assert_eq!(VERSION, 7);
+    assert_eq!(VERSION, 8);
     let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
@@ -629,7 +631,8 @@ fn malformed_typed_payloads_are_rejected() {
 
     let mut selection = encode_client_message(&ClientMessage::Selection(SelectionAction::Begin {
         frame_revision: 1,
-        cell: ViewportCell { x: 0, y: 0 },
+        position: SelectionPosition { x: 0.0, y: 0.0 },
+        time_ns: 0,
     }))
     .unwrap();
     selection[HEADER_BYTES] = u8::MAX;
@@ -639,6 +642,31 @@ fn malformed_typed_payloads_are_rejected() {
             field: "selection action",
             value: u8::MAX,
         })
+    );
+
+    let invalid_selection = ClientMessage::Selection(SelectionAction::Update {
+        position: SelectionPosition {
+            x: f32::NAN,
+            y: 0.0,
+        },
+    });
+    assert_eq!(
+        encode_client_message(&invalid_selection),
+        Err(Error::InvalidCoordinates)
+    );
+
+    let mut invalid_selection =
+        encode_client_message(&ClientMessage::Selection(SelectionAction::Begin {
+            frame_revision: 1,
+            position: SelectionPosition { x: 0.0, y: 0.0 },
+            time_ns: 0,
+        }))
+        .unwrap();
+    invalid_selection[HEADER_BYTES + 17..HEADER_BYTES + 21]
+        .copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+    assert_eq!(
+        decode_client_message(&invalid_selection),
+        Err(Error::InvalidCoordinates)
     );
 
     let mut copied = encode_server_message(&ServerMessage::CopiedText("text".into())).unwrap();

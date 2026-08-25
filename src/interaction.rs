@@ -17,25 +17,50 @@ use libghostty_vt::{
         EncoderSize as MouseEncoderSize, Event as GhosttyMouseEvent, Position as MousePosition,
     },
     paste,
-    screen::Screen,
-    selection::{FormatOptions, Selection},
+    screen::{GridRef, Screen},
+    selection::{
+        FormatOptions,
+        gesture::{DragEvent, Geometry, Gesture, PressEvent, ReleaseEvent},
+    },
     terminal::{Mode, Point, PointCoordinate, ScrollViewport},
 };
 use orbit_protocol::{
     Error as ProtocolError, FrameSize,
     session::{
         self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, MouseAction,
-        MouseButton, PhysicalKey, PreviewOutcome, SelectionAction, ServerMessage, SurfaceSize,
-        VerticalDirection, VerticalPreview, ViewportCell, WheelOutcome,
+        MouseButton, PhysicalKey, PreviewOutcome, SelectionAction, SelectionPosition,
+        ServerMessage, SurfaceSize, VerticalDirection, VerticalPreview, WheelOutcome,
     },
 };
-use std::{cell::RefCell, collections::VecDeque};
+use std::{cell::RefCell, collections::VecDeque, time::Duration};
 
-#[derive(Debug, Default, PartialEq, Eq)]
+const CLICK_REPEAT_INTERVAL: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Default)]
 pub(crate) struct SelectionState {
-    anchor: Option<ViewportCell>,
+    gesture: Option<GestureState>,
+    active: bool,
     copied: Option<String>,
     visible: bool,
+}
+
+#[derive(Debug)]
+struct GestureState {
+    gesture: Gesture<'static>,
+    press: PressEvent<'static>,
+    drag: DragEvent<'static>,
+    release: ReleaseEvent<'static>,
+}
+
+impl GestureState {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            gesture: Gesture::new()?,
+            press: PressEvent::new()?,
+            drag: DragEvent::new()?,
+            release: ReleaseEvent::new()?,
+        })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -414,10 +439,39 @@ fn handle_selection(
     presentation: &mut Presentation,
     state: &mut SelectionState,
 ) -> Result<bool> {
-    let (anchor, cell, finish) = match action {
+    if matches!(action, SelectionAction::Copy) {
+        return match &state.copied {
+            Some(text) => client.push_message(&ServerMessage::CopiedText(text.clone())),
+            None => client.fail(
+                FailureCode::InvalidInput,
+                "no finished selection to copy".into(),
+            ),
+        };
+    }
+    if matches!(action, SelectionAction::Cancel) {
+        if !client.can_push_result_frame() {
+            return client.fail(
+                FailureCode::Terminal,
+                "client output queue cannot admit selection frame".into(),
+            );
+        }
+        let next = match next_revision(presentation.revision) {
+            Ok(next) => next,
+            Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
+        };
+        clear_selection(terminal, state, false)?;
+        presentation.revision = next;
+        if !client.push_message(&ServerMessage::Accepted)? {
+            return Ok(false);
+        }
+        return presentation.publish(Some(client), terminal);
+    }
+
+    let position = match action {
         SelectionAction::Begin {
             frame_revision,
-            cell,
+            position,
+            ..
         } => {
             if frame_revision != presentation.revision {
                 return client.fail(
@@ -425,42 +479,41 @@ fn handle_selection(
                     "selection frame revision is stale".into(),
                 );
             }
-            (cell, cell, false)
+            if state.active {
+                return client.fail(
+                    FailureCode::InvalidInput,
+                    "selection press has an active gesture".into(),
+                );
+            }
+            position
         }
-        SelectionAction::Update { cell } => {
-            let Some(anchor) = state.anchor else {
+        SelectionAction::Update { position } => {
+            if !state.active {
                 return client.fail(
                     FailureCode::InvalidInput,
                     "selection update has no active selection".into(),
                 );
-            };
-            (anchor, cell, false)
+            }
+            position
         }
-        SelectionAction::Finish { cell } => {
-            let Some(anchor) = state.anchor else {
+        SelectionAction::Finish { position } => {
+            if !state.active {
                 return client.fail(
                     FailureCode::InvalidInput,
                     "selection finish has no active selection".into(),
                 );
-            };
-            (anchor, cell, true)
+            }
+            position
         }
-        SelectionAction::Copy => {
-            return match &state.copied {
-                Some(text) => client.push_message(&ServerMessage::CopiedText(text.clone())),
-                None => client.fail(
-                    FailureCode::InvalidInput,
-                    "no finished selection to copy".into(),
-                ),
-            };
-        }
+        SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
     };
-    if cell.x >= size.cols || cell.y >= size.rows {
+
+    let Some(point) = viewport_point(position, size) else {
         return client.fail(
             FailureCode::InvalidInput,
-            "selection cell is outside the current viewport".into(),
+            "selection position is outside the current viewport".into(),
         );
-    }
+    };
     if !client.can_push_result_frame() {
         return client.fail(
             FailureCode::Terminal,
@@ -472,29 +525,18 @@ fn handle_selection(
         Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
     };
 
-    let selected = match viewport_selection(terminal, anchor, cell) {
-        Ok(selected) => selected,
+    let grid_ref = match terminal.grid_ref(Point::Viewport(point)) {
+        Ok(grid_ref) => grid_ref,
         Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
     };
-    let copied = if finish {
-        match format_selection(terminal, &selected) {
-            Ok(text) => Some(text),
-            Err(error) => {
-                return client.fail(FailureCode::Terminal, error.to_string());
-            }
-        }
-    } else {
-        None
-    };
-    if let Err(error) = terminal.set_selection(Some(&selected)) {
+    if let Err(error) = apply_selection_gesture(action, grid_ref, terminal, size, state) {
+        clear_selection(terminal, state, false)?;
         return client.fail(FailureCode::Terminal, error.to_string());
     }
-
-    state.anchor = (!finish).then_some(anchor);
-    if finish || matches!(action, SelectionAction::Begin { .. }) {
-        state.copied = copied;
-    }
-    state.visible = true;
+    debug_assert_eq!(
+        matches!(action, SelectionAction::Finish { .. }),
+        !state.active
+    );
     presentation.revision = next;
     if !client.push_message(&ServerMessage::Accepted)? {
         return Ok(false);
@@ -502,27 +544,80 @@ fn handle_selection(
     presentation.publish(Some(client), terminal)
 }
 
-fn viewport_selection<'terminal>(
-    terminal: &'terminal Terminal<'_, '_>,
-    start: ViewportCell,
-    end: ViewportCell,
-) -> Result<Selection<'terminal>> {
-    let point = |cell: ViewportCell| {
-        terminal.grid_ref(Point::Viewport(PointCoordinate {
-            x: cell.x,
-            y: u32::from(cell.y),
-        }))
+fn apply_selection_gesture(
+    action: SelectionAction,
+    grid_ref: GridRef<'_>,
+    terminal: &Terminal<'_, '_>,
+    size: SurfaceSize,
+    state: &mut SelectionState,
+) -> Result {
+    let gesture = match &mut state.gesture {
+        Some(gesture) => gesture,
+        None => state.gesture.insert(GestureState::new()?),
     };
-    Ok(Selection::new(point(start)?, point(end)?, false))
+    let selected = match action {
+        SelectionAction::Begin {
+            position, time_ns, ..
+        } => gesture
+            .press
+            .set_position(f64::from(position.x), f64::from(position.y))?
+            .set_time(Duration::from_nanos(time_ns))?
+            .set_repeat_distance(f64::from(size.cell_width))?
+            .set_repeat_interval(CLICK_REPEAT_INTERVAL)?
+            .apply(&mut gesture.gesture, terminal, grid_ref.clone())?,
+        SelectionAction::Update { position } | SelectionAction::Finish { position } => gesture
+            .drag
+            .set_position(f64::from(position.x), f64::from(position.y))?
+            .apply(
+                &mut gesture.gesture,
+                terminal,
+                grid_ref.clone(),
+                Geometry {
+                    columns: u32::from(size.cols),
+                    cell_width: size.cell_width,
+                    padding_left: size.padding_left,
+                    screen_height: size.screen_height,
+                },
+            )?,
+        SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
+    };
+
+    terminal.set_selection(selected.as_ref())?;
+    state.visible = selected.is_some();
+
+    if matches!(action, SelectionAction::Begin { .. }) {
+        state.copied = None;
+        state.active = true;
+    } else if matches!(action, SelectionAction::Finish { .. }) {
+        gesture
+            .release
+            .apply(&mut gesture.gesture, terminal, Some(grid_ref))?;
+        state.active = false;
+        state.copied = state
+            .visible
+            .then(|| format_selection(terminal))
+            .transpose()?;
+    }
+    Ok(())
 }
 
-fn format_selection(terminal: &Terminal<'_, '_>, selected: &Selection<'_>) -> Result<String> {
+fn viewport_point(position: SelectionPosition, size: SurfaceSize) -> Option<PointCoordinate> {
+    let x = f64::from(position.x) - f64::from(size.padding_left);
+    let y = f64::from(position.y) - f64::from(size.padding_top);
+    let grid_width = f64::from(size.cols) * f64::from(size.cell_width);
+    let grid_height = f64::from(size.rows) * f64::from(size.cell_height);
+    (x >= 0.0 && x < grid_width && y >= 0.0 && y < grid_height).then_some(PointCoordinate {
+        x: (x / f64::from(size.cell_width)) as u16,
+        y: (y / f64::from(size.cell_height)) as u32,
+    })
+}
+
+fn format_selection(terminal: &Terminal<'_, '_>) -> Result<String> {
     let options = || {
         FormatOptions::new()
             .with_emit_format(Format::Plain)
             .with_unwrap(true)
             .with_trim(true)
-            .with_selection(selected)
     };
     let required = match terminal.format_selection_buf(options(), &mut []) {
         Ok(Some(written)) => written,
@@ -550,7 +645,10 @@ pub(crate) fn clear_selection(
     if changed {
         terminal.set_selection(None)?;
     }
-    state.anchor = None;
+    if let Some(gesture) = &mut state.gesture {
+        gesture.gesture.reset(terminal);
+    }
+    state.active = false;
     state.visible = false;
     if forget_copy {
         state.copied = None;
@@ -709,13 +807,61 @@ mod tests {
             },
         },
     };
+    use libghostty_vt::selection::Selection;
     use orbit_protocol::session::Failure;
+
+    fn selection_between<'terminal>(
+        terminal: &'terminal Terminal<'_, '_>,
+        start: (u16, u32),
+        end: (u16, u32),
+    ) -> Result<Selection<'terminal>> {
+        let point = |(x, y)| terminal.grid_ref(Point::Viewport(PointCoordinate { x, y }));
+        Ok(Selection::new(point(start)?, point(end)?, false))
+    }
+
+    fn position(size: SurfaceSize, x: u16, y: u16) -> SelectionPosition {
+        SelectionPosition {
+            x: (size.padding_left + u32::from(x) * size.cell_width) as f32
+                + size.cell_width as f32 / 2.0,
+            y: (size.padding_top + u32::from(y) * size.cell_height) as f32
+                + size.cell_height as f32 / 2.0,
+        }
+    }
+
+    #[test]
+    fn selection_positions_use_authoritative_surface_geometry() {
+        let size = SurfaceSize {
+            cols: 2,
+            rows: 2,
+            screen_width: 24,
+            screen_height: 40,
+            cell_width: 8,
+            cell_height: 16,
+            padding_top: 4,
+            padding_bottom: 4,
+            padding_left: 4,
+            padding_right: 4,
+        };
+        for (position, expected) in [
+            (
+                SelectionPosition { x: 4.0, y: 4.0 },
+                Some(PointCoordinate { x: 0, y: 0 }),
+            ),
+            (
+                SelectionPosition { x: 19.99, y: 35.99 },
+                Some(PointCoordinate { x: 1, y: 1 }),
+            ),
+            (SelectionPosition { x: 3.99, y: 4.0 }, None),
+            (SelectionPosition { x: 20.0, y: 4.0 }, None),
+        ] {
+            assert_eq!(viewport_point(position, size), expected);
+        }
+    }
 
     #[test]
     fn authoritative_selection_rejects_stale_input_and_freezes_copy() -> Result {
         let mut text = terminal_with_scrollback(100)?;
         text.vt_write(b"A\r\n\r\nZ\r\nB\x1b[3;1H\x1b[X");
-        let cell = |(x, y)| ViewportCell { x, y };
         for (start, end, expected) in [
             ((0, 0), (0, 0), "A"),
             ((0, 0), (0, 3), "A\n\n\nB"),
@@ -723,8 +869,9 @@ mod tests {
             ((0, 1), (0, 1), ""),
             ((0, 2), (0, 2), ""),
         ] {
-            let selected = viewport_selection(&text, cell(start), cell(end))?;
-            assert_eq!(format_selection(&text, &selected)?, expected);
+            let selected = selection_between(&text, start, end)?;
+            text.set_selection(Some(&selected))?;
+            assert_eq!(format_selection(&text)?, expected);
         }
 
         for line in 0..30 {
@@ -734,8 +881,9 @@ mod tests {
         let history = text.scrollbar()?;
         assert_eq!(history.offset, 0);
         assert!(history.offset + history.len < history.total);
-        let retained = viewport_selection(&text, cell((0, 0)), cell((0, 0)))?;
-        assert_eq!(format_selection(&text, &retained)?, "A");
+        let retained = selection_between(&text, (0, 0), (0, 0))?;
+        text.set_selection(Some(&retained))?;
+        assert_eq!(format_selection(&text)?, "A");
 
         let (mut client, mut peer) = attached_client()?;
         let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
@@ -761,7 +909,9 @@ mod tests {
                     &mut selection,
                 )?);
                 assert_eq!(presentation.revision, unchanged);
-                assert_eq!(selection, SelectionState::default());
+                assert!(!selection.active);
+                assert!(!selection.visible);
+                assert!(selection.copied.is_none());
                 assert!(matches!(
                     flush_message(&mut client, &mut peer)?,
                     ServerMessage::Failure(Failure {
@@ -791,40 +941,60 @@ mod tests {
                     return Err("selection did not publish a frame".into());
                 };
                 assert_eq!(frame.revision, presentation.revision);
-                assert!(frame.rows[0].cells[0].style.selected);
+                frame
             }};
         }
         reject!(session::SelectionAction::Begin {
             frame_revision: 0,
-            cell: session::ViewportCell { x: 0, y: 0 },
+            position: position(size, 0, 0),
+            time_ns: 0,
         });
         reject!(session::SelectionAction::Update {
-            cell: session::ViewportCell { x: 0, y: 0 },
+            position: position(size, 0, 0),
         });
         reject!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
-            cell: session::ViewportCell { x: size.cols, y: 0 },
+            position: session::SelectionPosition {
+                x: size.screen_width as f32,
+                y: position(size, 0, 0).y,
+            },
+            time_ns: 0,
+        });
+
+        let frame = select!(session::SelectionAction::Begin {
+            frame_revision: presentation.revision,
+            position: position(size, 0, 0),
+            time_ns: 0,
+        });
+        assert!(!frame.rows[0].cells[0].style.selected);
+        select!(session::SelectionAction::Cancel);
+        reject!(session::SelectionAction::Finish {
+            position: position(size, 0, 0),
         });
 
         select!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
-            cell: session::ViewportCell { x: 0, y: 0 },
+            position: position(size, 0, 0),
+            time_ns: 0,
         });
         apply_pty_output(&mut terminal, &mut selection, b"!")?;
-        assert_eq!(selection, SelectionState::default());
+        assert!(!selection.active);
+        assert!(!selection.visible);
+        assert!(selection.copied.is_none());
         reject!(session::SelectionAction::Finish {
-            cell: session::ViewportCell { x: 6, y: 0 },
+            position: position(size, 7, 0),
         });
 
         select!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
-            cell: session::ViewportCell { x: 0, y: 0 },
+            position: position(size, 0, 0),
+            time_ns: 1_000_000_000,
         });
         select!(session::SelectionAction::Update {
-            cell: session::ViewportCell { x: 6, y: 0 },
+            position: position(size, 7, 0),
         });
         select!(session::SelectionAction::Finish {
-            cell: session::ViewportCell { x: 6, y: 0 },
+            position: position(size, 7, 0),
         });
 
         assert!(handle_client_message(
@@ -860,7 +1030,8 @@ mod tests {
             &mut blocked,
             ClientMessage::Selection(session::SelectionAction::Begin {
                 frame_revision: presentation.revision,
-                cell: session::ViewportCell { x: 1, y: 0 },
+                position: position(size, 1, 0),
+                time_ns: 2_000_000_000,
             }),
             &mut terminal,
             Some(&pty),
@@ -875,8 +1046,122 @@ mod tests {
         apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1049h")?;
         assert_eq!(terminal.active_screen()?, Screen::Alternate);
         assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
-        assert!(selection.anchor.is_none());
+        assert!(!selection.active);
         assert!(!selection.visible);
+        Ok(())
+    }
+
+    #[test]
+    fn authoritative_selection_uses_libghostty_click_and_drag_granularity() -> Result {
+        let mut terminal = terminal()?;
+        let size = SurfaceSize {
+            cols: 12,
+            rows: 4,
+            screen_width: 12 * INITIAL_SIZE.cell_width,
+            screen_height: 4 * INITIAL_SIZE.cell_height,
+            ..INITIAL_SIZE
+        };
+        terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
+        terminal.vt_write(b"alpha beta\r\nsecond line xx");
+        let mut selection = SelectionState::default();
+
+        macro_rules! gesture {
+            ($action:expr) => {{
+                let action = $action;
+                let position = match action {
+                    SelectionAction::Begin { position, .. }
+                    | SelectionAction::Update { position }
+                    | SelectionAction::Finish { position } => position,
+                    SelectionAction::Cancel | SelectionAction::Copy => {
+                        unreachable!("test applies pointer gestures only")
+                    }
+                };
+                let point = viewport_point(position, size).expect("test position is in bounds");
+                let grid_ref = terminal.grid_ref(Point::Viewport(point))?;
+                apply_selection_gesture(action, grid_ref, &terminal, size, &mut selection)?;
+            }};
+        }
+
+        gesture!(SelectionAction::Begin {
+            frame_revision: 1,
+            position: position(size, 0, 0),
+            time_ns: 1_000_000_000,
+        });
+        gesture!(SelectionAction::Update {
+            position: position(size, 5, 0),
+        });
+        gesture!(SelectionAction::Finish {
+            position: position(size, 5, 0),
+        });
+        assert_eq!(selection.copied.as_deref(), Some("alpha"));
+
+        gesture!(SelectionAction::Begin {
+            frame_revision: 2,
+            position: position(size, 1, 0),
+            time_ns: 2_000_000_000,
+        });
+        gesture!(SelectionAction::Finish {
+            position: position(size, 1, 0),
+        });
+        gesture!(SelectionAction::Begin {
+            frame_revision: 3,
+            position: position(size, 1, 0),
+            time_ns: 2_100_000_000,
+        });
+        gesture!(SelectionAction::Update {
+            position: position(size, 9, 0),
+        });
+        gesture!(SelectionAction::Finish {
+            position: position(size, 9, 0),
+        });
+        assert_eq!(selection.copied.as_deref(), Some("alpha beta"));
+
+        gesture!(SelectionAction::Begin {
+            frame_revision: 4,
+            position: position(size, 1, 0),
+            time_ns: 2_200_000_000,
+        });
+        gesture!(SelectionAction::Update {
+            position: position(size, 5, 1),
+        });
+        gesture!(SelectionAction::Finish {
+            position: position(size, 5, 1),
+        });
+        assert_eq!(
+            selection.copied.as_deref(),
+            Some("alpha beta\nsecond line xx")
+        );
+
+        gesture!(SelectionAction::Begin {
+            frame_revision: 5,
+            position: position(size, 1, 0),
+            time_ns: 2_000_000_000,
+        });
+        gesture!(SelectionAction::Update {
+            position: position(size, 2, 0),
+        });
+        gesture!(SelectionAction::Finish {
+            position: position(size, 2, 0),
+        });
+        assert_eq!(selection.copied.as_deref(), Some("l"));
+
+        gesture!(SelectionAction::Begin {
+            frame_revision: 6,
+            position: position(size, 0, 0),
+            time_ns: 3_000_000_000,
+        });
+        gesture!(SelectionAction::Update {
+            position: position(size, 5, 0),
+        });
+        assert!(selection.visible);
+        gesture!(SelectionAction::Update {
+            position: position(size, 0, 0),
+        });
+        assert!(!selection.visible);
+        gesture!(SelectionAction::Finish {
+            position: position(size, 0, 0),
+        });
+        assert!(selection.copied.is_none());
         Ok(())
     }
 
@@ -970,14 +1255,10 @@ mod tests {
         let stable_revision = presentation.revision;
         let stable_offset = live.offset;
         {
-            let selected = viewport_selection(
-                &terminal,
-                ViewportCell { x: 0, y: 0 },
-                ViewportCell { x: 1, y: 0 },
-            )?;
+            let selected = selection_between(&terminal, (0, 0), (1, 0))?;
             terminal.set_selection(Some(&selected))?;
         }
-        selection.anchor = Some(ViewportCell { x: 0, y: 0 });
+        selection.active = true;
         selection.visible = true;
         assert!(handle_client_message(
             &mut client,
@@ -1333,13 +1614,9 @@ mod tests {
         }
 
         let live = terminal.scrollbar()?.offset;
-        let selected = viewport_selection(
-            &terminal,
-            ViewportCell { x: 0, y: 0 },
-            ViewportCell { x: 1, y: 0 },
-        )?;
+        let selected = selection_between(&terminal, (0, 0), (1, 0))?;
         terminal.set_selection(Some(&selected))?;
-        selection.anchor = Some(ViewportCell { x: 0, y: 0 });
+        selection.active = true;
         selection.visible = true;
 
         let ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {

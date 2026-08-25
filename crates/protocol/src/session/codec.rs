@@ -37,6 +37,7 @@ const SELECTION_BEGIN: u8 = 0;
 const SELECTION_UPDATE: u8 = 1;
 const SELECTION_FINISH: u8 = 2;
 const SELECTION_COPY: u8 = 3;
+const SELECTION_CANCEL: u8 = 4;
 
 /// Returns the complete client-message length once a valid header is available.
 pub fn client_message_len(bytes: &[u8]) -> Result<Option<usize>> {
@@ -85,7 +86,7 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
         CLIENT_FOCUS => Ok((1, 1)),
         CLIENT_PASTE => Ok((0, MAX_PASTE_BYTES)),
         CLIENT_RESIZE => Ok((36, 36)),
-        CLIENT_SELECTION => Ok((1, 13)),
+        CLIENT_SELECTION => Ok((1, 25)),
         CLIENT_PREVIEW_VERTICAL => Ok((9, 9)),
         CLIENT_SCROLL_VERTICAL => Ok((10, 10)),
         value => Err(Error::InvalidTag {
@@ -119,7 +120,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v7 header.
+/// Encodes one client message with an ORBS v8 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -183,27 +184,31 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
             CLIENT_RESIZE
         }
         ClientMessage::Selection(action) => {
+            validate_selection(action)?;
             match action {
                 SelectionAction::Begin {
                     frame_revision,
-                    cell,
+                    position,
+                    time_ns,
                 } => {
                     payload.push(SELECTION_BEGIN);
                     payload.extend_from_slice(&frame_revision.to_le_bytes());
-                    put_u16(&mut payload, cell.x);
-                    put_u16(&mut payload, cell.y);
+                    payload.extend_from_slice(&time_ns.to_le_bytes());
+                    put_u32(&mut payload, position.x.to_bits());
+                    put_u32(&mut payload, position.y.to_bits());
                 }
-                SelectionAction::Update { cell } => {
+                SelectionAction::Update { position } => {
                     payload.push(SELECTION_UPDATE);
-                    put_u16(&mut payload, cell.x);
-                    put_u16(&mut payload, cell.y);
+                    put_u32(&mut payload, position.x.to_bits());
+                    put_u32(&mut payload, position.y.to_bits());
                 }
-                SelectionAction::Finish { cell } => {
+                SelectionAction::Finish { position } => {
                     payload.push(SELECTION_FINISH);
-                    put_u16(&mut payload, cell.x);
-                    put_u16(&mut payload, cell.y);
+                    put_u32(&mut payload, position.x.to_bits());
+                    put_u32(&mut payload, position.y.to_bits());
                 }
                 SelectionAction::Copy => payload.push(SELECTION_COPY),
+                SelectionAction::Cancel => payload.push(SELECTION_CANCEL),
             }
             CLIENT_SELECTION
         }
@@ -315,34 +320,40 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
             validate_surface_size(&size)?;
             ClientMessage::Resize(size)
         }
-        CLIENT_SELECTION => ClientMessage::Selection(match reader.u8()? {
-            SELECTION_BEGIN => SelectionAction::Begin {
-                frame_revision: u64::from_le_bytes(reader.array()?),
-                cell: ViewportCell {
-                    x: reader.u16()?,
-                    y: reader.u16()?,
+        CLIENT_SELECTION => {
+            let action = match reader.u8()? {
+                SELECTION_BEGIN => SelectionAction::Begin {
+                    frame_revision: u64::from_le_bytes(reader.array()?),
+                    time_ns: u64::from_le_bytes(reader.array()?),
+                    position: SelectionPosition {
+                        x: f32::from_bits(reader.u32()?),
+                        y: f32::from_bits(reader.u32()?),
+                    },
                 },
-            },
-            SELECTION_UPDATE => SelectionAction::Update {
-                cell: ViewportCell {
-                    x: reader.u16()?,
-                    y: reader.u16()?,
+                SELECTION_UPDATE => SelectionAction::Update {
+                    position: SelectionPosition {
+                        x: f32::from_bits(reader.u32()?),
+                        y: f32::from_bits(reader.u32()?),
+                    },
                 },
-            },
-            SELECTION_FINISH => SelectionAction::Finish {
-                cell: ViewportCell {
-                    x: reader.u16()?,
-                    y: reader.u16()?,
+                SELECTION_FINISH => SelectionAction::Finish {
+                    position: SelectionPosition {
+                        x: f32::from_bits(reader.u32()?),
+                        y: f32::from_bits(reader.u32()?),
+                    },
                 },
-            },
-            SELECTION_COPY => SelectionAction::Copy,
-            value => {
-                return Err(Error::InvalidTag {
-                    field: "selection action",
-                    value,
-                });
-            }
-        }),
+                SELECTION_COPY => SelectionAction::Copy,
+                SELECTION_CANCEL => SelectionAction::Cancel,
+                value => {
+                    return Err(Error::InvalidTag {
+                        field: "selection action",
+                        value,
+                    });
+                }
+            };
+            validate_selection(&action)?;
+            ClientMessage::Selection(action)
+        }
         CLIENT_PREVIEW_VERTICAL => ClientMessage::PreviewVertical {
             frame_revision: u64::from_le_bytes(reader.array()?),
             direction: decode_vertical_direction(reader.u8()?)?,
@@ -367,7 +378,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v7 header.
+/// Encodes one server message with an ORBS v8 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -755,8 +766,21 @@ fn validate_mouse(event: &MouseEvent) -> Result<()> {
             field: "mouse action",
         });
     }
+    validate_surface_position(event.x, event.y)
+}
+
+fn validate_selection(action: &SelectionAction) -> Result<()> {
+    match action {
+        SelectionAction::Begin { position, .. }
+        | SelectionAction::Update { position }
+        | SelectionAction::Finish { position } => validate_surface_position(position.x, position.y),
+        SelectionAction::Cancel | SelectionAction::Copy => Ok(()),
+    }
+}
+
+fn validate_surface_position(x: f32, y: f32) -> Result<()> {
     let coordinate_range = 0.0..=f32::from(u16::MAX);
-    if coordinate_range.contains(&event.x) && coordinate_range.contains(&event.y) {
+    if coordinate_range.contains(&x) && coordinate_range.contains(&y) {
         Ok(())
     } else {
         Err(Error::InvalidCoordinates)
