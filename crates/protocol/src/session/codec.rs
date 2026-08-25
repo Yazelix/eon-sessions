@@ -32,6 +32,7 @@ const SERVER_OBSERVING_METADATA: u8 = 143;
 const SERVER_METADATA: u8 = 144;
 const SERVER_SCROLL_TERMINAL_OWNED: u8 = 145;
 pub(super) const SERVER_SCROLL_VIEWPORT: u8 = 146;
+const SERVER_SELECTION_FINISHED: u8 = 147;
 
 const SELECTION_BEGIN: u8 = 0;
 const SELECTION_UPDATE: u8 = 1;
@@ -113,6 +114,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
         SERVER_VERTICAL_PREVIEW => Ok((10, MAX_FRAME_BYTES + 15)),
         SERVER_SCROLL_TERMINAL_OWNED => Ok((2, 2)),
         SERVER_SCROLL_VIEWPORT => Ok((MIN_FRAME_BYTES + 13, MAX_PAYLOAD_BYTES)),
+        SERVER_SELECTION_FINISHED => Ok((8, 8)),
         value => Err(Error::InvalidTag {
             field: "server message",
             value,
@@ -120,7 +122,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v9 header.
+/// Encodes one client message with an ORBS v10 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -391,7 +393,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v9 header.
+/// Encodes one server message with an ORBS v10 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -414,6 +416,10 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             SERVER_FRAME
         }
         ServerMessage::Accepted => SERVER_ACCEPTED,
+        ServerMessage::SelectionFinished { frame_revision } => {
+            payload.extend_from_slice(&frame_revision.to_le_bytes());
+            SERVER_SELECTION_FINISHED
+        }
         ServerMessage::Failure(failure) => {
             payload.push(failure_code_tag(failure.code));
             put_bounded_bytes(&mut payload, failure.detail.as_bytes(), MAX_FAILURE_BYTES)?;
@@ -545,6 +551,9 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
         }),
         SERVER_BUSY => ServerMessage::Busy,
         SERVER_ACCEPTED => ServerMessage::Accepted,
+        SERVER_SELECTION_FINISHED => ServerMessage::SelectionFinished {
+            frame_revision: u64::from_le_bytes(reader.array()?),
+        },
         SERVER_FAILURE => {
             let code = decode_failure_code(reader.u8()?)?;
             let detail = reader.bounded_text("failure detail", MAX_FAILURE_BYTES)?;

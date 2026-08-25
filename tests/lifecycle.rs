@@ -351,16 +351,30 @@ impl Client {
 
     fn select(&mut self, action: SelectionAction) -> TestResult {
         let finishing = matches!(action, SelectionAction::Finish { .. });
-        self.request_frame(&ClientMessage::Selection(action))?;
-        if finishing {
-            assert!(matches!(
-                read_message(&mut self.reader)?,
-                ServerMessage::CopiedText {
-                    location: session::ClipboardLocation::Selection,
-                    ..
-                }
-            ));
+        if !finishing {
+            return self.request_frame(&ClientMessage::Selection(action));
         }
+
+        write_message(self.reader.get_mut(), &ClientMessage::Selection(action))?;
+        let ServerMessage::SelectionFinished {
+            frame_revision: revision,
+        } = read_message(&mut self.reader)?
+        else {
+            return Err("host selection finish did not name its frame".into());
+        };
+        let ServerMessage::Frame(frame) = read_message(&mut self.reader)? else {
+            return Err("host selection finish did not publish its frame".into());
+        };
+        assert_eq!(frame.revision, revision);
+        assert!(frame.revision > self.frame.revision);
+        self.frame = *frame;
+        assert!(matches!(
+            read_message(&mut self.reader)?,
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Selection,
+                ..
+            }
+        ));
         Ok(())
     }
 

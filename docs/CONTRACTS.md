@@ -30,6 +30,11 @@ selection copy destinations at
 `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`. It intentionally replaces ORBS
 v8 without a compatibility window; exact consumer proof remains open.
 
+Candidate exact-version ORBS v10 hardens ORB-C9 so an accepted Finish reports
+the authoritative presentation revision at sequence completion. It
+intentionally replaces ORBS v9 without an adapter or compatibility window and
+preserves the ORBS-carried behavior of ORB-C3 through ORB-C8 and ORB-C11.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -234,8 +239,8 @@ v8 without a compatibility window; exact consumer proof remains open.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
-- **Consumer:** One healthy exact-version ORBS v9 attachment.
+- **Status:** Partially proved
+- **Consumer:** One healthy exact-version ORBS v10 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence using bounded surface coordinates and current modifiers;
   Begin names the exact current frame revision and a monotonic press timestamp.
@@ -252,6 +257,10 @@ v8 without a compatibility window; exact consumer proof remains open.
     reflow, or screen transition cannot reinterpret or erase, and returns it
     for the semantic selection clipboard. Explicit Copy returns the same frozen
     text for the ordinary clipboard.
+  - An accepted Finish returns one ordered typed completion naming the
+    authoritative presentation revision at sequence completion. A client may
+    send another press immediately when it already presented that revision;
+    otherwise it waits for the exact frame.
   - A non-selection terminal mutation clears active selection and its
     presentation and resets gesture state before mutation; read-only preview
     does not.
@@ -265,24 +274,28 @@ v8 without a compatibility window; exact consumer proof remains open.
     overflow, pressure, focus loss, or pointer capture loss reject or explicitly
     cancel the gesture without partial state, text, mixed routing, or invented
     terminal input.
+  - Synchronized output may defer a host Finish frame or a terminal Begin frame
+    that clears prior host selection; the completion preserves the exact held
+    revision until presentation resumes or the attachment ends.
   - Selection work and buffering remain bounded and cannot block authoritative
     PTY processing or cleanup.
 - **Owner:** Orbit's semantic interaction owner with authoritative mouse modes,
-  libghostty current-viewport gesture selection, and canonical ORBS v9. Venus
+  libghostty current-viewport gesture selection, and canonical ORBS v10. Venus
   owns native event delivery and clipboard effects.
-- **Consumes:** Canonical ORBS v9 and ORB-C7 bounded-pressure behavior; accepted
-  ORBS v8 remains the prior host-selection proof.
+- **Consumes:** Canonical ORBS v10 and ORB-C7 bounded-pressure behavior; accepted
+  ORBS v9 remains the prior routing and host-selection proof.
 - **Boundary:** Custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
-- **Proof:** `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`
+- **Proof:** `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672` (accepted ORBS v9 proof)
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
     - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus and Eon consumer adoption is pending.
+- **Open proof:** ORBS v10 remains an uncommitted Orbit candidate; exact Venus
+  and Eon consumer adoption is pending.
 
 ## ORB-C10 — Eon terminal identity
 

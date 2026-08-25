@@ -329,7 +329,7 @@ impl OutputQueue {
 
     fn can_push_selection_result(&self) -> bool {
         self.bytes.saturating_add(
-            MAX_FRAME_BYTES + session::MAX_COPY_BYTES + 1 + 3 * session::HEADER_BYTES,
+            MAX_FRAME_BYTES + session::MAX_COPY_BYTES + 9 + 3 * session::HEADER_BYTES,
         ) <= MAX_OUTPUT_BYTES
     }
 

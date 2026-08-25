@@ -149,6 +149,7 @@ fn every_server_message_round_trips() {
         ServerMessage::Busy,
         ServerMessage::Frame(Box::new(frame())),
         ServerMessage::Accepted,
+        ServerMessage::SelectionFinished { frame_revision: 9 },
         ServerMessage::Failure(Failure {
             code: FailureCode::InvalidInput,
             detail: "bad key".into(),
@@ -269,7 +270,7 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    assert_eq!(VERSION, 9);
+    assert_eq!(VERSION, 10);
     let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);

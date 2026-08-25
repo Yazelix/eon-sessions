@@ -16,7 +16,7 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 9;
+pub const VERSION: u16 = 10;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
@@ -169,6 +169,11 @@ pub enum ServerMessage {
     Frame(Box<Frame>),
     /// Orbit accepted a semantic event.
     Accepted,
+    /// Orbit finished one routed left-pointer sequence.
+    SelectionFinished {
+        /// The authoritative frame revision when the sequence finished.
+        frame_revision: u64,
+    },
     /// Orbit rejected a message without inventing terminal input.
     Failure(Failure),
     /// The authoritative child process exited.

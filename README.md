@@ -27,6 +27,10 @@ multi-row previews, typed vertical-wheel outcomes, and bounded signed
 whole-row viewport commits. The currently composed Venus, Eon, and Eonova
 sources remain on exact accepted ORBS v7 until owner-first adoption consumes
 that v9 proof.
+The current ORBS v10 candidate replaces the generic Finish acknowledgement
+with one typed result naming the authoritative presentation revision at
+sequence completion. A client waits only when it has not presented that exact
+revision yet.
 Orbit's server and diagnostic client use only the canonical values.
 Orbit chooses terminal input at left press when authoritative mouse tracking is
 active and Shift is absent; otherwise it chooses host selection. That route is
@@ -154,7 +158,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The accepted ORBS v9 producer uses a 12-byte explicit little-endian header with `ORBS`
+The candidate ORBS v10 producer uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -172,12 +176,13 @@ behavior for host selections. Copy and gesture cancellation remain explicit
 without transferring terminal authority. A vertical preview
 carries up to one active viewport of
 nearest-first canonical rows tied to an exact current frame without moving the
-viewport or sending PTY input. An
-accepted vertical wheel returns either terminal-routed or an atomic applied-row
-count and newer complete frame. A revision-bound signed viewport commit moves
-at most 1,024 rows in one libghostty operation and returns one typed result with
-the requested and applied distance, one newer complete frame, and the next
-bounded row window or authoritative edge. It emits no PTY input if terminal
+viewport or sending PTY input. An accepted Finish reports the authoritative
+presentation revision at sequence completion, independent of its pinned route.
+An accepted vertical wheel returns either terminal-routed or an atomic
+applied-row count and newer complete frame. A revision-bound signed viewport
+commit moves at most 1,024 rows in one libghostty operation and returns one
+typed result with the requested and applied distance, one newer complete frame,
+and the next bounded row window or authoritative edge. It emits no PTY input if terminal
 routing became active after preview. The session layer embeds canonical ORBF
 frames without interpreting them again and adds no dependency.
 
@@ -197,7 +202,7 @@ the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v9 codec. An exact-version
+client and server use only the bounded ORBS v10 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
@@ -322,6 +327,9 @@ left-pointer routing into Orbit, uses Shift as the host-selection bypass, pins
 each route through completion, and tags release copy for the semantic selection
 clipboard while explicit copy targets the ordinary clipboard. It has no
 adapter or dual-version window.
+Candidate ORBS v10 replaces the generic Finish acknowledgement with an exact
+presentation revision so clients can serialize rapid pointer sequences without
+timing or route inference. It has no adapter or dual-version window.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
@@ -504,10 +512,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 13,579 |
+| Product Rust source and tests | 13,652 |
 | Governance Rust tool and tests | 729 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **14,308** |
-| **Total owned implementation source** | **15,015** |
+| **Total owned Rust** | **14,381** |
+| **Total owned implementation source** | **15,088** |

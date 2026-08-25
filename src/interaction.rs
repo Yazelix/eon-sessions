@@ -591,7 +591,14 @@ fn handle_selection(
         state.route.is_none()
     );
     presentation.revision = next;
-    if !client.push_message(&ServerMessage::Accepted)? {
+    let response = if finishing {
+        ServerMessage::SelectionFinished {
+            frame_revision: next,
+        }
+    } else {
+        ServerMessage::Accepted
+    };
+    if !client.push_message(&response)? {
         return Ok(false);
     }
     if !presentation.publish(Some(client), terminal)? {
@@ -619,10 +626,17 @@ fn handle_terminal_pointer(
     state: &mut SelectionState,
 ) -> Result<bool> {
     let changed = matches!(action, SelectionAction::Begin { .. }) && state.visible;
+    let response = if matches!(action, SelectionAction::Finish { .. }) {
+        ServerMessage::SelectionFinished {
+            frame_revision: presentation.revision,
+        }
+    } else {
+        ServerMessage::Accepted
+    };
     let admitted = if changed {
         client.can_push_result_frame()
     } else {
-        client.can_push_message(&ServerMessage::Accepted)?
+        client.can_push_message(&response)?
     };
     if !admitted {
         return client.fail(
@@ -671,7 +685,7 @@ fn handle_terminal_pointer(
     if !queue_pty_write(&mut writes.borrow_mut(), &encoded) {
         return Err("PTY input queue admission contradicted its preflight".into());
     }
-    if !client.push_message(&ServerMessage::Accepted)? {
+    if !client.push_message(&response)? {
         return Ok(false);
     }
     if changed {
@@ -1073,9 +1087,11 @@ mod tests {
         }
         macro_rules! select {
             ($action:expr) => {{
+                let action = $action;
+                let finishing = matches!(&action, SelectionAction::Finish { .. });
                 assert!(handle_client_message(
                     &mut client,
-                    ClientMessage::Selection($action),
+                    ClientMessage::Selection(action),
                     &mut terminal,
                     Some(&pty),
                     &mut size,
@@ -1085,7 +1101,13 @@ mod tests {
                 )?);
                 assert_eq!(
                     flush_message(&mut client, &mut peer)?,
-                    ServerMessage::Accepted
+                    if finishing {
+                        ServerMessage::SelectionFinished {
+                            frame_revision: presentation.revision,
+                        }
+                    } else {
+                        ServerMessage::Accepted
+                    }
                 );
                 let ServerMessage::Frame(frame) = flush_message(&mut client, &mut peer)? else {
                     return Err("selection did not publish a frame".into());
@@ -1236,9 +1258,11 @@ mod tests {
 
         macro_rules! send {
             ($action:expr) => {{
+                let action = $action;
+                let finishing = matches!(&action, SelectionAction::Finish { .. });
                 assert!(handle_client_message(
                     &mut client,
-                    ClientMessage::Selection($action),
+                    ClientMessage::Selection(action),
                     &mut terminal,
                     Some(&pty),
                     &mut size,
@@ -1248,11 +1272,21 @@ mod tests {
                 )?);
                 assert_eq!(
                     flush_message(&mut client, &mut peer)?,
-                    ServerMessage::Accepted
+                    if finishing {
+                        ServerMessage::SelectionFinished {
+                            frame_revision: presentation.revision,
+                        }
+                    } else {
+                        ServerMessage::Accepted
+                    }
                 );
             }};
         }
 
+        let selected = selection_between(&terminal, (0, 0), (0, 0))?;
+        terminal.set_selection(Some(&selected))?;
+        selection.visible = true;
+        terminal.set_mode(Mode::SYNC_OUTPUT, true)?;
         let stable_revision = presentation.revision;
         send!(SelectionAction::Begin {
             frame_revision: stable_revision,
@@ -1289,11 +1323,17 @@ mod tests {
             modifiers: Modifiers::empty(),
         });
         assert!(selection.route.is_none());
-        assert_eq!(presentation.revision, stable_revision);
+        assert_eq!(presentation.revision, stable_revision + 1);
         assert_eq!(
             writes.take().into_iter().collect::<Vec<_>>(),
             b"\x1b[<0;5;1m"
         );
+        terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
+        assert!(presentation.publish(Some(&mut client), &terminal)?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(frame) if frame.revision == presentation.revision
+        ));
 
         send!(SelectionAction::Begin {
             frame_revision: presentation.revision,
@@ -1332,14 +1372,12 @@ mod tests {
             flush_message(&mut client, &mut peer)?,
             ServerMessage::Frame(_)
         ));
+        terminal.set_mode(Mode::SYNC_OUTPUT, true)?;
         send!(SelectionAction::Finish {
             position: position(size, 5, 0),
             modifiers: Modifiers::empty(),
         });
-        assert!(matches!(
-            flush_message(&mut client, &mut peer)?,
-            ServerMessage::Frame(_)
-        ));
+        let required_revision = presentation.revision;
         assert_eq!(
             flush_message(&mut client, &mut peer)?,
             ServerMessage::CopiedText {
@@ -1347,6 +1385,12 @@ mod tests {
                 text: "alpha".into(),
             }
         );
+        terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
+        assert!(presentation.publish(Some(&mut client), &terminal)?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(frame) if frame.revision == required_revision
+        ));
         assert!(writes.borrow().is_empty());
 
         assert!(handle_client_message(
