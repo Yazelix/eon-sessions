@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted ORBS v10 at `59975e9176f5caf8b78dc3273e88d9ecbb75dc3f`
+  completes `ORB-C9`: every accepted pointer Finish reports the authoritative
+  presentation revision, including host Finish and terminal Begin frames held
+  by synchronized output. Consumers can serialize rapid pointer sequences
+  without route or timing inference; no adapter or compatibility window is
+  retained.
 - Accepted ORBS v9 at `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`
   moves terminal-versus-host left-pointer routing into Orbit, uses Shift as the
   host-selection bypass, pins each route through completion, and tags frozen
