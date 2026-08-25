@@ -15,10 +15,9 @@ system must preserve.
 - **Retired:** the user explicitly replaced or removed the contract; its ID is
   never reused
 
-The ORBS v7 candidate changes ORB-C8 and preserves the ORBS-carried behavior of
-ORB-C3 through ORB-C7, ORB-C9, and ORB-C11. Those preserved contracts remain
-partially proved until the complete suite is recorded against an accepted
-immutable v7 revision; their listed proof commits remain the prior evidence.
+Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
+ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
+`baf8aa28dcaa50484cd221aa7730defedc2356bb`.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -62,7 +61,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 
 ## ORB-C3 — Bounded interactive and metadata attachment
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One local input-capable client and one local read-only metadata
   observer.
 - **Trigger:** A peer negotiates an explicit role on the private presentation
@@ -82,18 +81,17 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 - **Boundary:** Visible text observation, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
   excluded.
-- **Proof:** Prior ORBS v6 evidence at `69c402737799f03e615473956954a043647a4713`.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`metadata_observer_is_read_only_and_keeps_only_the_latest_change`](../src/attachment.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
     - Canonical Rust verification suite
-- **Open proof:** Accept the ORBS v7 preservation proof, then adopt it in Venus
-  and Eon.
+- **Open proof:** Venus and Eon have not adopted exact ORBS v7.
 
 ## ORB-C4 — Coherent ordered presentation
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One attached exact-version presentation client.
 - **Trigger:** Attachment begins or authoritative terminal state changes.
 - **Result:** Attachment starts with one complete frame at revision N and then
@@ -105,7 +103,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
   with canonical session and complete-frame codecs.
 - **Consumes:** Canonical ORBF v1 in ORBS v7.
 - **Boundary:** Native presentation quality remains Venus-owned.
-- **Proof:** Prior ORBS v6 evidence at `d96fff2015cded947c881c454216c6bf0ad69b7b`.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`synchronized_presentation_coalesces_defers_and_times_out`](../src/runtime.rs)
@@ -114,7 +112,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 
 ## ORB-C5 — Semantic terminal interaction
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
   interaction.
 - **Trigger:** Orbit accepts one canonical semantic input message.
@@ -126,7 +124,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
   semantic interaction owner.
 - **Consumes:** Canonical ORBS v7 semantic input.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
-- **Proof:** Prior ORBS v6 evidence at `b2fbfe1a718b77dbd37d9c82370bec83584384ae`.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux with Codex CLI 0.149.0 dogfood
   - **Evidence:**
     - [`kitty_release_never_falls_back_to_text`](../src/interaction.rs)
@@ -134,7 +132,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Every canonical presentation client.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
@@ -145,7 +143,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
   canonical `orbit-protocol` values and codecs.
 - **Consumes:** Canonical ORBF v1 in ORBS v7.
 - **Boundary:** Kitty graphics remain explicitly unsupported in version 1.
-- **Proof:** Prior ORBS v6 evidence at `7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`conformance_c6_direct_rows_match_rich_canonical_frame_rows`](../src/presentation.rs)
@@ -154,7 +152,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 
 ## ORB-C7 — Bounded attachment pressure
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Interactive attachments and metadata observers.
 - **Trigger:** A client reads slowly, breaks, or disconnects while Orbit continues
   processing PTY state.
@@ -165,7 +163,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 - **Owner:** Orbit attachment transport in the concrete runtime coordinator.
 - **Boundary:** The proof covers one local input client plus one metadata
   observer.
-- **Proof:** Prior ORBS v6 evidence at `69c402737799f03e615473956954a043647a4713`.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
@@ -173,7 +171,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits vertical movement against the exact
   current complete-frame revision.
@@ -203,20 +201,17 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 - **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
   kinetic effects, graphics, and restart persistence are excluded; physical
   wheels retain their existing typed terminal-routed or one-row behavior.
-- **Proof:** Prior ORBS v6 one-row previews and signed commits at
-  `780f5d746175b4a9b71df57c51ed4bfcc4c4c375`; the ORBS v7 multi-row candidate
-  is not yet accepted.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
-- **Open proof:** Accept the ORBS v7 owner revision, then prove exact Venus
-  consumer adoption.
+- **Open proof:** Exact Venus consumer adoption is pending.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy ORBS v7 attachment.
 - **Trigger:** The client begins, updates, finishes, or copies one linear cell
   selection against the exact current frame revision.
@@ -238,7 +233,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 - **Consumes:** Canonical ORBS v7 and ORB-C7 bounded-pressure behavior.
 - **Boundary:** Native clipboard effects, richer gestures, search, graphics, and
   restart persistence are excluded.
-- **Proof:** Prior ORBS v6 evidence at `413809cd6ac34e70bb3bf051d7a2a8d7da1aa357`.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
@@ -265,7 +260,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 
 ## ORB-C11 — Ordered terminal-authored clipboard writes
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy ORBS v7 attachment and its native clipboard owner.
 - **Trigger:** The terminal emits one clipboard write with exactly one nonempty
   UTF-8 `text/plain` representation.
@@ -282,7 +277,7 @@ immutable v7 revision; their listed proof commits remain the prior evidence.
 - **Consumes:** Canonical ORBS v7.
 - **Boundary:** Ordinary clipboard delivery, Wayland without data-control,
   broader compositors, and non-Linux policy remain unproved.
-- **Proof:** Prior ORBS v6 evidence at `d96fff2015cded947c881c454216c6bf0ad69b7b`.
+- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux Wayland primary-selection consumer
   - **Evidence:**
     - [`src/attachment.rs`](../src/attachment.rs) ordered bounded output checks

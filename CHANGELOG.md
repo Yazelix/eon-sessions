@@ -6,6 +6,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- The accepted `baf8aa28dcaa50484cd221aa7730defedc2356bb` proof changes
+  `ORB-C8` and replaces ORBS v6 with exact-version ORBS v7. Revision-bound
+  preview and signed-scroll results expose up to one active viewport of
+  nearest-first canonical rows while preserving Orbit's history, routing,
+  revision, mutation, and payload authority. Venus and Eon adopt the owner
+  proof separately without an adapter, dual-version window, or dependency
+  change.
 - The accepted `780f5d746175b4a9b71df57c51ed4bfcc4c4c375` proof changes
   `ORB-C8` and replaces ORBS v5 with exact-version ORBS v6. One revision-bound
   request commits up to 1,024 signed whole rows in one native viewport

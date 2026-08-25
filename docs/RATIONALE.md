@@ -134,7 +134,7 @@ authority. Venus and Eon adopt the exact owner proof in that order without a
 dual-version window. Accepted ORBS v6 supersedes the unconsumed v5 producer and
 adds one bounded signed whole-row viewport commit with one resulting frame and
 adjacent preview; pixels, gesture timing, and momentum remain Venus-owned.
-The ORBS v7 candidate replaces that adjacent row with up to one active viewport
+Accepted ORBS v7 replaces that adjacent row with up to one active viewport
 of nearest-first canonical rows. Orbit still owns history and mutation; Venus
 uses the bounded window only for compositor-paced fractional presentation.
 
