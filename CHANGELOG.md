@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `70861097a825c2fbfaea53a8ca9437f45e8602eb` hardens `ORB-C9`
+  under unchanged ORBS v10: host selection keeps only the latest wholly unsent
+  presentation frame while retaining ordered acknowledgements, completion, and
+  copied text. Touchpad drag tracks promptly and stops at release instead of
+  replaying obsolete frames.
 - Accepted ORBS v10 at `59975e9176f5caf8b78dc3273e88d9ecbb75dc3f`
   completes `ORB-C9`: every accepted pointer Finish reports the authoritative
   presentation revision, including host Finish and terminal Begin frames held

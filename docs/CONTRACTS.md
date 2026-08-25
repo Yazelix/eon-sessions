@@ -36,6 +36,10 @@ the authoritative presentation revision at sequence completion at
 without an adapter or compatibility window and preserves the ORBS-carried
 behavior of ORB-C3 through ORB-C8 and ORB-C11.
 
+Accepted Orbit `70861097a825c2fbfaea53a8ca9437f45e8602eb` hardens ORB-C9
+under unchanged ORBS v10 by superseding wholly unsent host-selection frames.
+It preserves every other accepted Orbit contract and the exact wire bytes.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -240,7 +244,7 @@ behavior of ORB-C3 through ORB-C8 and ORB-C11.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version ORBS v10 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence using bounded surface coordinates and current modifiers;
@@ -293,15 +297,16 @@ behavior of ORB-C3 through ORB-C8 and ORB-C11.
 - **Boundary:** Custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
-- **Proof:** `59975e9176f5caf8b78dc3273e88d9ecbb75dc3f`
+- **Proof:** `70861097a825c2fbfaea53a8ca9437f45e8602eb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
     - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
+    - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** The drag-frame supersession hardening has mechanical source
-  evidence; immutable Orbit proof and exact Venus and Eon dogfood are pending.
+- **Open proof:** The accepted Eon manifest and installed profile still need to
+  advance to this exact Orbit revision.
 
 ## ORB-C10 — Eon terminal identity
 
