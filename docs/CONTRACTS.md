@@ -240,7 +240,7 @@ behavior of ORB-C3 through ORB-C8 and ORB-C11.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version ORBS v10 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence using bounded surface coordinates and current modifiers;
@@ -262,6 +262,9 @@ behavior of ORB-C3 through ORB-C8 and ORB-C11.
     authoritative presentation revision at sequence completion. A client may
     send another press immediately when it already presented that revision;
     otherwise it waits for the exact frame.
+  - Orbit discards wholly unsent presentation frames from earlier host drag
+    phases before publishing the current phase, so release cannot replay an
+    obsolete selection-frame backlog.
   - A non-selection terminal mutation clears active selection and its
     presentation and resets gesture state before mutation; read-only preview
     does not.
@@ -280,6 +283,8 @@ behavior of ORB-C3 through ORB-C8 and ORB-C11.
     revision until presentation resumes or the attachment ends.
   - Selection work and buffering remain bounded and cannot block authoritative
     PTY processing or cleanup.
+  - A partially written frame remains ordered and completes before a newer
+    selection frame.
 - **Owner:** Orbit's semantic interaction owner with authoritative mouse modes,
   libghostty current-viewport gesture selection, and canonical ORBS v10. Venus
   owns native event delivery and clipboard effects.
@@ -295,7 +300,8 @@ behavior of ORB-C3 through ORB-C8 and ORB-C11.
     - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus and Eon consumer adoption is pending.
+- **Open proof:** The drag-frame supersession hardening has mechanical source
+  evidence; immutable Orbit proof and exact Venus and Eon dogfood are pending.
 
 ## ORB-C10 — Eon terminal identity
 

@@ -163,8 +163,17 @@ impl Client {
         self.output.can_push_result_frame()
     }
 
+    #[cfg(test)]
     pub(crate) fn can_push_selection_result(&self) -> bool {
         self.output.can_push_selection_result()
+    }
+
+    pub(crate) fn can_push_host_selection_result(&self, finishing: bool) -> bool {
+        self.output.can_push_host_selection_result(finishing)
+    }
+
+    pub(crate) fn supersede_pending_frame(&mut self) {
+        self.output.supersede_pending_frame();
     }
 
     pub(crate) fn can_push_frame_message(&self) -> bool {
@@ -327,10 +336,24 @@ impl OutputQueue {
             <= MAX_OUTPUT_BYTES
     }
 
+    #[cfg(test)]
     fn can_push_selection_result(&self) -> bool {
         self.bytes.saturating_add(
             MAX_FRAME_BYTES + session::MAX_COPY_BYTES + 9 + 3 * session::HEADER_BYTES,
         ) <= MAX_OUTPUT_BYTES
+    }
+
+    fn can_push_host_selection_result(&self, finishing: bool) -> bool {
+        let pending_frame = self.replaceable_suffix(MessageClass::Frame).1;
+        let required = if finishing {
+            MAX_FRAME_BYTES + session::MAX_COPY_BYTES + 9 + 3 * session::HEADER_BYTES
+        } else {
+            MAX_FRAME_BYTES + 2 * session::HEADER_BYTES
+        };
+        self.bytes
+            .saturating_sub(pending_frame)
+            .saturating_add(required)
+            <= MAX_OUTPUT_BYTES
     }
 
     fn can_push_frame_message(&self) -> bool {
@@ -401,6 +424,12 @@ impl OutputQueue {
             self.bytes -= previous.bytes.len();
         }
         self.push(message, class)
+    }
+
+    fn supersede_pending_frame(&mut self) {
+        let (remove, removed_bytes) = self.replaceable_suffix(MessageClass::Frame);
+        self.messages.truncate(self.messages.len() - remove);
+        self.bytes -= removed_bytes;
     }
 
     fn replaceable_suffix(&self, class: MessageClass) -> (usize, usize) {

@@ -563,11 +563,7 @@ fn handle_selection(
         );
     };
     let finishing = matches!(action, SelectionAction::Finish { .. });
-    if if finishing {
-        !client.can_push_selection_result()
-    } else {
-        !client.can_push_result_frame()
-    } {
+    if !client.can_push_host_selection_result(finishing) {
         return client.fail(
             FailureCode::Terminal,
             "client output queue cannot admit selection frame".into(),
@@ -586,6 +582,7 @@ fn handle_selection(
         clear_selection(terminal, state, false)?;
         return client.fail(FailureCode::Terminal, error.to_string());
     }
+    client.supersede_pending_frame();
     debug_assert_eq!(
         matches!(action, SelectionAction::Finish { .. }),
         state.route.is_none()
@@ -1674,6 +1671,77 @@ mod tests {
             modifiers: Modifiers::empty(),
         });
         assert!(selection.copied.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn host_selection_supersedes_unpresented_drag_frames_before_release() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let mut terminal = terminal()?;
+        terminal.vt_write(b"alpha beta\r\n");
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut presentation = Presentation::new()?;
+        presentation.revision = 1;
+        let mut selection = SelectionState::default();
+        let actions = [
+            SelectionAction::Begin {
+                frame_revision: 1,
+                position: position(size, 0, 0),
+                time_ns: 1,
+                modifiers: Modifiers::empty(),
+            },
+            SelectionAction::Update {
+                position: position(size, 2, 0),
+                modifiers: Modifiers::empty(),
+            },
+            SelectionAction::Update {
+                position: position(size, 5, 0),
+                modifiers: Modifiers::empty(),
+            },
+            SelectionAction::Finish {
+                position: position(size, 5, 0),
+                modifiers: Modifiers::empty(),
+            },
+        ];
+
+        for action in actions {
+            assert!(handle_client_message(
+                &mut client,
+                ClientMessage::Selection(action),
+                &mut terminal,
+                Some(&pty),
+                &mut size,
+                &writes,
+                &mut presentation,
+                &mut selection,
+            )?);
+        }
+
+        for _ in 0..3 {
+            assert_eq!(
+                flush_message(&mut client, &mut peer)?,
+                ServerMessage::Accepted
+            );
+        }
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::SelectionFinished {
+                frame_revision: presentation.revision,
+            }
+        );
+        let ServerMessage::Frame(frame) = flush_message(&mut client, &mut peer)? else {
+            return Err("selection release did not publish its final frame".into());
+        };
+        assert_eq!(frame.revision, presentation.revision);
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Selection,
+                text: "alpha".into(),
+            }
+        );
         Ok(())
     }
 
