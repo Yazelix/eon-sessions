@@ -207,7 +207,8 @@ prerequisite for the current single-session architecture.
   and WezTerm's pinned structured-state references above constrain vertical
   direct manipulation. Venus owns surface pixels, touch phases, accumulated
   remainders, velocity, and kinetic policy. Orbit exposes only one
-  revision-bound adjacent canonical row and one typed whole-row commit outcome.
+  revision-bound bounded canonical row window and one typed whole-row commit
+  outcome.
   It does not expose arbitrary history or adopt the comparison projects'
   same-process engines, caches, multiplexers, or renderers.
 

@@ -257,7 +257,7 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    assert_eq!(VERSION, 6);
+    assert_eq!(VERSION, 7);
     let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
@@ -724,6 +724,8 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
     );
 
     let row = frame().rows.remove(0);
+    let mut older = row.clone();
+    older.cells[0].text = "older".into();
     for message in [
         ServerMessage::VerticalPreview(VerticalPreview {
             frame_revision: 7,
@@ -736,7 +738,7 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
             outcome: PreviewOutcome::Viewport {
                 cols: 1,
                 edge_reached: false,
-                row: Some(row.clone()),
+                rows: vec![row.clone(), older.clone()],
             },
         }),
         ServerMessage::VerticalPreview(VerticalPreview {
@@ -745,7 +747,16 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
             outcome: PreviewOutcome::Viewport {
                 cols: 1,
                 edge_reached: true,
-                row: None,
+                rows: Vec::new(),
+            },
+        }),
+        ServerMessage::VerticalPreview(VerticalPreview {
+            frame_revision: 7,
+            direction: VerticalDirection::Up,
+            outcome: PreviewOutcome::Viewport {
+                cols: 1,
+                edge_reached: true,
+                rows: vec![older.clone()],
             },
         }),
         ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted),
@@ -773,8 +784,8 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
             direction: VerticalDirection::Up,
             outcome: PreviewOutcome::Viewport {
                 cols: 1,
-                edge_reached: true,
-                row: Some(row.clone()),
+                edge_reached: false,
+                rows: Vec::new(),
             },
         }),
         ServerMessage::VerticalPreview(VerticalPreview {
@@ -783,7 +794,7 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
             outcome: PreviewOutcome::Viewport {
                 cols: 0,
                 edge_reached: true,
-                row: None,
+                rows: Vec::new(),
             },
         }),
         ServerMessage::VerticalPreview(VerticalPreview {
@@ -792,7 +803,7 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
             outcome: PreviewOutcome::Viewport {
                 cols: 2,
                 edge_reached: false,
-                row: Some(row),
+                rows: vec![row],
             },
         }),
         ServerMessage::WheelOutcome(WheelOutcome::Viewport {
@@ -812,7 +823,7 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
             outcome: PreviewOutcome::Viewport {
                 cols: 1,
                 edge_reached: false,
-                row: Some(oversized),
+                rows: vec![oversized],
             },
         })),
         Err(Error::Frame(crate::Error::FrameTooLarge { .. }))
@@ -820,21 +831,17 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
     let mut maximum_row = frame().rows.remove(0);
     let remaining = MAX_FRAME_BYTES - crate::encode_canonical_row(&maximum_row, 1).unwrap().len();
     maximum_row.cells[0].text.push_str(&"x".repeat(remaining));
-    assert!(matches!(
-        encode_server_message(&ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision: 7,
-            direction: VerticalDirection::Up,
-            outcome: PreviewOutcome::Viewport {
-                cols: 1,
-                edge_reached: false,
-                row: Some(maximum_row),
-            },
-        })),
-        Err(Error::PayloadTooLarge {
-            maximum: MAX_FRAME_BYTES,
-            ..
-        })
-    ));
+    let maximum = encode_server_message(&ServerMessage::VerticalPreview(VerticalPreview {
+        frame_revision: 7,
+        direction: VerticalDirection::Up,
+        outcome: PreviewOutcome::Viewport {
+            cols: 1,
+            edge_reached: false,
+            rows: vec![maximum_row],
+        },
+    }))
+    .unwrap();
+    assert_eq!(maximum.len(), HEADER_BYTES + MAX_FRAME_BYTES + 15);
 
     let preview = ServerMessage::VerticalPreview(VerticalPreview {
         frame_revision: 7,
@@ -842,7 +849,7 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
         outcome: PreviewOutcome::Viewport {
             cols: 1,
             edge_reached: false,
-            row: Some(frame().rows.remove(0)),
+            rows: vec![frame().rows.remove(0)],
         },
     });
     let encoded = encode_server_message(&preview).unwrap();
@@ -859,6 +866,21 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
         Err(Error::InvalidTag {
             field: "preview edge",
             value: 2,
+        })
+    );
+    let mut invalid_count = encoded.clone();
+    invalid_count[HEADER_BYTES + 13..HEADER_BYTES + 15].copy_from_slice(&2_u16.to_le_bytes());
+    assert!(matches!(
+        decode_server_message(&invalid_count),
+        Err(Error::Frame(crate::Error::Truncated))
+    ));
+    let mut invalid_cells = encoded.clone();
+    invalid_cells[HEADER_BYTES + 10..HEADER_BYTES + 12].copy_from_slice(&u16::MAX.to_le_bytes());
+    invalid_cells[HEADER_BYTES + 13..HEADER_BYTES + 15].copy_from_slice(&2_u16.to_le_bytes());
+    assert_eq!(
+        decode_server_message(&invalid_cells),
+        Err(Error::InvalidValue {
+            field: "preview cell count",
         })
     );
     let mut trailing = encoded.clone();
@@ -905,7 +927,7 @@ fn vertical_scroll_batches_are_bounded_and_canonical() {
         next: PreviewOutcome::Viewport {
             cols: 1,
             edge_reached: false,
-            row: Some(frame().rows.remove(0)),
+            rows: vec![frame().rows.remove(0)],
         },
     });
     for message in [terminal_owned, viewport.clone()] {
@@ -931,7 +953,7 @@ fn vertical_scroll_batches_are_bounded_and_canonical() {
                 next: PreviewOutcome::Viewport {
                     cols: 1,
                     edge_reached: true,
-                    row: None,
+                    rows: Vec::new(),
                 },
             }))
             .is_err()

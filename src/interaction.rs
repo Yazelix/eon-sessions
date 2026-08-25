@@ -21,10 +21,13 @@ use libghostty_vt::{
     selection::{FormatOptions, Selection},
     terminal::{Mode, Point, PointCoordinate, ScrollViewport},
 };
-use orbit_protocol::session::{
-    self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, MouseAction,
-    MouseButton, PhysicalKey, PreviewOutcome, SelectionAction, ServerMessage, SurfaceSize,
-    VerticalDirection, VerticalPreview, ViewportCell, WheelOutcome,
+use orbit_protocol::{
+    Error as ProtocolError, FrameSize,
+    session::{
+        self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, MouseAction,
+        MouseButton, PhysicalKey, PreviewOutcome, SelectionAction, ServerMessage, SurfaceSize,
+        VerticalDirection, VerticalPreview, ViewportCell, WheelOutcome,
+    },
 };
 use std::{cell::RefCell, collections::VecDeque};
 
@@ -193,25 +196,50 @@ fn viewport_preview(
     direction: VerticalDirection,
 ) -> Result<PreviewOutcome> {
     let scrollbar = terminal.scrollbar()?;
-    let target = match direction {
-        VerticalDirection::Up => scrollbar.offset.checked_sub(1),
-        VerticalDirection::Down => {
-            let below = scrollbar.offset.saturating_add(scrollbar.len);
-            (below < scrollbar.total).then_some(below)
-        }
-    };
     let cols = terminal.cols()?;
-    let row = target
-        .map(|y| {
-            u32::try_from(y)
-                .map_err(|_| "preview row exceeds the terminal coordinate range".into())
-                .and_then(|y| presentation.extractor.row(terminal, y, cols))
-        })
-        .transpose()?;
+    let window_rows = terminal.rows()?;
+    let window = u64::from(window_rows);
+    let below = scrollbar.offset.saturating_add(scrollbar.len);
+    let mut encoded_size = FrameSize::new("", "", false, false)?;
+    let mut rows = Vec::with_capacity(usize::from(window_rows));
+    let mut window_complete = true;
+    for index in 0..window {
+        let target = match direction {
+            VerticalDirection::Up => scrollbar.offset.checked_sub(index + 1),
+            VerticalDirection::Down => below.checked_add(index).filter(|y| *y < scrollbar.total),
+        };
+        let Some(target) = target else {
+            break;
+        };
+        let target = u32::try_from(target)
+            .map_err(|_| "preview row exceeds the terminal coordinate range")?;
+        let row = presentation.extractor.row(terminal, target, cols)?;
+        let mut next_size = encoded_size;
+        let sized = next_size.add_row().and_then(|()| {
+            row.cells
+                .iter()
+                .try_for_each(|cell| next_size.add_cell(&cell.text, &cell.hyperlink))
+        });
+        match sized {
+            Ok(()) => {
+                encoded_size = next_size;
+                rows.push(row);
+            }
+            Err(ProtocolError::FrameTooLarge { .. }) => {
+                window_complete = false;
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let edge_reached = match direction {
+        VerticalDirection::Up => scrollbar.offset <= window,
+        VerticalDirection::Down => below.saturating_add(window) >= scrollbar.total,
+    } && window_complete;
     Ok(PreviewOutcome::Viewport {
         cols,
-        edge_reached: row.is_none(),
-        row,
+        edge_reached,
+        rows,
     })
 }
 
@@ -970,15 +998,22 @@ mod tests {
             outcome:
                 PreviewOutcome::Viewport {
                     cols: 80,
-                    edge_reached: false,
-                    row: Some(row),
+                    edge_reached,
+                    rows,
                 },
         }) = flush_message(&mut client, &mut peer)?
         else {
-            return Err("upward preview did not return one adjacent row".into());
+            return Err("upward preview did not return one row window".into());
         };
         assert_eq!(frame_revision, stable_revision);
-        assert!(row.cells.iter().all(|cell| !cell.style.selected));
+        let window = u64::from(INITIAL_SIZE.rows);
+        assert_eq!(rows.len(), usize::try_from(stable_offset.min(window))?);
+        assert_eq!(edge_reached, stable_offset <= window);
+        assert!(
+            rows.iter()
+                .flat_map(|row| &row.cells)
+                .all(|cell| !cell.style.selected)
+        );
         assert_eq!(presentation.revision, stable_revision);
         assert_eq!(terminal.scrollbar()?.offset, stable_offset);
         assert!(selection.visible);
@@ -1001,11 +1036,11 @@ mod tests {
             ServerMessage::VerticalPreview(VerticalPreview {
                 outcome: PreviewOutcome::Viewport {
                     edge_reached: true,
-                    row: None,
+                    rows,
                     ..
                 },
                 ..
-            })
+            }) if rows.is_empty()
         ));
 
         assert!(handle_client_message(
@@ -1352,10 +1387,10 @@ mod tests {
                 frame,
                 next: PreviewOutcome::Viewport {
                     edge_reached: true,
-                    row: None,
+                    rows,
                     ..
                 },
-            }) if frame.revision == previous_revision + 1
+            }) if rows.is_empty() && frame.revision == previous_revision + 1
         ));
         assert_eq!(terminal.scrollbar()?.offset, live);
 
@@ -1369,11 +1404,12 @@ mod tests {
                 frame,
                 next: PreviewOutcome::Viewport {
                     edge_reached: true,
-                    row: None,
+                    rows,
                     ..
                 },
             }) if requested_rows == -session::MAX_SCROLL_ROWS
                 && applied_rows == expected_to_top
+                && rows.is_empty()
                 && frame.revision == previous_revision + 1
         ));
         assert_eq!(terminal.scrollbar()?.offset, 0);

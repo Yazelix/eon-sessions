@@ -16,11 +16,11 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
-pub const MAX_PAYLOAD_BYTES: usize = 2 * MAX_FRAME_BYTES + 11;
+pub const MAX_PAYLOAD_BYTES: usize = 2 * MAX_FRAME_BYTES + 13;
 /// Largest paste accepted as one semantic event.
 pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
 /// Largest copied plain text returned as one semantic result.
@@ -145,7 +145,7 @@ pub enum ClientMessage {
     Resize(SurfaceSize),
     /// One authoritative current-viewport selection or copy action.
     Selection(SelectionAction),
-    /// Read at most one vertical row adjacent to an exact complete frame.
+    /// Read one bounded vertical row window adjacent to an exact complete frame.
     PreviewVertical {
         frame_revision: u64,
         direction: VerticalDirection,
@@ -180,7 +180,7 @@ pub enum ServerMessage {
         location: ClipboardLocation,
         text: String,
     },
-    /// Read-only routing and adjacent-row result for a vertical preview.
+    /// Read-only routing and bounded-row result for a vertical preview.
     VerticalPreview(VerticalPreview),
     /// Typed result of one accepted vertical wheel event.
     WheelOutcome(WheelOutcome),
@@ -218,7 +218,8 @@ pub enum PreviewOutcome {
     Viewport {
         cols: u16,
         edge_reached: bool,
-        row: Option<Row>,
+        /// Canonical rows ordered nearest-first in the requested direction.
+        rows: Vec<Row>,
     },
 }
 

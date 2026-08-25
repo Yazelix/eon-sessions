@@ -1156,27 +1156,27 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
     first.wait_title("selection-ready")?;
     let live = first.frame.clone();
     let preview = first.preview(session::VerticalDirection::Up)?;
-    let session::PreviewOutcome::Viewport {
-        cols: 20,
-        edge_reached: false,
-        row: Some(entering_top),
-    } = preview.outcome
-    else {
-        return Err("upward preview did not expose one adjacent row".into());
+    let session::PreviewOutcome::Viewport { cols: 20, rows, .. } = preview.outcome else {
+        return Err("upward preview did not expose a row window".into());
     };
+    assert!(!rows.is_empty() && rows.len() <= usize::from(surface.rows));
+    let entering_top = rows
+        .into_iter()
+        .next()
+        .ok_or("upward preview row window was empty")?;
     assert_eq!(first.frame, live);
     first.wheel(session::MouseButton::Four)?;
     assert_ne!(first.frame.rows, live.rows);
     assert_eq!(first.frame.rows[0], entering_top);
     let preview = first.preview(session::VerticalDirection::Down)?;
-    let session::PreviewOutcome::Viewport {
-        cols: 20,
-        edge_reached: false,
-        row: Some(entering_bottom),
-    } = preview.outcome
-    else {
-        return Err("downward preview did not expose one adjacent row".into());
+    let session::PreviewOutcome::Viewport { cols: 20, rows, .. } = preview.outcome else {
+        return Err("downward preview did not expose a row window".into());
     };
+    assert!(!rows.is_empty() && rows.len() <= usize::from(surface.rows));
+    let entering_bottom = rows
+        .into_iter()
+        .next()
+        .ok_or("downward preview row window was empty")?;
     first.wheel(session::MouseButton::Five)?;
     assert_eq!(first.frame.rows, live.rows);
     assert_eq!(first.frame.rows.last(), Some(&entering_bottom));
@@ -1358,11 +1358,16 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     let session::PreviewOutcome::Viewport {
         cols: 40,
         edge_reached: false,
-        row: Some(entering_top),
+        rows,
     } = preview.outcome
     else {
-        return Err("reflowed preview did not expose one adjacent row".into());
+        return Err("reflowed preview did not expose a row window".into());
     };
+    assert_eq!(rows.len(), 12);
+    let entering_top = rows
+        .into_iter()
+        .next()
+        .ok_or("reflowed preview row window was empty")?;
     second.wheel(session::MouseButton::Four)?;
     assert_eq!(second.frame.rows[0], entering_top);
 

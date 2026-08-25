@@ -508,30 +508,53 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn encode_canonical_row(row: &Row, cols: u16) -> Result<Vec<u8>> {
-    validate_row(row, cols)?;
-    let mut size = FrameSize::from_bytes(ROW_FIXED_BYTES)?;
-    for cell in &row.cells {
-        size.add_cell(&cell.text, &cell.hyperlink)?;
+    encode_canonical_rows(std::slice::from_ref(row), cols)
+}
+
+pub(crate) fn encode_canonical_rows(rows: &[Row], cols: u16) -> Result<Vec<u8>> {
+    validate_row_columns(cols)?;
+    validate_row_count(rows.len(), cols)?;
+    let mut size = FrameSize::from_bytes(0)?;
+    for row in rows {
+        validate_row(row, cols)?;
+        size.add_row()?;
+        for cell in &row.cells {
+            size.add_cell(&cell.text, &cell.hyperlink)?;
+        }
     }
     let mut encoder = Encoder(Vec::with_capacity(size.bytes()));
-    encode_row(&mut encoder, row)?;
+    for row in rows {
+        encode_row(&mut encoder, row)?;
+    }
     Ok(encoder.0)
 }
 
+#[cfg(test)]
 pub(crate) fn decode_canonical_row(bytes: &[u8], cols: u16) -> Result<Row> {
+    Ok(decode_canonical_rows(bytes, cols, 1)?
+        .pop()
+        .expect("one canonical row was requested"))
+}
+
+pub(crate) fn decode_canonical_rows(bytes: &[u8], cols: u16, row_count: u16) -> Result<Vec<Row>> {
     validate_row_columns(cols)?;
+    validate_row_count(usize::from(row_count), cols)?;
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(Error::FrameTooLarge { size: bytes.len() });
     }
     let mut decoder = Decoder { bytes, position: 0 };
-    let row = decode_row(&mut decoder, cols)?;
+    let mut rows = Vec::with_capacity(usize::from(row_count));
+    for _ in 0..row_count {
+        rows.push(decode_row(&mut decoder, cols)?);
+    }
     if decoder.position != bytes.len() {
         return Err(Error::TrailingBytes {
             count: bytes.len() - decoder.position,
         });
     }
-    Ok(row)
+    Ok(rows)
 }
 
 fn encode_row(encoder: &mut Encoder, row: &Row) -> Result<()> {
@@ -580,6 +603,18 @@ fn validate_row_columns(cols: u16) -> Result<()> {
         Err(Error::InvalidDimensions { cols, rows: 1 })
     } else {
         Ok(())
+    }
+}
+
+fn validate_row_count(rows: usize, cols: u16) -> Result<()> {
+    let cells = rows.checked_mul(usize::from(cols));
+    if matches!(cells, Some(count) if count <= MAX_CELLS) {
+        Ok(())
+    } else {
+        Err(Error::InvalidDimensions {
+            cols,
+            rows: u16::try_from(rows).unwrap_or(u16::MAX),
+        })
     }
 }
 

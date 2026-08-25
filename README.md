@@ -18,15 +18,15 @@ live in the dependency-free `orbit-protocol` workspace library so Orbit and an
 exact-revision Venus consumer cannot drift into separate schemas. That
 consumer boundary is proved at
 `838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns canonical ORBS v6 at
-`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`, replacing the accepted ORBS v5
-proof `69c402737799f03e615473956954a043647a4713`, including one input-capable
+The same package contains the partially proved ORBS v7 candidate, preserving
+the accepted ORBS v6 proof
+`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`, including one input-capable
 attachment, one bounded read-only title/CWD observer, frames, lifecycle,
 semantic input, selection and copy, terminal clipboard writes, revision-bound
-adjacent-row previews, typed vertical-wheel outcomes, and bounded signed
+multi-row previews, typed vertical-wheel outcomes, and bounded signed
 whole-row viewport commits. The currently
-composed Venus, Eon, and Eonova sources remain on their exact accepted ORBS v4
-pair until owner-first Venus and Eon adoption consumes this proof.
+composed Venus, Eon, and Eonova sources remain on their exact accepted ORBS v6
+pair until owner-first adoption consumes an accepted v7 proof.
 Orbit's server and diagnostic client use only the canonical values.
 Orbit resolves selection from the exact complete-frame revision and current
 viewport, publishes selected cells through normal frames, and returns only
@@ -150,7 +150,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The accepted ORBS v6 producer uses a 12-byte explicit little-endian header with `ORBS`
+The ORBS v7 candidate uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -162,15 +162,16 @@ Arbitrary paste bytes remain opaque; key events retain physical identity,
 action, active and consumed modifiers, composition, multi-codepoint text, and
 an optional unshifted codepoint. Cell selection is revision-bound at Begin,
 ordered through Update and Finish, and copied explicitly without transferring
-terminal authority. A vertical preview carries at most one canonical row tied
-to an exact current frame without moving the viewport or sending PTY input. An
+terminal authority. A vertical preview carries up to one active viewport of
+nearest-first canonical rows tied to an exact current frame without moving the
+viewport or sending PTY input. An
 accepted vertical wheel returns either terminal-routed or an atomic applied-row
 count and newer complete frame. A revision-bound signed viewport commit moves
 at most 1,024 rows in one libghostty operation and returns one typed result with
 the requested and applied distance, one newer complete frame, and the next
-adjacent row or authoritative edge. It emits no PTY input if terminal routing
-became active after preview. The session layer embeds canonical ORBF frames
-without interpreting them again and adds no dependency.
+bounded row window or authoritative edge. It emits no PTY input if terminal
+routing became active after preview. The session layer embeds canonical ORBF
+frames without interpreting them again and adds no dependency.
 
 ## PTY-lifetime proof
 
@@ -188,7 +189,7 @@ the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v6 codec. An exact-version
+client and server use only the bounded ORBS v7 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
@@ -287,22 +288,20 @@ authoritative terminal state. The initial contract covers surviving client and
 observer exits and disconnections while Orbit continues running; it does not
 cover Orbit or machine restarts.
 
-Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` consumes canonical ORBF v1
-over ORBS v4 at exact Orbit proof
-`7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`. Eon acceptance
-`0bf0b165d06b4a8162be497011070f61f6c2000a` composes exact Orbit source
-`86aa130629c09dce61d0f232150298656fa5cef4` and that Venus source; Eonova
-source `d8a8729f442f3d535b30fd22ac8dc7b6da4626dd` ships exact Eon
-`ced9e4ae11ed21a0f05d50cd470491adffa73b54`. Accepted x86_64 Linux evidence
+Venus source `e5e37a3df119ee2bcfa2493a2ce5a46307493732` consumes canonical ORBF v1
+over ORBS v6 at exact Orbit proof
+`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`. Eon source
+`10c402b3754d600a6bb0a0da0de2ff6d1d4feca3` composes that accepted pair;
+Eonova source `92acf64e8c43531bd4c5d639bdfa99b717dfe5b3` consumes the resulting Eon
+runtime. Accepted x86_64 Linux evidence
 covers same-boot recovery, owner-routed Stop, and native Wayland delivery to the
 primary selection. Ordinary clipboard delivery, Wayland without data-control,
 broader compositors, and macOS remain unproved. No adapter, feature probe,
 dual-version support, or compatibility window exists.
-ORBS v6 is an owner-first breaking replacement proved by Orbit at
-`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`. A separate Venus consumer run
-must pin that exact source before Eon updates the composed pair. The current v4
-product pin remains valid and receives no v5 or v6 capability until that
-ordered adoption.
+ORBS v7 is an owner-first breaking candidate that expands the accepted ORBS v6
+one-row preview into a bounded row window. Venus must pin its eventual exact
+proof revision before Eon and Eonova update the composed pair; no adapter or
+dual-version window is maintained.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches
@@ -485,10 +484,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 12,545 |
+| Product Rust source and tests | 12,654 |
 | Governance Rust tool and tests | 729 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **13,274** |
-| **Total owned implementation source** | **13,981** |
+| **Total owned Rust** | **13,383** |
+| **Total owned implementation source** | **14,090** |
