@@ -204,19 +204,22 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version attached client.
-- **Trigger:** The client previews or commits vertical movement against the exact
-  current complete-frame revision.
+- **Trigger:** The client previews or commits relative vertical movement from a
+  complete-frame revision it has presented; PTY output may advance Orbit before
+  the request is handled.
 - **Result:**
   - Each Session configures libghostty with a 16 MiB primary-history byte budget;
     retained rows are content-dependent and the active viewport may exceed it.
   - Preview returns up to one active viewport of canonical rows, nearest first
-    in the requested direction, without mutation.
+    in the requested direction, without mutation, and names the current
+    authoritative revision whose state it inspected.
   - Commit accepts a nonzero signed distance from -1,024 through 1,024 rows,
-    applies it once, clears active selection, advances authority once, and
-    returns requested and applied rows, one authoritative frame, and the next
-    bounded row window or edge.
+    resolves it against current authoritative terminal state, applies it once,
+    clears active selection, advances authority once, and returns requested and
+    applied rows, one authoritative frame, and the next bounded row window or
+    edge.
   - Negative movement goes toward older history, positive movement goes toward
     the live area, and movement clamps at history boundaries.
   - A successful semantic key that emits PTY bytes returns primary history to
@@ -225,12 +228,14 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
 - **Important failures:**
   - Terminal-owned mouse tracking or alternate-screen mode 1007 returns
     terminal-owned without PTY input, mutation, or revision advance.
-  - Stale authority, synchronized output, malformed or out-of-range distance,
-    and pressure fail before mutation.
+  - Future authority, synchronized output, malformed or out-of-range distance,
+    and pressure fail before mutation. Lagging relative preview and scroll
+    revisions resolve against current authority; stale selection and unrelated
+    coordinate- or phase-bound input remain strict.
 - **Owner:** Orbit's semantic interaction owner with libghostty's native
   viewport, byte-budgeted history, one canonical row extractor, and bounded
   output queue.
-- **Consumes:** Canonical ORBS v7.
+- **Consumes:** Canonical ORBS v10 with unchanged bytes and values.
 - **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
   kinetic effects, graphics, and restart persistence are excluded; physical
   wheels retain their existing typed terminal-routed or one-row behavior.
@@ -240,7 +245,9 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus consumer adoption is pending.
+- **Open proof:** The accepted proof covers the predecessor exact-revision rule.
+  Compatible producer proof for lagging relative preview and scroll, followed by
+  exact Venus consumer adoption, is pending.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
@@ -484,7 +491,7 @@ the normal suite because they do not exercise that terminal engine.
 | `conformance_c5_authoritative_input_modes_and_resize_survive_detach` | Resize plus key, mouse, focus, paste, Kitty-keyboard, mode change, and reattach | The PTY receives terminal-state-aware input once and retains the requested dimensions | Exact PTY bytes and `stty` dimensions | `ORB-C5` |
 | `conformance_c6_direct_rows_match_rich_canonical_frame_rows` | Wrapped styled text, RGB and palette colors, hyperlink, protection, combining and wide graphemes, viewport movement, and resize | Direct row extraction equals the corresponding canonical frame rows before and after reflow | Exact canonical-row equality; semantic presence of accepted rich fields and width roles | `ORB-C6` |
 | `conformance_c8_authoritative_viewport_routes_wheel_and_key_from_terminal_state` | Preview and wheel at history edges, mouse tracking, alternate screen, synchronized output, semantic key, and pressure | Orbit returns typed terminal or viewport outcomes without forbidden mutation and routes exact terminal input when required | Exact typed outcomes, revisions, and PTY bytes; semantic no-mutation and boundedness | `ORB-C8` |
-| `conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative` | One large signed commit, both history edges, stale authority, routing changes, synchronized output, selection, and pressure | Orbit performs one native viewport movement and returns one result with exact requested/applied rows, one frame, and the next preview | Exact result count, rows, revision, adjacent preview, PTY absence, and failure non-mutation | `ORB-C8` |
+| `conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative` | One large signed commit, both history edges, lagging and future authority, routing changes, synchronized output, selection, and pressure | Orbit performs one native viewport movement and returns one result with exact requested/applied rows, one frame, and the next preview | Exact result count, rows, revision, adjacent preview, PTY absence, and failure non-mutation | `ORB-C8` |
 | `conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped` | Wide and combining text, viewport movement, reversed selection, detach, alternate-screen output, and resize | Selected presentation is client-scoped while finished copy stays frozen across later terminal mutations | Exact copied Unicode text; semantic selection visibility, scope, and freeze | `ORB-C9` |
 
 A mismatch is classified from the smallest reproducer: an Orbit regression if

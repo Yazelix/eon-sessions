@@ -145,12 +145,12 @@ pub enum ClientMessage {
     Resize(SurfaceSize),
     /// One routed left-pointer or copy action.
     Selection(SelectionAction),
-    /// Read one bounded vertical row window adjacent to an exact complete frame.
+    /// Preview current authority from a non-future presented frame revision.
     PreviewVertical {
         frame_revision: u64,
         direction: VerticalDirection,
     },
-    /// Commit one bounded whole-row movement; negative is toward older history.
+    /// Commit from a non-future presented revision; negative is toward older history.
     ScrollVertical { frame_revision: u64, rows: i16 },
 }
 

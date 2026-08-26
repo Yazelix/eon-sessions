@@ -1296,6 +1296,8 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
 fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResult {
     let dir = TestDir::new("viewport")?;
     let socket = dir.0.join("orbit.sock");
+    let preview = dir.0.join("preview");
+    let commit = dir.0.join("commit");
     let release = dir.0.join("release");
     let clear = dir.0.join("clear");
     let pressure = dir.0.join("pressure");
@@ -1304,6 +1306,14 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
         "stty -echo; \
          i=0; while [ \"$i\" -lt 48 ]; do printf 'history-%02d\\n' \"$i\"; i=$((i + 1)); done; \
          printf '\\033]2;history-ready\\033\\\\'; \
+         while [ ! -e '{preview}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
+         [ -e '{stop}' ] && exit; \
+         i=0; while [ \"$i\" -lt 8 ]; do printf '\\033[Hpreview-update-%02d' \"$i\"; i=$((i + 1)); done; \
+         printf '\\033[999;1H\\033]2;preview-update\\033\\\\'; \
+         while [ ! -e '{commit}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
+         [ -e '{stop}' ] && exit; \
+         i=0; while [ \"$i\" -lt 8 ]; do printf '\\033[Hcommit-update-%02d' \"$i\"; i=$((i + 1)); done; \
+         printf '\\033[999;1H\\033]2;commit-update\\033\\\\'; \
          while [ ! -e '{release}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
          [ -e '{stop}' ] && exit; \
          printf 'tail-after-pin\\n\\033]2;pinned-output\\033\\\\'; \
@@ -1316,6 +1326,8 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
          [ -e '{stop}' ] && exit; \
          printf '\\033]2;pressure-complete\\033\\\\'; \
          while [ ! -e '{stop}' ]; do sleep 0.01; done",
+        preview = preview.display(),
+        commit = commit.display(),
         release = release.display(),
         clear = clear.display(),
         pressure = pressure.display(),
@@ -1333,11 +1345,29 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
 
     let mut first = Client::attach(&socket)?;
     first.wait_title("history-ready")?;
-    let live_text = frame_text(&first.frame);
+    let presented_revision = first.frame.revision;
+    fs::write(&preview, b"preview")?;
+    first.wait_title("preview-update")?;
+    assert!(first.frame.revision > presented_revision);
+    write_message(
+        first.reader.get_mut(),
+        &ClientMessage::PreviewVertical {
+            frame_revision: presented_revision,
+            direction: session::VerticalDirection::Up,
+        },
+    )?;
+    let ServerMessage::VerticalPreview(preview) = read_message(&mut first.reader)? else {
+        return Err("continuous output prevented the stale preview from converging".into());
+    };
+    assert_eq!(preview.frame_revision, first.frame.revision);
+
+    fs::write(&commit, b"commit")?;
+    first.wait_title("commit-update")?;
+    assert!(first.frame.revision > preview.frame_revision);
     write_message(
         first.reader.get_mut(),
         &ClientMessage::ScrollVertical {
-            frame_revision: first.frame.revision,
+            frame_revision: preview.frame_revision,
             rows: -6,
         },
     )?;
@@ -1353,7 +1383,6 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     assert!(frame.revision > first.frame.revision);
     first.frame = *frame;
     let pinned = first.frame.clone();
-    assert_ne!(frame_text(&pinned), live_text);
 
     fs::write(&release, b"release")?;
     first.wait_title("pinned-output")?;

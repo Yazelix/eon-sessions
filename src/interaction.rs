@@ -203,10 +203,10 @@ fn handle_vertical_preview(
     terminal: &Terminal<'static, '_>,
     presentation: &Presentation,
 ) -> Result<bool> {
-    if frame_revision != presentation.revision {
+    if frame_revision > presentation.revision {
         return client.fail(
             FailureCode::InvalidInput,
-            "preview frame revision is stale".into(),
+            "preview frame revision is ahead of authority".into(),
         );
     }
     let outcome = if routes_vertical_wheel_to_terminal(terminal)? {
@@ -223,7 +223,7 @@ fn handle_vertical_preview(
         }
     };
     client.push_message(&ServerMessage::VerticalPreview(VerticalPreview {
-        frame_revision,
+        frame_revision: presentation.revision,
         direction,
         outcome,
     }))
@@ -290,10 +290,10 @@ fn handle_vertical_scroll(
     presentation: &mut Presentation,
     selection: &mut SelectionState,
 ) -> Result<bool> {
-    if frame_revision != presentation.revision {
+    if frame_revision > presentation.revision {
         return client.fail(
             FailureCode::InvalidInput,
-            "scroll frame revision is stale".into(),
+            "scroll frame revision is ahead of authority".into(),
         );
     }
     if routes_vertical_wheel_to_terminal(terminal)? {
@@ -2174,8 +2174,11 @@ mod tests {
         let mut presentation = Presentation::new()?;
         let mut selection = SelectionState::default();
         macro_rules! scroll {
-            ($rows:expr) => {{
-                let frame_revision = presentation.revision;
+            ($rows:expr) => {
+                scroll!($rows, presentation.revision)
+            };
+            ($rows:expr, $frame_revision:expr) => {{
+                let frame_revision = $frame_revision;
                 assert!(handle_client_message(
                     &mut client,
                     ClientMessage::ScrollVertical {
@@ -2271,13 +2274,14 @@ mod tests {
         ));
         assert_eq!(terminal.scrollbar()?.offset, 0);
 
-        let stable_revision = presentation.revision;
-        let stable_offset = terminal.scrollbar()?.offset;
+        let presented_revision = presentation.revision;
+        terminal.vt_write(b"continuous-one\r\n");
+        presentation.advance()?;
         assert!(handle_client_message(
             &mut client,
-            ClientMessage::ScrollVertical {
-                frame_revision: stable_revision - 1,
-                rows: -1,
+            ClientMessage::PreviewVertical {
+                frame_revision: presented_revision,
+                direction: VerticalDirection::Down,
             },
             &mut terminal,
             Some(&pty),
@@ -2286,13 +2290,61 @@ mod tests {
             &mut presentation,
             &mut selection,
         )?);
+        let preview_revision = presentation.revision;
         assert!(matches!(
             flush_message(&mut client, &mut peer)?,
-            ServerMessage::Failure(Failure {
-                code: FailureCode::InvalidInput,
+            ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision,
+                direction: VerticalDirection::Down,
                 ..
-            })
+            }) if frame_revision == preview_revision
         ));
+
+        terminal.vt_write(b"continuous-two\r\n");
+        presentation.advance()?;
+        let current_revision = presentation.revision;
+        assert!(matches!(
+            scroll!(1, preview_revision),
+            ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+                requested_rows: 1,
+                applied_rows: 1,
+                frame,
+                ..
+            }) if frame.revision == current_revision + 1
+        ));
+
+        let stable_revision = presentation.revision;
+        let stable_offset = terminal.scrollbar()?.offset;
+        for message in [
+            ClientMessage::PreviewVertical {
+                frame_revision: stable_revision + 1,
+                direction: VerticalDirection::Down,
+            },
+            ClientMessage::ScrollVertical {
+                frame_revision: stable_revision + 1,
+                rows: 1,
+            },
+        ] {
+            assert!(handle_client_message(
+                &mut client,
+                message,
+                &mut terminal,
+                Some(&pty),
+                &mut size,
+                &writes,
+                &mut presentation,
+                &mut selection,
+            )?);
+            assert!(matches!(
+                flush_message(&mut client, &mut peer)?,
+                ServerMessage::Failure(Failure {
+                    code: FailureCode::InvalidInput,
+                    ..
+                })
+            ));
+            assert_eq!(presentation.revision, stable_revision);
+            assert_eq!(terminal.scrollbar()?.offset, stable_offset);
+        }
 
         terminal.vt_write(b"\x1b[?1000h\x1b[?1006h");
         assert_eq!(

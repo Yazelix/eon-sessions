@@ -22,7 +22,7 @@ The same package owns accepted canonical ORBS v10 at
 `59975e9176f5caf8b78dc3273e88d9ecbb75dc3f`, replacing accepted ORBS v9 proof
 `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`, including one input-capable
 attachment, one bounded read-only title/CWD observer, frames, lifecycle,
-semantic input, selection and copy, terminal clipboard writes, revision-bound
+semantic input, selection and copy, terminal clipboard writes, revision-carrying
 multi-row previews, typed vertical-wheel outcomes, and bounded signed
 whole-row viewport commits. The currently composed Venus, Eon, and Eonova
 sources remain on exact accepted ORBS v7 until owner-first adoption consumes
@@ -172,17 +172,18 @@ positions and current modifiers, while Begin also carries the exact frame
 revision and monotonic press time. Orbit pins terminal-versus-host routing;
 libghostty owns single cell, double word, and triple logical-line press-drag
 behavior for host selections. Copy and gesture cancellation remain explicit
-without transferring terminal authority. A vertical preview
-carries up to one active viewport of
-nearest-first canonical rows tied to an exact current frame without moving the
-viewport or sending PTY input. An accepted Finish reports the authoritative
-presentation revision at sequence completion, independent of its pinned route.
-An accepted vertical wheel returns either terminal-routed or an atomic
-applied-row count and newer complete frame. A revision-bound signed viewport
-commit moves at most 1,024 rows in one libghostty operation and returns one
+without transferring terminal authority. A vertical preview request names an
+already-presented frame; Orbit reads current authoritative state and returns
+that revision with up to one active viewport of nearest-first canonical rows
+without moving the viewport or sending PTY input. An accepted Finish reports
+the authoritative presentation revision at sequence completion, independent of
+its pinned route. An accepted vertical wheel returns either terminal-routed or
+an atomic applied-row count and newer complete frame. A signed viewport commit
+may likewise lag current presentation output; Orbit resolves current terminal
+routing, moves at most 1,024 rows in one libghostty operation, and returns one
 typed result with the requested and applied distance, one newer complete frame,
-and the next bounded row window or authoritative edge. It emits no PTY input if terminal
-routing became active after preview. The session layer embeds canonical ORBF
+and the next bounded row window or authoritative edge. A request claiming a
+future revision fails before mutation. The session layer embeds canonical ORBF
 frames without interpreting them again and adds no dependency.
 
 ## PTY-lifetime proof
@@ -205,8 +206,8 @@ client and server use only the bounded ORBS v10 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
-revision-bound selection, vertical-preview, and bounded signed-scroll events,
-never raw PTY output.
+revision-bound selection plus revision-carrying vertical-preview and bounded
+signed-scroll events, never raw PTY output.
 One separately negotiated observer receives only an acknowledgement, bounded
 coalescible title/CWD metadata at exact presentation revisions, failures, and
 session exit.
@@ -512,10 +513,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 13,749 |
+| Product Rust source and tests | 13,830 |
 | Governance Rust tool and tests | 729 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **14,478** |
-| **Total owned implementation source** | **15,185** |
+| **Total owned Rust** | **14,559** |
+| **Total owned implementation source** | **15,266** |
