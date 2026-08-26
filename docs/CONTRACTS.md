@@ -40,6 +40,11 @@ Accepted Orbit `70861097a825c2fbfaea53a8ca9437f45e8602eb` hardens ORB-C9
 under unchanged ORBS v10 by superseding wholly unsent host-selection frames.
 It preserves every other accepted Orbit contract and the exact wire bytes.
 
+Accepted Orbit `4e03fe280a714c3f3e29d31d0ec6374eaaf4ecea` changes ORB-C8
+under unchanged ORBS v10 so lagging relative preview and signed-scroll requests
+resolve against current authoritative terminal state. It preserves every other
+accepted Orbit contract and the exact wire bytes.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -204,7 +209,7 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented; PTY output may advance Orbit before
@@ -239,15 +244,13 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
 - **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
   kinetic effects, graphics, and restart persistence are excluded; physical
   wheels retain their existing typed terminal-routed or one-row behavior.
-- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
+- **Proof:** `4e03fe280a714c3f3e29d31d0ec6374eaaf4ecea`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
-- **Open proof:** The accepted proof covers the predecessor exact-revision rule.
-  Compatible producer proof for lagging relative preview and scroll, followed by
-  exact Venus consumer adoption, is pending.
+- **Open proof:** Exact Venus consumer adoption and Eon rollout remain pending.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 

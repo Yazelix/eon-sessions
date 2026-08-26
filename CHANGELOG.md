@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `4e03fe280a714c3f3e29d31d0ec6374eaaf4ecea` changes `ORB-C8`
+  under unchanged ORBS v10: lagging relative preview and signed-scroll requests
+  resolve against current authoritative terminal state, keeping scrollback
+  usable while PTY output advances. Future revisions and unrelated stale input
+  remain rejected; Venus and Eon adopt the owner proof separately.
 - Accepted Orbit `70861097a825c2fbfaea53a8ca9437f45e8602eb` hardens `ORB-C9`
   under unchanged ORBS v10: host selection keeps only the latest wholly unsent
   presentation frame while retaining ordered acknowledgements, completion, and
