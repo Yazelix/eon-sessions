@@ -455,13 +455,13 @@ does not run for unrelated documentation.
 
 The governance command checks only deterministic repository facts:
 
-- Contract and crate tables retain their canonical columns and row shape.
-  Contract rows use unique `ORB-C*` IDs and a known status; proved rows name a
-  full Git commit and a check or evidence. `docs/CONTRACTS.md`,
+- Contract sections and crate-decision records retain their canonical labeled
+  fields. Contract sections use unique `ORB-C*` IDs and a known status; proved
+  sections name a full Git commit and a check or evidence. `docs/CONTRACTS.md`,
   `docs/CRATES.md`, and Beads cannot refer to an unknown contract.
-- Selected crate-index rows name an exact version or commit, alternatives, and
-  an existing evidence Bead. Selected, planned, candidate, and deferred rows
-  remain distinct.
+- Selected crate decisions name an exact version or commit, alternatives, and
+  an existing evidence Bead. Selected, planned, candidate, and deferred
+  decisions remain distinct.
 - Beads JSON must parse so those contract and crate-evidence links can be
   checked. `br doctor` owns tracker schema, duplicate IDs, storage, and
   integrity.
@@ -506,9 +506,9 @@ and protocol remain platform-neutral.
 | Surface | Lines |
 | --- | ---: |
 | Product Rust source and tests | 13,848 |
-| Governance Rust tool and tests | 729 |
+| Governance Rust tool and tests | 767 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixture | 58 |
-| **Total owned Rust** | **14,577** |
-| **Total owned implementation source** | **15,284** |
+| **Total owned Rust** | **14,615** |
+| **Total owned implementation source** | **15,322** |

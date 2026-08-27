@@ -36,87 +36,6 @@ fn read_text(root: &Path, relative: &str, errors: &mut Vec<String>) -> String {
     }
 }
 
-fn split_markdown_row(line: &str) -> Option<Vec<String>> {
-    let line = line.trim();
-    let content = line.strip_prefix('|')?.strip_suffix('|')?;
-    let mut cells = Vec::new();
-    let mut cell = String::new();
-    let mut characters = content.chars().peekable();
-    while let Some(character) = characters.next() {
-        match (character, characters.peek()) {
-            ('\\', Some('|')) => {
-                cell.push('|');
-                characters.next();
-            }
-            ('|', _) => {
-                cells.push(cell.trim().to_owned());
-                cell.clear();
-            }
-            _ => cell.push(character),
-        }
-    }
-    cells.push(cell.trim().to_owned());
-    Some(cells)
-}
-
-fn valid_separator(cell: &str) -> bool {
-    let cell = cell.strip_prefix(':').unwrap_or(cell);
-    let cell = cell.strip_suffix(':').unwrap_or(cell);
-    cell.len() >= 3 && cell.bytes().all(|byte| byte == b'-')
-}
-
-fn markdown_table(
-    text: &str,
-    heading: &str,
-    headers: &[&str],
-    relative: &str,
-    errors: &mut Vec<String>,
-) -> Vec<Vec<String>> {
-    let lines = text.lines().collect::<Vec<_>>();
-    let Some(mut position) = lines.iter().position(|line| *line == heading) else {
-        errors.push(format!("{relative}: missing {heading} table"));
-        return Vec::new();
-    };
-    position += 1;
-    while position < lines.len() && !lines[position].trim_start().starts_with('|') {
-        position += 1;
-    }
-    let mut table = Vec::new();
-    while position < lines.len() && lines[position].trim_start().starts_with('|') {
-        if let Some(row) = split_markdown_row(lines[position]) {
-            table.push(row);
-        }
-        position += 1;
-    }
-    if table.len() < 2
-        || table[0]
-            .iter()
-            .map(String::as_str)
-            .ne(headers.iter().copied())
-    {
-        errors.push(format!("{relative}: {heading} has unexpected columns"));
-        return Vec::new();
-    }
-    if table[1].len() != headers.len() || !table[1].iter().all(|cell| valid_separator(cell)) {
-        errors.push(format!(
-            "{relative}: {heading} has an invalid separator row"
-        ));
-        return Vec::new();
-    }
-    let mut rows = Vec::new();
-    for (number, row) in table.into_iter().skip(2).enumerate() {
-        if row.len() == headers.len() {
-            rows.push(row);
-        } else {
-            errors.push(format!(
-                "{relative}: {heading} row {} has the wrong column count",
-                number + 1
-            ));
-        }
-    }
-    rows
-}
-
 fn contract_id(id: &str) -> Option<&str> {
     let number = id.strip_prefix("ORB-C")?;
     if !number.is_empty()
@@ -134,6 +53,37 @@ struct ContractSection {
     id: String,
     title: String,
     fields: BTreeMap<String, String>,
+}
+
+fn parse_labeled_field(
+    line: &str,
+    relative: &str,
+    section: &str,
+    fields: &mut BTreeMap<String, String>,
+    current_field: &mut Option<String>,
+    errors: &mut Vec<String>,
+) {
+    let trimmed = line.trim_start();
+    if let Some(field) = trimmed.strip_prefix("- **")
+        && let Some((name, value)) = field.split_once(":**")
+    {
+        let name = name.to_owned();
+        if fields
+            .insert(name.clone(), value.trim().to_owned())
+            .is_some()
+        {
+            errors.push(format!("{relative}: {section} has duplicate {name} field"));
+        }
+        *current_field = Some(name);
+    } else if !trimmed.is_empty()
+        && let Some(name) = current_field.as_ref()
+    {
+        let value = fields.get_mut(name).expect("current field exists");
+        if !value.is_empty() {
+            value.push(' ');
+        }
+        value.push_str(trimmed);
+    }
 }
 
 fn contract_sections(text: &str, errors: &mut Vec<String>) -> Vec<ContractSection> {
@@ -161,33 +111,15 @@ fn contract_sections(text: &str, errors: &mut Vec<String>) -> Vec<ContractSectio
         let Some(section) = current.as_mut() else {
             continue;
         };
-        let trimmed = line.trim_start();
-        if let Some(field) = trimmed.strip_prefix("- **") {
-            if let Some((name, value)) = field.split_once(":**") {
-                let name = name.to_owned();
-                if section
-                    .fields
-                    .insert(name.clone(), value.trim().to_owned())
-                    .is_some()
-                {
-                    errors.push(format!(
-                        "docs/CONTRACTS.md: {} has duplicate {name} field",
-                        section.id
-                    ));
-                }
-                current_field = Some(name);
-                continue;
-            }
-        }
-        if !trimmed.is_empty()
-            && !trimmed.starts_with("## ")
-            && let Some(name) = current_field.as_ref()
-        {
-            let value = section.fields.get_mut(name).expect("current field exists");
-            if !value.is_empty() {
-                value.push(' ');
-            }
-            value.push_str(trimmed);
+        if !line.trim_start().starts_with("## ") {
+            parse_labeled_field(
+                line,
+                "docs/CONTRACTS.md",
+                &section.id,
+                &mut section.fields,
+                &mut current_field,
+                errors,
+            );
         }
     }
     if let Some(section) = current {
@@ -381,6 +313,62 @@ fn has_full_commit(text: &str) -> bool {
         .any(|candidate| lowercase_hex(candidate, 40))
 }
 
+#[derive(Debug)]
+struct DecisionSection {
+    boundary: String,
+    fields: BTreeMap<String, String>,
+}
+
+fn decision_sections(text: &str, errors: &mut Vec<String>) -> Vec<DecisionSection> {
+    let lines = text.lines().collect::<Vec<_>>();
+    let Some(position) = lines
+        .iter()
+        .position(|line| *line == "## Current decisions")
+    else {
+        errors.push("docs/CRATES.md: missing ## Current decisions section".to_owned());
+        return Vec::new();
+    };
+    let mut sections = Vec::new();
+    let mut current: Option<DecisionSection> = None;
+    let mut current_field: Option<String> = None;
+
+    for line in &lines[position + 1..] {
+        if line.starts_with("## ") {
+            break;
+        }
+        if let Some(boundary) = line.strip_prefix("### ") {
+            if let Some(section) = current.take() {
+                sections.push(section);
+            }
+            current = Some(DecisionSection {
+                boundary: boundary.to_owned(),
+                fields: BTreeMap::new(),
+            });
+            current_field = None;
+            continue;
+        }
+
+        let Some(section) = current.as_mut() else {
+            continue;
+        };
+        parse_labeled_field(
+            line,
+            "docs/CRATES.md",
+            &section.boundary,
+            &mut section.fields,
+            &mut current_field,
+            errors,
+        );
+    }
+    if let Some(section) = current {
+        sections.push(section);
+    }
+    if sections.is_empty() {
+        errors.push("docs/CRATES.md: no decision sections".to_owned());
+    }
+    sections
+}
+
 fn valid_bead_id(candidate: &str) -> bool {
     let Some(tail) = candidate
         .strip_prefix("orb-")
@@ -410,44 +398,78 @@ fn bead_ids(text: &str) -> BTreeSet<String> {
 }
 
 fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<String>) {
-    let rows = markdown_table(
-        text,
-        "## Current decisions",
-        &[
-            "Boundary",
-            "Selected shape",
-            "Status",
-            "Credible alternatives",
-            "Why",
-            "Evidence",
-        ],
-        "docs/CRATES.md",
-        errors,
-    );
-    for row in rows {
-        let boundary = &row[0];
-        let category = row[2].split_whitespace().next().unwrap_or_default();
+    const REQUIRED_FIELDS: &[&str] = &[
+        "Selected shape",
+        "Status",
+        "Credible alternatives",
+        "Why",
+        "Evidence",
+    ];
+
+    let sections = decision_sections(text, errors);
+    let mut boundaries = BTreeSet::new();
+    for section in sections {
+        let boundary = &section.boundary;
+        if boundary.is_empty() {
+            errors.push("docs/CRATES.md: decision requires a boundary heading".to_owned());
+        } else if !boundaries.insert(boundary.clone()) {
+            errors.push(format!(
+                "docs/CRATES.md: duplicate decision boundary {boundary}"
+            ));
+        }
+        for field in REQUIRED_FIELDS {
+            if section
+                .fields
+                .get(*field)
+                .is_none_or(|value| value.is_empty())
+            {
+                errors.push(format!(
+                    "docs/CRATES.md: {boundary} requires a nonempty {field} field"
+                ));
+            }
+        }
+        for field in section.fields.keys() {
+            if !REQUIRED_FIELDS.contains(&field.as_str()) {
+                errors.push(format!(
+                    "docs/CRATES.md: {boundary} has unknown {field} field"
+                ));
+            }
+        }
+        let status = section
+            .fields
+            .get("Status")
+            .map(String::as_str)
+            .unwrap_or("");
+        let category = status.split_whitespace().next().unwrap_or_default();
         if !DECISION_STATUSES.contains(&category) {
             errors.push(format!(
-                "docs/CRATES.md: {boundary} has invalid decision status {}",
-                row[2]
+                "docs/CRATES.md: {boundary} has invalid decision status {status}"
             ));
             continue;
         }
         if category != "Selected" {
             continue;
         }
-        if !has_exact_version(&row[1]) && !has_full_commit(&row[1]) {
+        let selected = section
+            .fields
+            .get("Selected shape")
+            .map_or("", String::as_str);
+        if !has_exact_version(selected) && !has_full_commit(selected) {
             errors.push(format!(
                 "docs/CRATES.md: selected {boundary} decision lacks an exact version or commit"
             ));
         }
-        if matches!(row[3].as_str(), "" | "—" | "-" | "None") {
+        let alternatives = section
+            .fields
+            .get("Credible alternatives")
+            .map_or("", String::as_str);
+        if matches!(alternatives, "" | "—" | "-" | "None") {
             errors.push(format!(
                 "docs/CRATES.md: selected {boundary} decision lacks credible alternatives"
             ));
         }
-        if bead_ids(&row[5]).is_disjoint(known_beads) {
+        let evidence = section.fields.get("Evidence").map_or("", String::as_str);
+        if bead_ids(evidence).is_disjoint(known_beads) {
             errors.push(format!(
                 "docs/CRATES.md: selected {boundary} decision lacks an existing evidence Bead"
             ));
@@ -580,10 +602,18 @@ mod tests {
             self.write(
                 "docs/CRATES.md",
                 "# Crates\n\n## Current decisions\n\n\
-                 | Boundary | Selected shape | Status | Credible alternatives | Why | Evidence |\n\
-                 | --- | --- | --- | --- | --- | --- |\n\
-                 | Terminal | libghostty-vt 0.2.1 | Selected for proof | owned parser | Sole authority | orb-proof |\n\
-                 | Renderer | Undecided | Planned | wgpu or owned code | Deferred | future Bead |\n",
+                 ### Terminal\n\n\
+                 - **Selected shape:** libghostty-vt 0.2.1\n\
+                 - **Status:** Selected for proof\n\
+                 - **Credible alternatives:** owned parser\n\
+                 - **Why:** Sole authority\n\
+                 - **Evidence:** orb-proof\n\n\
+                 ### Renderer\n\n\
+                 - **Selected shape:** Undecided\n\
+                 - **Status:** Planned\n\
+                 - **Credible alternatives:** wgpu or owned code\n\
+                 - **Why:** Deferred\n\
+                 - **Evidence:** future Bead\n",
             );
             self.write_issue();
         }
@@ -699,11 +729,18 @@ mod tests {
         repository.write(
             "docs/CRATES.md",
             "# Crates\n\n## Current decisions\n\n\
-             | Boundary | Selected shape | Status | Credible alternatives | Why | Evidence |\n\
-             | --- | --- | --- | --- | --- | --- |\n\
-             | Runtime | Owned loop | Selected | — | Small; preserves ORB-C7 | future work |\n\
-             | Renderer | Maybe | Chosen | owned code | Deferred | orb-proof |\n\
-             | Too | Short |\n",
+             ### Runtime\n\n\
+             - **Selected shape:** Owned loop\n\
+             - **Status:** Selected\n\
+             - **Credible alternatives:** —\n\
+             - **Why:** Small; preserves ORB-C7\n\
+             - **Evidence:** future work\n\n\
+             ### Renderer\n\n\
+             - **Selected shape:** Maybe\n\
+             - **Status:** Chosen\n\
+             - **Credible alternatives:** owned code\n\
+             - **Evidence:** orb-proof\n\
+             - **Unexpected:** no\n",
         );
 
         let errors = repository.errors().join("\n");
@@ -720,7 +757,8 @@ mod tests {
         assert!(errors.contains("docs/CONTRACTS.md: unknown contract reference ORB-C8"));
         assert!(errors.contains("docs/CRATES.md: unknown contract reference ORB-C7"));
         assert!(errors.contains("invalid issue JSON"));
-        assert!(errors.contains("Current decisions row 3 has the wrong column count"));
+        assert!(errors.contains("Renderer requires a nonempty Why field"));
+        assert!(errors.contains("Renderer has unknown Unexpected field"));
         assert!(errors.contains("selected Runtime decision lacks an exact version or commit"));
         assert!(errors.contains("selected Runtime decision lacks credible alternatives"));
         assert!(errors.contains("selected Runtime decision lacks an existing evidence Bead"));
