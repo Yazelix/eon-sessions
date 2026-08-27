@@ -45,6 +45,11 @@ under unchanged ORBS v10 so lagging relative preview and signed-scroll requests
 resolve against current authoritative terminal state. It preserves every other
 accepted Orbit contract and the exact wire bytes.
 
+The current candidate hardens ORB-C7 and ORB-C8 so one partially transmitted
+maximum frame cannot falsely exhaust the fixed capacity required by one atomic
+maximum scroll outcome. The wire and replacement order remain unchanged; the
+candidate is only partially proved until it has an accepted immutable revision.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -190,12 +195,14 @@ accepted Orbit contract and the exact wire bytes.
 
 ## ORB-C7 — Bounded attachment pressure
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Interactive attachments and metadata observers.
 - **Trigger:** A client reads slowly, breaks, or disconnects while Orbit continues
   processing PTY state.
 - **Result:** Authoritative PTY processing, the other role, and cleanup remain
-  live with bounded output buffering and history.
+  live with bounded output buffering and history. One partially transmitted
+  maximum frame still leaves bounded capacity for one atomic maximum scroll
+  outcome.
 - **Important failures:** Pressure disconnects the failing client instead of
   blocking the owner loop or admitting a partial result.
 - **Owner:** Orbit attachment transport in the concrete runtime coordinator.
@@ -204,12 +211,15 @@ accepted Orbit contract and the exact wire bytes.
 - **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
+    - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
+- **Open proof:** The partial-frame scroll-outcome admission regression is an
+  uncommitted candidate in `orb-admit-scroll-outcome-partial-frame-9di`.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented; PTY output may advance Orbit before
@@ -248,9 +258,11 @@ accepted Orbit contract and the exact wire bytes.
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
+    - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus consumer adoption and Eon rollout remain pending.
+- **Open proof:** Accept the partial-frame queue-admission hardening, then repeat
+  exact Venus consumer adoption and Eon rollout.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 

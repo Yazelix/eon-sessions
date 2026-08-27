@@ -11,7 +11,8 @@ use std::{
 };
 
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_OUTPUT_BYTES: usize = 2 * (MAX_FRAME_BYTES + session::HEADER_BYTES) + 4096;
+const MAX_OUTPUT_BYTES: usize =
+    MAX_FRAME_BYTES + session::MAX_PAYLOAD_BYTES + 2 * session::HEADER_BYTES + 4096;
 
 pub(crate) enum Incoming {
     Negotiate(Negotiation),
@@ -586,6 +587,23 @@ mod tests {
         ));
         assert!(full.can_push_frame_message());
         assert!(!full.can_push_selection_result());
+
+        let frame_bytes = MAX_FRAME_BYTES + session::HEADER_BYTES;
+        let outcome_bytes = session::MAX_PAYLOAD_BYTES + session::HEADER_BYTES;
+        let mut partial = OutputQueue::default();
+        assert!(partial.push(vec![0; frame_bytes], MessageClass::Frame));
+        partial.offset = 1;
+        partial.bytes -= 1;
+        assert!(partial.push_replaceable(vec![1; frame_bytes], MessageClass::Frame));
+
+        assert!(partial.can_push_scroll_outcome());
+        assert!(partial.push_replaceable(vec![2; outcome_bytes], MessageClass::ScrollOutcome));
+        assert_eq!(partial.messages.len(), 2);
+        assert!(partial.messages[0].class == MessageClass::Frame);
+        assert!(partial.messages[1].class == MessageClass::ScrollOutcome);
+        assert_eq!(partial.offset, 1);
+        assert_eq!(partial.bytes, frame_bytes - 1 + outcome_bytes);
+        assert!(partial.bytes <= MAX_OUTPUT_BYTES);
     }
 
     #[test]
