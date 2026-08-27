@@ -277,6 +277,19 @@ prerequisite for the current single-session architecture.
   dependency and build cost, input methods, accessibility, Linux behavior,
   macOS feasibility, and browser implications before selecting any part of the
   set. WGSL is relevant only if the selected GPU design requires shaders.
+- [Unpeel Surface at `a3004c88a8b`](https://github.com/unpeel-com/unpeel-surface/tree/a3004c88a8b871837dac4820f48cf8a184a7276d),
+  MIT, is comparison evidence for hybrid cell and pixel composition. Surface
+  keeps menus, inputs, and navigation in terminal cells while placing rendered
+  RGBA content beneath glyphs and explicit cell backgrounds through the Kitty
+  graphics protocol. Its local file presenter requires a shared temporary
+  filesystem and uses an mmap frame ring, synchronized updates, negative
+  z-order, and bounded full-frame or damage-tile presentation. Orbit may use
+  Surface as a later producer and layering oracle after the static resource
+  plane is active. Orbit and Venus do not adopt its renderer, scene or WASM
+  ABI, temporary-file transport, shared-filesystem assumption, frame ring, or
+  damage policy. Surface runs on the application side and cannot prove
+  libghostty image extraction or the Orbit-to-Venus resource contract; Yazi
+  remains the first accepted producer path.
 
 ## Cross-stack runtimes and extensions
 

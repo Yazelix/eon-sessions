@@ -24,9 +24,9 @@ The same package owns accepted canonical ORBS v10 at
 attachment, one bounded read-only title/CWD observer, frames, lifecycle,
 semantic input, selection and copy, terminal clipboard writes, revision-carrying
 multi-row previews, typed vertical-wheel outcomes, and bounded signed
-whole-row viewport commits. The currently composed Venus, Eon, and Eonova
-sources remain on exact accepted ORBS v7 until owner-first adoption consumes
-that v10 proof. ORBS v10 replaces the generic Finish acknowledgement with one
+whole-row viewport commits. The currently composed Venus and Eon sources
+consume exact accepted ORBS v10; independently composed Eonova does too. ORBS
+v10 replaces the generic Finish acknowledgement with one
 typed result naming the authoritative presentation revision at sequence
 completion. A client waits only when it has not presented that exact revision
 yet.
@@ -311,26 +311,18 @@ covers same-boot recovery, owner-routed Stop, and native Wayland delivery to the
 primary selection. Ordinary clipboard delivery, Wayland without data-control,
 broader compositors, and macOS remain unproved. No adapter, feature probe,
 dual-version support, or compatibility window exists.
-ORBS v7 is an owner-first breaking replacement proved by Orbit at
-`baf8aa28dcaa50484cd221aa7730defedc2356bb`. It expands the accepted ORBS v6
-one-row preview into a bounded row window. Venus must pin that exact revision
-before Eon and Eonova update the composed pair; no adapter or dual-version
-window is maintained.
-ORBS v8 is the owner-first replacement proved by Orbit at
-`d9b22eb294f8f42b4f49324fd5467eab239c2917`. It replaces
-client-authored viewport cells with bounded pointer positions and monotonic
-press time while preserving every other v7 message family. Venus and Eon
-remain on v7 until they consume that exact revision.
-ORBS v9 is the owner-first replacement proved by Orbit at
-`aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`. It moves terminal-versus-host
-left-pointer routing into Orbit, uses Shift as the host-selection bypass, pins
-each route through completion, and tags release copy for the semantic selection
-clipboard while explicit copy targets the ordinary clipboard. It has no
-adapter or dual-version window.
-ORBS v10 is proved at `59975e9176f5caf8b78dc3273e88d9ecbb75dc3f` and replaces
-the generic Finish acknowledgement with an exact presentation revision so
-clients can serialize rapid pointer sequences without timing or route
-inference. It has no adapter or dual-version window.
+ORBS v7 at `baf8aa28dcaa50484cd221aa7730defedc2356bb` expanded the accepted
+ORBS v6 one-row preview into a bounded row window.
+ORBS v8 at `d9b22eb294f8f42b4f49324fd5467eab239c2917` replaced client-authored
+viewport cells with bounded pointer positions and monotonic press time while
+preserving every other v7 message family.
+ORBS v9 at `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672` moved terminal-versus-host
+left-pointer routing into Orbit, used Shift as the host-selection bypass, pinned
+each route through completion, and tagged release copy for the semantic
+selection clipboard while explicit copy targeted the ordinary clipboard.
+ORBS v10 at `59975e9176f5caf8b78dc3273e88d9ecbb75dc3f` replaced the generic Finish
+acknowledgement with an exact presentation revision so clients can serialize
+rapid pointer sequences without timing or route inference.
 Complete frames prove convergence and define the
 attach boundary. Any later patch protocol keeps a complete frame as its resync
 fallback. The preferred later replication shape uses revisioned row patches

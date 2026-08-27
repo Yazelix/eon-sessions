@@ -28,7 +28,8 @@ Accepted exact-version ORBS v9 changes ORB-C5 and ORB-C9 so Orbit routes one
 left-pointer sequence from authoritative terminal mouse state and tags host
 selection copy destinations at
 `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`. It intentionally replaces ORBS
-v8 without a compatibility window; exact consumer proof remains open.
+v8 without a compatibility window; current exact consumers use superseding
+ORBS v10.
 
 Accepted exact-version ORBS v10 hardens ORB-C9 so an accepted Finish reports
 the authoritative presentation revision at sequence completion at
@@ -108,7 +109,10 @@ replacement order remain unchanged.
   PTY, child, other role, or cleanup.
 - **Owner:** Orbit attachment transport and runtime coordinator with canonical
   `orbit-protocol` ORBS v7.
-- **Consumes:** Canonical ORBS v7.
+- **Consumes:** Canonical ORBS v7; Venus
+  `f13dc7ac2e9a24c5cff5bb7e618436783ec76dbf` and Eon
+  `b44d968e38474fc5b75a41bcde2ad750da0d1e3e` adopted that exact version,
+  while current consumers use superseding ORBS v10.
 - **Boundary:** Visible text observation, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
   excluded.
@@ -118,7 +122,6 @@ replacement order remain unchanged.
     - [`metadata_observer_is_read_only_and_keeps_only_the_latest_change`](../src/attachment.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
     - Canonical Rust verification suite
-- **Open proof:** Venus and Eon have not adopted exact ORBS v7.
 
 ## ORB-C4 — Coherent ordered presentation
 
@@ -162,8 +165,10 @@ replacement order remain unchanged.
   emit partial input, or synthesize terminal input.
 - **Owner:** Canonical platform-neutral `orbit-protocol` values and Orbit's
   semantic interaction owner.
-- **Consumes:** Canonical ORBS v9 semantic input; accepted ORBS v7 remains the
-  prior exact consumer boundary.
+- **Consumes:** Canonical ORBS v9 semantic input; Venus
+  `1034817bbe2352fb4b1026bce6b1f02eedd67e37` and Eon
+  `df8e07462a8faf548b1afde89b77b96b8095b194` consume the preserved behavior
+  through exact ORBS v10.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
 - **Proof:** `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`
   - **Environment:** x86_64 Linux
@@ -171,7 +176,6 @@ replacement order remain unchanged.
     - [`kitty_release_never_falls_back_to_text`](../src/interaction.rs)
     - Accepted real-PTY semantic-input lifecycle checks
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
-- **Open proof:** Exact consumer adoption remains open.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
@@ -248,7 +252,10 @@ replacement order remain unchanged.
 - **Owner:** Orbit's semantic interaction owner with libghostty's native
   viewport, byte-budgeted history, one canonical row extractor, and bounded
   output queue.
-- **Consumes:** Canonical ORBS v10 with unchanged bytes and values.
+- **Consumes:** Canonical ORBS v10 with unchanged bytes and values; Venus
+  `bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29` and Eon
+  `71e8f5a8cac938ed7f065890c83d9376551f6014` consume exact Orbit
+  `a65e199e16e97330175e314cacf791fa00f53069`.
 - **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
   kinetic effects, graphics, and restart persistence are excluded; physical
   wheels retain their existing typed terminal-routed or one-row behavior.
@@ -259,7 +266,6 @@ replacement order remain unchanged.
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus consumer adoption and Eon rollout remain pending.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
@@ -312,7 +318,10 @@ replacement order remain unchanged.
   libghostty current-viewport gesture selection, and canonical ORBS v10. Venus
   owns native event delivery and clipboard effects.
 - **Consumes:** Canonical ORBS v10 and ORB-C7 bounded-pressure behavior; accepted
-  ORBS v9 remains the prior routing and host-selection proof.
+  ORBS v9 remains the prior routing and host-selection proof. Venus
+  `1034817bbe2352fb4b1026bce6b1f02eedd67e37` and Eon
+  `df8e07462a8faf548b1afde89b77b96b8095b194` consume this behavior through
+  exact ORBS v10.
 - **Boundary:** Custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
@@ -324,8 +333,6 @@ replacement order remain unchanged.
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** The accepted Eon manifest and installed profile still need to
-  advance to this exact Orbit revision.
 
 ## ORB-C10 — Eon terminal identity
 
@@ -411,7 +418,9 @@ replacement order remain unchanged.
     - [`shutdown_escalates_foreground_and_permits_a_detached_process`](../tests/lifecycle.rs)
     - [`stale_socket_and_safe_signal_shutdown`](../tests/lifecycle.rs)
     - [`writing_descendant_cannot_hold_server_open_after_known_child_exit`](../tests/lifecycle.rs)
-- **Open proof:** Exact Eon consumer adoption is pending.
+    - Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54` consumes this shutdown
+      boundary; composed recovery and Stop acceptance is recorded at Eon
+      `0bf0b165d06b4a8162be497011070f61f6c2000a`.
 
 ## ORB-C13 — Same-boot management ownership
 
@@ -480,7 +489,9 @@ replacement order remain unchanged.
     - Accepted management proof `3186519af709a94005974a97212814c05715a99d`
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
     - [`management_authority_negatives_fail_closed_without_stopping_session`](../tests/lifecycle.rs)
-- **Open proof:** Exact Eon consumer adoption is pending.
+    - Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54` consumes management v1;
+      composed recovery and Stop acceptance is recorded at Eon
+      `0bf0b165d06b4a8162be497011070f61f6c2000a`.
 
 ## Focused terminal conformance corpus
 
