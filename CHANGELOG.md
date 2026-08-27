@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `a65e199e16e97330175e314cacf791fa00f53069` hardens `ORB-C7`
+  and `ORB-C8` under unchanged ORBS v10: a partially transmitted maximum frame
+  no longer falsely exhausts the bounded capacity required by one atomic
+  maximum scroll outcome. Ordering and replacement semantics are unchanged;
+  Venus and Eon adopt the owner proof separately.
 - Accepted Orbit `4e03fe280a714c3f3e29d31d0ec6374eaaf4ecea` changes `ORB-C8`
   under unchanged ORBS v10: lagging relative preview and signed-scroll requests
   resolve against current authoritative terminal state, keeping scrollback
