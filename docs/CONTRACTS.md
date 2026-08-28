@@ -51,6 +51,11 @@ and ORB-C8 so one partially transmitted maximum frame cannot falsely exhaust
 the fixed capacity required by one atomic maximum scroll outcome. The wire and
 replacement order remain unchanged.
 
+Accepted Orbit `64b225eb249490c9075894814942652a8b9d6192` changes ORB-C8
+under unchanged ORBS v10 so one relative preview or signed-scroll request held
+during DEC 2026 synchronized output resolves after normal or watchdog release.
+It preserves every other accepted Orbit contract and the exact wire bytes.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -221,7 +226,7 @@ replacement order remain unchanged.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented; PTY output may advance Orbit before
@@ -257,21 +262,23 @@ replacement order remain unchanged.
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
 - **Consumes:** Canonical ORBS v10 with unchanged bytes and values; Venus
-  `bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29` and Eon
-  `71e8f5a8cac938ed7f065890c83d9376551f6014` consume exact Orbit
-  `a65e199e16e97330175e314cacf791fa00f53069`.
+  `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
+  `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
+  `64b225eb249490c9075894814942652a8b9d6192`.
 - **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
   kinetic effects, graphics, and restart persistence are excluded; physical
   wheels retain their existing typed terminal-routed or one-row behavior.
-- **Proof:** `a65e199e16e97330175e314cacf791fa00f53069`
-  - **Environment:** x86_64 Linux
-  - **Open proof:** Exact split synchronized-output deferral and installed Codex
-    dogfood remain required before promotion back to Proved.
+- **Proof:** `64b225eb249490c9075894814942652a8b9d6192`
+  - **Environment:** x86_64 Linux and the Nix-installed Eon composition
   - **Evidence:**
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
+    - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
+    - Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
+      `/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0` and passed the
+      same split real-PTY regression against its installed Orbit binary.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 

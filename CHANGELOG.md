@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `64b225eb249490c9075894814942652a8b9d6192` changes `ORB-C8`
+  under unchanged ORBS v10: one relative preview or signed-scroll request held
+  during DEC 2026 synchronized output resolves once after normal or watchdog
+  release. PTY parsing continues, partial presentation stays hidden, and a
+  second unresolved request fails without replacing the first.
 - Accepted Orbit `a65e199e16e97330175e314cacf791fa00f53069` hardens `ORB-C7`
   and `ORB-C8` under unchanged ORBS v10: a partially transmitted maximum frame
   no longer falsely exhausts the bounded capacity required by one atomic
