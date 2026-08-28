@@ -5,7 +5,7 @@ use libghostty_vt::{
     style::RgbColor,
     terminal::{ClipboardWrite, ClipboardWriteError, Mode},
 };
-use orbit_protocol::session::{self, ClipboardLocation, ServerMessage, SurfaceSize};
+use orbit_protocol::session::{self, ClientMessage, ClipboardLocation, ServerMessage, SurfaceSize};
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
@@ -44,6 +44,7 @@ pub(crate) struct Presentation {
     pub(crate) extractor: Extractor,
     pub(crate) revision: u64,
     pub(crate) synchronized_until: Option<Instant>,
+    deferred_vertical: Option<ClientMessage>,
 }
 
 impl Presentation {
@@ -52,7 +53,24 @@ impl Presentation {
             extractor: Extractor::new()?,
             revision: 0,
             synchronized_until: None,
+            deferred_vertical: None,
         })
+    }
+
+    pub(crate) fn defer_vertical(&mut self, request: ClientMessage) -> bool {
+        if self.deferred_vertical.is_some() {
+            return false;
+        }
+        self.deferred_vertical = Some(request);
+        true
+    }
+
+    pub(crate) fn take_deferred_vertical(&mut self) -> Option<ClientMessage> {
+        self.deferred_vertical.take()
+    }
+
+    pub(crate) fn clear_deferred_vertical(&mut self) {
+        self.deferred_vertical = None;
     }
 
     pub(crate) fn advance(&mut self) -> Result {
@@ -319,6 +337,15 @@ pub(super) fn run(
         if !presentation.release_if_expired(client.as_mut(), &mut terminal, Instant::now())? {
             disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
         }
+        flush_deferred_vertical(
+            &mut client,
+            &mut terminal,
+            pty_open.then_some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?;
         if !presentation.publish_metadata(observer.as_mut(), &terminal)? {
             observer = None;
         }
@@ -362,6 +389,15 @@ pub(super) fn run(
             if changed && !presentation.publish_change(client.as_mut(), &terminal)? {
                 disconnect_client(&mut client, &terminal, &mut selection, &mut presentation)?;
             }
+            flush_deferred_vertical(
+                &mut client,
+                &mut terminal,
+                pty_open.then_some(&pty),
+                &mut size,
+                &writes,
+                &mut presentation,
+                &mut selection,
+            )?;
             if changed && !presentation.publish_metadata(observer.as_mut(), &terminal)? {
                 observer = None;
             }
@@ -569,6 +605,42 @@ fn publish_clipboard_writes(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn flush_deferred_vertical(
+    client: &mut Option<Client>,
+    terminal: &mut Terminal<'static, '_>,
+    pty: Option<&Pty>,
+    size: &mut SurfaceSize,
+    writes: &RefCell<VecDeque<u8>>,
+    presentation: &mut Presentation,
+    selection: &mut SelectionState,
+) -> Result {
+    if terminal.mode(Mode::SYNC_OUTPUT)? {
+        return Ok(());
+    }
+    let Some(message) = presentation.take_deferred_vertical() else {
+        return Ok(());
+    };
+    let keep = if let Some(active) = client.as_mut() {
+        handle_client_message(
+            active,
+            message,
+            terminal,
+            pty,
+            size,
+            writes,
+            presentation,
+            selection,
+        )?
+    } else {
+        true
+    };
+    if !keep {
+        disconnect_client(client, terminal, selection, presentation)?;
+    }
+    Ok(())
+}
+
 fn read_client(
     client: &mut Client,
     terminal: &mut Terminal<'static, '_>,
@@ -669,6 +741,7 @@ fn disconnect_client(
     presentation: &mut Presentation,
 ) -> Result {
     *client = None;
+    presentation.clear_deferred_vertical();
     if clear_pointer_sequence(terminal, selection, true)? {
         presentation.advance()?;
     }

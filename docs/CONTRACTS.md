@@ -221,7 +221,7 @@ replacement order remain unchanged.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented; PTY output may advance Orbit before
@@ -237,6 +237,10 @@ replacement order remain unchanged.
     clears active selection, advances authority once, and returns requested and
     applied rows, one authoritative frame, and the next bounded row window or
     edge.
+  - During DEC 2026 synchronized output, Orbit holds at most one unresolved
+    preview or commit until DEC 2026 ends or the existing one-second watchdog
+    fires. Orbit then re-evaluates authoritative routing and resolves the
+    request once without exposing partial state.
   - Negative movement goes toward older history, positive movement goes toward
     the live area, and movement clamps at history boundaries.
   - A successful semantic key that emits PTY bytes returns primary history to
@@ -245,13 +249,13 @@ replacement order remain unchanged.
 - **Important failures:**
   - Terminal-owned mouse tracking or alternate-screen mode 1007 returns
     terminal-owned without PTY input, mutation, or revision advance.
-  - Future authority, synchronized output, malformed or out-of-range distance,
-    and pressure fail before mutation. Lagging relative preview and scroll
-    revisions resolve against current authority; stale selection and unrelated
-    coordinate- or phase-bound input remain strict.
-- **Owner:** Orbit's semantic interaction owner with libghostty's native
-  viewport, byte-budgeted history, one canonical row extractor, and bounded
-  output queue.
+  - Future authority, a second unresolved request, malformed or out-of-range
+    distance, and pressure fail before mutation. Lagging relative preview and
+    scroll revisions resolve against current authority; stale selection and
+    unrelated coordinate- or phase-bound input remain strict.
+- **Owner:** Orbit's semantic interaction and synchronized-presentation owners
+  with libghostty's native viewport, byte-budgeted history, one canonical row
+  extractor, and bounded output queue.
 - **Consumes:** Canonical ORBS v10 with unchanged bytes and values; Venus
   `bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29` and Eon
   `71e8f5a8cac938ed7f065890c83d9376551f6014` consume exact Orbit
@@ -261,6 +265,8 @@ replacement order remain unchanged.
   wheels retain their existing typed terminal-routed or one-row behavior.
 - **Proof:** `a65e199e16e97330175e314cacf791fa00f53069`
   - **Environment:** x86_64 Linux
+  - **Open proof:** Exact split synchronized-output deferral and installed Codex
+    dogfood remain required before promotion back to Proved.
   - **Evidence:**
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)

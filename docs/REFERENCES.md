@@ -238,6 +238,16 @@ prerequisite for the current single-session architecture.
   outcome.
   It does not expose arbitrary history or adopt the comparison projects'
   same-process engines, caches, multiplexers, or renderers.
+- OpenAI Codex
+  [`0d226929622ce177b56e35d09cf39dd001721466`](https://github.com/openai/codex/blob/0d226929622ce177b56e35d09cf39dd001721466/codex-rs/tui/src/tui.rs)
+  wraps TUI renders in crossterm synchronized updates. It supplies the producer
+  sequence for the ORB-C8 held-scroll proof. Alacritty
+  [`ede2ac144da4dec4c075bfa803aacf3b3739bce6`](https://github.com/alacritty/alacritty/blob/ede2ac144da4dec4c075bfa803aacf3b3739bce6/alacritty/src/event.rs)
+  applies scroll through its terminal grid, while WezTerm
+  [`27d55bef144f34a73e23585302838a36ec3aa30e`](https://github.com/wezterm/wezterm/blob/27d55bef144f34a73e23585302838a36ec3aa30e/term/src/screen.rs)
+  keeps stable row identity as history advances. Orbit preserves that owner-side
+  serialization by holding one existing protocol request through synchronized
+  presentation; it adds no client history, retry outcome, or dependency.
 
 - [Ghostling](https://github.com/ghostty-org/ghostling) and
   [libghostty-rs](https://github.com/Uzaaft/libghostty-rs) show small clients

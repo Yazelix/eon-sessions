@@ -183,6 +183,21 @@ pub(crate) fn handle_client_message(
     Ok(true)
 }
 
+fn defer_vertical(
+    client: &mut Client,
+    presentation: &mut Presentation,
+    request: ClientMessage,
+) -> Result<bool> {
+    if presentation.defer_vertical(request) {
+        Ok(true)
+    } else {
+        client.fail(
+            FailureCode::InvalidInput,
+            "vertical interaction is already deferred".into(),
+        )
+    }
+}
+
 fn vertical_wheel_direction(button: Option<MouseButton>) -> Option<VerticalDirection> {
     match button {
         Some(MouseButton::Four) => Some(VerticalDirection::Up),
@@ -201,7 +216,7 @@ fn handle_vertical_preview(
     frame_revision: u64,
     direction: VerticalDirection,
     terminal: &Terminal<'static, '_>,
-    presentation: &Presentation,
+    presentation: &mut Presentation,
 ) -> Result<bool> {
     if frame_revision > presentation.revision {
         return client.fail(
@@ -213,7 +228,14 @@ fn handle_vertical_preview(
         PreviewOutcome::TerminalRouted
     } else {
         if terminal.mode(Mode::SYNC_OUTPUT)? {
-            return client.fail(FailureCode::Terminal, "presentation is synchronized".into());
+            return defer_vertical(
+                client,
+                presentation,
+                ClientMessage::PreviewVertical {
+                    frame_revision,
+                    direction,
+                },
+            );
         }
         match viewport_preview(terminal, presentation, direction) {
             Ok(outcome) => outcome,
@@ -303,7 +325,14 @@ fn handle_vertical_scroll(
         return client.push_message(&outcome);
     }
     if terminal.mode(Mode::SYNC_OUTPUT)? {
-        return client.fail(FailureCode::Terminal, "presentation is synchronized".into());
+        return defer_vertical(
+            client,
+            presentation,
+            ClientMessage::ScrollVertical {
+                frame_revision,
+                rows,
+            },
+        );
     }
     if !client.can_push_scroll_outcome() {
         return client.fail(
@@ -2005,33 +2034,25 @@ mod tests {
         terminal.vt_write(b"\x1b[?2026h");
         let held_revision = presentation.revision;
         let held_offset = terminal.scrollbar()?.offset;
-        for message in [
-            ClientMessage::PreviewVertical {
-                frame_revision: held_revision,
-                direction: VerticalDirection::Up,
-            },
+        assert!(handle_client_message(
+            &mut client,
             wheel(MouseButton::Four),
-        ] {
-            assert!(handle_client_message(
-                &mut client,
-                message,
-                &mut terminal,
-                Some(&pty),
-                &mut size,
-                &writes,
-                &mut presentation,
-                &mut selection,
-            )?);
-            assert!(matches!(
-                flush_message(&mut client, &mut peer)?,
-                ServerMessage::Failure(Failure {
-                    code: FailureCode::Terminal,
-                    ..
-                })
-            ));
-            assert_eq!(presentation.revision, held_revision);
-            assert_eq!(terminal.scrollbar()?.offset, held_offset);
-        }
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::Terminal,
+                ..
+            })
+        ));
+        assert_eq!(presentation.revision, held_revision);
+        assert_eq!(terminal.scrollbar()?.offset, held_offset);
         terminal.vt_write(b"\x1b[?2026l");
         terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Delta(-1));
         let key = ClientMessage::Key(KeyEvent {
@@ -2368,16 +2389,6 @@ mod tests {
         assert!(writes.borrow().is_empty());
         assert_eq!(presentation.revision, stable_revision);
         terminal.vt_write(b"\x1b[?1007l\x1b[?1049l");
-
-        terminal.vt_write(b"\x1b[?2026h");
-        assert!(matches!(
-            scroll!(-8),
-            ServerMessage::Failure(Failure {
-                code: FailureCode::Terminal,
-                ..
-            })
-        ));
-        terminal.vt_write(b"\x1b[?2026l");
 
         let (mut blocked, _) = attached_client()?;
         fill_output(&mut blocked)?;

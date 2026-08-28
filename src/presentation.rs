@@ -405,6 +405,25 @@ mod tests {
         }
     }
 
+    fn expect_no_message(reader: &mut BufReader<UnixStream>, detail: &str) -> TestResult {
+        reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(100)))?;
+        match read_message(reader) {
+            Err(error)
+                if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    )
+                }) =>
+            {
+                Ok(())
+            }
+            result => Err(format!("{detail}: {result:?}").into()),
+        }
+    }
+
     fn cell(frame: &Frame, x: usize, y: usize) -> &ProtocolCell {
         &frame.rows[y].cells[x]
     }
@@ -576,14 +595,18 @@ mod tests {
         let payload = directory.0.join("payload");
         let emitted = directory.0.join("emitted");
         let end = directory.0.join("end");
+        let timeout = directory.0.join("timeout");
+        let timeout_held = directory.0.join("timeout-held");
         let stop = directory.0.join("stop");
         let script = format!(
-            "stty raw -echo; while [ ! -e '{begin}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?2026h\\033[6n'; dd bs=1 count=6 of=/dev/null 2>/dev/null; : > '{parsed}'; while [ ! -e '{payload}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033]52;c;c3luY2VkIGNvcHk=\\033\\\\'; dd if=/dev/zero bs=16384 count=1 2>/dev/null | tr '\\000' X; printf '\\033]2;sync-final\\033\\\\'; : > '{emitted}'; while [ ! -e '{end}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?2026l'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
+            "stty raw -echo; while [ ! -e '{begin}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?2026h\\033[6n'; dd bs=1 count=6 of=/dev/null 2>/dev/null; : > '{parsed}'; while [ ! -e '{payload}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033]52;c;c3luY2VkIGNvcHk=\\033\\\\'; dd if=/dev/zero bs=16384 count=1 2>/dev/null | tr '\\000' X; printf '\\033]2;sync-final\\033\\\\'; : > '{emitted}'; while [ ! -e '{end}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?2026l'; while [ ! -e '{timeout}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; [ -e '{stop}' ] && exit; printf '\\033[?2026h\\033]2;sync-timeout\\033\\\\\\033[H\\033[6n'; dd bs=1 count=6 of=/dev/null 2>/dev/null; : > '{timeout_held}'; while [ ! -e '{stop}' ]; do sleep 0.01; done",
             begin = begin.display(),
             parsed = parsed.display(),
             payload = payload.display(),
             emitted = emitted.display(),
             end = end.display(),
+            timeout = timeout.display(),
+            timeout_held = timeout_held.display(),
             stop = stop.display(),
         );
         let server = Server::start(
@@ -595,22 +618,10 @@ mod tests {
         let (mut reader, initial) = attach(&socket)?;
         fs::write(&begin, b"begin")?;
         wait_file(&parsed)?;
-        reader
-            .get_mut()
-            .set_read_timeout(Some(Duration::from_millis(100)))?;
-        match read_message(&mut reader) {
-            Err(error)
-                if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
-                    matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    )
-                }) => {}
-            Ok(Some(ServerMessage::Frame(_))) => {
-                return Err("synchronized output published an intermediate frame".into());
-            }
-            result => return Err(format!("unexpected held-output result: {result:?}").into()),
-        }
+        expect_no_message(
+            &mut reader,
+            "synchronized output published an intermediate message",
+        )?;
 
         reader
             .get_mut()
@@ -624,13 +635,67 @@ mod tests {
                 text: "synced copy".into(),
             })
         );
+        let scroll = encode_client_message(&ClientMessage::ScrollVertical {
+            frame_revision: initial.revision,
+            rows: -6,
+        })?;
+        reader.get_mut().write_all(&scroll)?;
+        expect_no_message(&mut reader, "synchronized scroll was not held")?;
+        let second = encode_client_message(&ClientMessage::PreviewVertical {
+            frame_revision: initial.revision,
+            direction: session::VerticalDirection::Up,
+        })?;
+        reader.get_mut().write_all(&second)?;
+        reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(2)))?;
+        assert!(matches!(
+            read_message(&mut reader)?,
+            Some(ServerMessage::Failure(session::Failure {
+                code: session::FailureCode::InvalidInput,
+                ..
+            }))
+        ));
+
         fs::write(&end, b"end")?;
-        let Some(ServerMessage::Frame(frame)) = read_message(&mut reader)? else {
-            return Err("synchronized output did not finish with one frame".into());
+        let released = read_message(&mut reader)?;
+        let Some(ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+            requested_rows: -6,
+            applied_rows: -6,
+            frame,
+            ..
+        })) = released
+        else {
+            return Err("synchronized output did not finish with one scroll outcome".into());
         };
-        assert_eq!(frame.revision, initial.revision + 1);
+        assert_eq!(frame.revision, initial.revision + 2);
         assert_eq!(frame.title, "sync-final");
         assert!(cells(&frame).any(|cell| cell.text == "X"));
+
+        fs::write(&timeout, b"timeout")?;
+        wait_file(&timeout_held)?;
+        let preview = encode_client_message(&ClientMessage::PreviewVertical {
+            frame_revision: frame.revision,
+            direction: session::VerticalDirection::Up,
+        })?;
+        reader.get_mut().write_all(&preview)?;
+        expect_no_message(&mut reader, "watchdog preview was not held")?;
+        reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(2)))?;
+        let Some(ServerMessage::Frame(timeout_frame)) = read_message(&mut reader)? else {
+            return Err("watchdog did not release one complete frame".into());
+        };
+        assert_eq!(timeout_frame.revision, frame.revision + 1);
+        assert_eq!(timeout_frame.title, "sync-timeout");
+        assert!(matches!(
+            read_message(&mut reader)?,
+            Some(ServerMessage::VerticalPreview(session::VerticalPreview {
+                frame_revision,
+                direction: session::VerticalDirection::Up,
+                ..
+            })) if frame_revision == timeout_frame.revision
+        ));
 
         server.finish()?;
         assert_eq!(
