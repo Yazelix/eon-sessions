@@ -140,7 +140,7 @@ release instead of failing the client gesture. The owner loop processes one PTY
 read per readiness turn, and the shared terminal-response and semantic-input
 backlog has a fixed byte bound. Pressure rejects a whole new semantic input and
 closes that client instead of retaining or partially
-delivering unbounded data. The co-located real-PTY proof in
+delivering unbounded data. The real-PTY proof in
 [`src/presentation.rs`](src/presentation.rs) covers output before attach,
 ordered revisions, alternate-screen rich state, restoration of an inactive
 primary screen with pending wrap, split CSI, UTF-8, and APC input, a non-reading
