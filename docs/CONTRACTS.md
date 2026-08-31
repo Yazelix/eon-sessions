@@ -62,6 +62,12 @@ selection and repeat-click classification through libghostty-tracked content
 movement. It preserves every other accepted Orbit contract and the exact wire
 bytes.
 
+Accepted Orbit `91999d79546422b49bdbc124166a65859d0bd872` hardens ORB-C9
+under unchanged ORBS v10 so a Begin from an already-presented, non-future
+revision resolves against current authority instead of racing continuous PTY
+output. It preserves every other accepted Orbit contract and the exact wire
+bytes.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -350,7 +356,7 @@ bytes.
 - **Boundary:** Custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
-- **Proof:** `61c1dc0bc4c9fc3b592058ff8fa5f6cd7b957046`
+- **Proof:** `91999d79546422b49bdbc124166a65859d0bd872`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_selection_accepts_presented_input_and_freezes_copy`](../src/interaction.rs)
@@ -359,9 +365,9 @@ bytes.
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** The lagging-Begin correction remains an uncommitted candidate.
-  Exact Venus and Eon adoption plus native Wayland dogfood remain required
-  before the compatible-live-output behavior can be promoted to `Proved`.
+- **Open proof:** Exact Venus and Eon adoption plus native Wayland dogfood remain
+  required before the compatible-live-output behavior can be promoted to
+  `Proved`.
 
 ## ORB-C10 — Eon terminal identity
 

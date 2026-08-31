@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `91999d79546422b49bdbc124166a65859d0bd872` hardens `ORB-C9`
+  under unchanged ORBS v10: a selection Begin naming an already-presented,
+  non-future frame resolves once against current authoritative state instead of
+  racing continuous PTY output. Future revisions and existing geometry,
+  routing, pressure, and cancellation checks remain strict; Venus and Eon adopt
+  the owner proof separately.
 - Accepted Orbit `61c1dc0bc4c9fc3b592058ff8fa5f6cd7b957046` changes `ORB-C9`
   under unchanged ORBS v10: compatible PTY output preserves active host
   selection and repeat-click classification while libghostty tracks content
