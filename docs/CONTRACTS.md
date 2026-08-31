@@ -56,6 +56,12 @@ under unchanged ORBS v10 so one relative preview or signed-scroll request held
 during DEC 2026 synchronized output resolves after normal or watchdog release.
 It preserves every other accepted Orbit contract and the exact wire bytes.
 
+Accepted Orbit `61c1dc0bc4c9fc3b592058ff8fa5f6cd7b957046` changes ORB-C9
+under unchanged ORBS v10 so compatible PTY output preserves active host
+selection and repeat-click classification through libghostty-tracked content
+movement. It preserves every other accepted Orbit contract and the exact wire
+bytes.
+
 ## ORB-C1 — Session survival across client loss
 
 - **Status:** Proved
@@ -341,19 +347,18 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
 - **Boundary:** Custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
-- **Proof:** `70861097a825c2fbfaea53a8ca9437f45e8602eb`
+- **Proof:** `61c1dc0bc4c9fc3b592058ff8fa5f6cd7b957046`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
+    - [`active_selection_tracks_scrolling_pty_output`](../src/interaction.rs)
     - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** The prior proof intentionally clears selection on every PTY mutation.
-  The compatible-live-output behavior is a candidate under
-  `orb-preserve-selection-through-live-output-8b8`; it still needs an accepted
-  Orbit proof commit followed by exact Venus and Eon adoption and native Wayland
-  dogfood.
+- **Open proof:** Exact Venus and Eon adoption plus native Wayland dogfood remain
+  required before the compatible-live-output behavior can be promoted to
+  `Proved`.
 
 ## ORB-C10 — Eon terminal identity
 

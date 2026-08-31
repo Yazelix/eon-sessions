@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `61c1dc0bc4c9fc3b592058ff8fa5f6cd7b957046` changes `ORB-C9`
+  under unchanged ORBS v10: compatible PTY output preserves active host
+  selection and repeat-click classification while libghostty tracks content
+  movement, including into scrollback. Newly enabled terminal mouse tracking
+  or an invalid tracked anchor still cancels the gesture safely; Venus and Eon
+  adopt the owner proof separately.
 - Accepted Orbit `64b225eb249490c9075894814942652a8b9d6192` changes `ORB-C8`
   under unchanged ORBS v10: one relative preview or signed-scroll request held
   during DEC 2026 synchronized output resolves once after normal or watchdog
