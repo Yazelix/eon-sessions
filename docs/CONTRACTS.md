@@ -282,7 +282,7 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version ORBS v10 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence using bounded surface coordinates and current modifiers;
@@ -307,8 +307,11 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
   - Orbit discards wholly unsent presentation frames from earlier host drag
     phases before publishing the current phase, so release cannot replay an
     obsolete selection-frame backlog.
-  - A non-selection terminal mutation clears active selection and its
-    presentation and resets gesture state before mutation; read-only preview
+  - Compatible PTY output preserves an active host gesture, repeat-click
+    classification, and libghostty-tracked selection as content moves, including
+    into scrollback. Output that newly enables terminal mouse tracking or leaves
+    no valid tracked gesture anchor, including on a different active screen,
+    clears the active host selection and resets gesture state; read-only preview
     does not.
   - An ordered client cancel resets an abandoned gesture and clears its partial
     selected presentation without producing copied text.
@@ -346,6 +349,11 @@ It preserves every other accepted Orbit contract and the exact wire bytes.
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
+- **Open proof:** The prior proof intentionally clears selection on every PTY mutation.
+  The compatible-live-output behavior is a candidate under
+  `orb-preserve-selection-through-live-output-8b8`; it still needs an accepted
+  Orbit proof commit followed by exact Venus and Eon adoption and native Wayland
+  dogfood.
 
 ## ORB-C10 — Eon terminal identity
 

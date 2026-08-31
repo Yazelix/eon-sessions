@@ -41,7 +41,7 @@ pub(crate) struct SelectionState {
     gesture: Option<GestureState>,
     route: Option<PointerRoute>,
     copied: Option<String>,
-    visible: bool,
+    has_selection: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -651,7 +651,7 @@ fn handle_terminal_pointer(
     presentation: &mut Presentation,
     state: &mut SelectionState,
 ) -> Result<bool> {
-    let changed = matches!(action, SelectionAction::Begin { .. }) && state.visible;
+    let changed = matches!(action, SelectionAction::Begin { .. }) && state.has_selection;
     let response = if matches!(action, SelectionAction::Finish { .. }) {
         ServerMessage::SelectionFinished {
             frame_revision: presentation.revision,
@@ -761,7 +761,7 @@ fn apply_selection_gesture(
     };
 
     terminal.set_selection(selected.as_ref())?;
-    state.visible = selected.is_some();
+    state.has_selection = selected.is_some();
 
     if matches!(action, SelectionAction::Begin { .. }) {
         state.copied = None;
@@ -772,7 +772,7 @@ fn apply_selection_gesture(
             .apply(&mut gesture.gesture, terminal, Some(grid_ref))?;
         state.route = None;
         state.copied = state
-            .visible
+            .has_selection
             .then(|| format_selection(terminal))
             .transpose()?;
     }
@@ -819,7 +819,7 @@ fn clear_selection(
     state: &mut SelectionState,
     forget_copy: bool,
 ) -> Result<bool> {
-    let changed = state.visible;
+    let changed = state.has_selection;
     if changed {
         terminal.set_selection(None)?;
     }
@@ -829,7 +829,7 @@ fn clear_selection(
     if state.route == Some(PointerRoute::Host) {
         state.route = None;
     }
-    state.visible = false;
+    state.has_selection = false;
     if forget_copy {
         state.copied = None;
     }
@@ -851,8 +851,25 @@ pub(crate) fn apply_pty_output(
     state: &mut SelectionState,
     bytes: &[u8],
 ) -> Result {
-    clear_selection(terminal, state, false)?;
+    let preserve_host = state.route == Some(PointerRoute::Host)
+        || state.has_selection
+        || match &state.gesture {
+            Some(gesture) => gesture.gesture.click_count(terminal)? != 0,
+            None => false,
+        };
+    let mouse_tracking = preserve_host
+        .then(|| terminal.is_mouse_tracking())
+        .transpose()?;
     terminal.vt_write(bytes);
+    if let Some(mouse_tracking) = mouse_tracking {
+        let anchor_valid = match &state.gesture {
+            Some(gesture) => gesture.gesture.anchor(terminal)?.is_some(),
+            None => false,
+        };
+        if (!mouse_tracking && terminal.is_mouse_tracking()?) || !anchor_valid {
+            clear_selection(terminal, state, false)?;
+        }
+    }
     Ok(())
 }
 
@@ -1100,7 +1117,7 @@ mod tests {
                 )?);
                 assert_eq!(presentation.revision, unchanged);
                 assert!(selection.route.is_none());
-                assert!(!selection.visible);
+                assert!(!selection.has_selection);
                 assert!(selection.copied.is_none());
                 assert!(matches!(
                     flush_message(&mut client, &mut peer)?,
@@ -1182,13 +1199,19 @@ mod tests {
             modifiers: Modifiers::empty(),
         });
         apply_pty_output(&mut terminal, &mut selection, b"!")?;
-        assert!(selection.route.is_none());
-        assert!(!selection.visible);
+        assert_eq!(selection.route, Some(PointerRoute::Host));
         assert!(selection.copied.is_none());
-        reject!(session::SelectionAction::Finish {
+        select!(session::SelectionAction::Finish {
             position: position(size, 7, 0),
             modifiers: Modifiers::empty(),
         });
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Selection,
+                text: "alpha 界".into(),
+            }
+        );
 
         select!(session::SelectionAction::Begin {
             frame_revision: presentation.revision,
@@ -1232,7 +1255,7 @@ mod tests {
 
         apply_pty_output(&mut terminal, &mut selection, b"later")?;
         assert!(
-            !Extractor::new()?
+            Extractor::new()?
                 .frame(presentation.revision + 1, &terminal)?
                 .rows[0]
                 .cells
@@ -1266,7 +1289,7 @@ mod tests {
         assert_eq!(terminal.active_screen()?, Screen::Alternate);
         assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
         assert!(selection.route.is_none());
-        assert!(!selection.visible);
+        assert!(!selection.has_selection);
         Ok(())
     }
 
@@ -1311,7 +1334,7 @@ mod tests {
 
         let selected = selection_between(&terminal, (0, 0), (0, 0))?;
         terminal.set_selection(Some(&selected))?;
-        selection.visible = true;
+        selection.has_selection = true;
         terminal.set_mode(Mode::SYNC_OUTPUT, true)?;
         let stable_revision = presentation.revision;
         send!(SelectionAction::Begin {
@@ -1439,7 +1462,7 @@ mod tests {
 
         let selected = selection_between(&terminal, (0, 0), (0, 0))?;
         terminal.set_selection(Some(&selected))?;
-        selection.visible = true;
+        selection.has_selection = true;
         let saved_revision = presentation.revision;
         presentation.revision = u64::MAX;
         assert!(handle_client_message(
@@ -1465,7 +1488,7 @@ mod tests {
             }) if detail == "presentation revision exhausted"
         ));
         assert!(writes.borrow().is_empty());
-        assert!(selection.visible);
+        assert!(selection.has_selection);
         assert!(selection.route.is_none());
         presentation.revision = saved_revision;
 
@@ -1507,7 +1530,7 @@ mod tests {
         )?);
         assert_eq!(writes.borrow().len(), MAX_PTY_WRITE_BYTES);
         assert!(selection.route.is_none());
-        assert!(selection.visible);
+        assert!(selection.has_selection);
         assert_eq!(
             flush_message(&mut client, &mut peer)?,
             ServerMessage::Failure(Failure {
@@ -1565,9 +1588,71 @@ mod tests {
         )?);
         assert_eq!(presentation.revision, stable_revision);
         assert_eq!(selection.route, Some(PointerRoute::Host));
-        assert!(selection.visible);
+        assert!(selection.has_selection);
         assert!(selection.copied.is_none());
         assert!(writes.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn active_selection_tracks_scrolling_pty_output() -> Result {
+        let size = SurfaceSize {
+            cols: 12,
+            rows: 4,
+            screen_width: 12 * INITIAL_SIZE.cell_width,
+            screen_height: 4 * INITIAL_SIZE.cell_height,
+            ..INITIAL_SIZE
+        };
+        let mut terminal = terminal_with_scrollback(4096)?;
+        terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
+        terminal.vt_write(b"alpha beta\r\nsecond\r\nthird\r\nfourth");
+        let mut selection = SelectionState::default();
+
+        macro_rules! gesture {
+            ($action:expr) => {{
+                let action = $action;
+                let position = match action {
+                    SelectionAction::Begin { position, .. }
+                    | SelectionAction::Update { position, .. }
+                    | SelectionAction::Finish { position, .. } => position,
+                    SelectionAction::Cancel | SelectionAction::Copy => unreachable!(),
+                };
+                let point = viewport_point(position, size).expect("test position is in bounds");
+                let grid_ref = terminal.grid_ref(Point::Viewport(point))?;
+                apply_selection_gesture(action, grid_ref, &terminal, size, &mut selection)?;
+            }};
+        }
+
+        gesture!(SelectionAction::Begin {
+            frame_revision: 1,
+            position: position(size, 0, 0),
+            time_ns: 1,
+            modifiers: Modifiers::empty(),
+        });
+        gesture!(SelectionAction::Update {
+            position: position(size, 5, 0),
+            modifiers: Modifiers::empty(),
+        });
+        apply_pty_output(&mut terminal, &mut selection, b"\r\nlive")?;
+        assert_eq!(selection.route, Some(PointerRoute::Host));
+        assert_eq!(format_selection(&terminal)?, "alpha");
+        gesture!(SelectionAction::Finish {
+            position: position(size, 6, 0),
+            modifiers: Modifiers::empty(),
+        });
+        assert_eq!(selection.copied.as_deref(), Some("alpha beta\nsecond"));
+        apply_pty_output(&mut terminal, &mut selection, b"\x1b[?1000h\x1b[?1006h")?;
+        assert!(!selection.has_selection);
+        assert_eq!(selection.copied.as_deref(), Some("alpha beta\nsecond"));
+        assert_eq!(
+            selection
+                .gesture
+                .as_ref()
+                .expect("selection created a gesture")
+                .gesture
+                .click_count(&terminal)?,
+            0
+        );
         Ok(())
     }
 
@@ -1628,6 +1713,7 @@ mod tests {
             position: position(size, 1, 0),
             modifiers: Modifiers::empty(),
         });
+        apply_pty_output(&mut terminal, &mut selection, b"\x1b[4;1Hlive output")?;
         gesture!(SelectionAction::Begin {
             frame_revision: 3,
             position: position(size, 1, 0),
@@ -1644,6 +1730,7 @@ mod tests {
         });
         assert_eq!(selection.copied.as_deref(), Some("alpha beta"));
 
+        apply_pty_output(&mut terminal, &mut selection, b"\x1b[4;1Hmore output")?;
         gesture!(SelectionAction::Begin {
             frame_revision: 4,
             position: position(size, 1, 0),
@@ -1689,12 +1776,12 @@ mod tests {
             position: position(size, 5, 0),
             modifiers: Modifiers::empty(),
         });
-        assert!(selection.visible);
+        assert!(selection.has_selection);
         gesture!(SelectionAction::Update {
             position: position(size, 0, 0),
             modifiers: Modifiers::empty(),
         });
-        assert!(!selection.visible);
+        assert!(!selection.has_selection);
         gesture!(SelectionAction::Finish {
             position: position(size, 0, 0),
             modifiers: Modifiers::empty(),
@@ -1868,7 +1955,7 @@ mod tests {
             terminal.set_selection(Some(&selected))?;
         }
         selection.route = Some(PointerRoute::Host);
-        selection.visible = true;
+        selection.has_selection = true;
         assert!(handle_client_message(
             &mut client,
             ClientMessage::PreviewVertical {
@@ -1906,7 +1993,7 @@ mod tests {
         );
         assert_eq!(presentation.revision, stable_revision);
         assert_eq!(terminal.scrollbar()?.offset, stable_offset);
-        assert!(selection.visible);
+        assert!(selection.has_selection);
 
         assert!(handle_client_message(
             &mut client,
@@ -1957,7 +2044,7 @@ mod tests {
         assert_eq!(terminal.scrollbar()?.offset, stable_offset);
 
         viewport_wheel!(MouseButton::Four, -1);
-        assert!(!selection.visible);
+        assert!(!selection.has_selection);
         let scrolled = terminal.scrollbar()?;
         assert_eq!(scrolled.offset + 1, live.offset);
 
@@ -2221,7 +2308,7 @@ mod tests {
         let selected = selection_between(&terminal, (0, 0), (1, 0))?;
         terminal.set_selection(Some(&selected))?;
         selection.route = Some(PointerRoute::Host);
-        selection.visible = true;
+        selection.has_selection = true;
 
         let ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
             requested_rows: -32,
@@ -2234,7 +2321,7 @@ mod tests {
         };
         assert_eq!(frame.revision, presentation.revision);
         assert_eq!(terminal.scrollbar()?.offset + 32, live);
-        assert!(!selection.visible);
+        assert!(!selection.has_selection);
         assert!(client.output_is_empty());
 
         assert!(handle_client_message(
