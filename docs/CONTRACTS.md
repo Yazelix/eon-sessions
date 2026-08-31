@@ -261,9 +261,9 @@ bytes.
   - Terminal-owned mouse tracking or alternate-screen mode 1007 returns
     terminal-owned without PTY input, mutation, or revision advance.
   - Future authority, a second unresolved request, malformed or out-of-range
-    distance, and pressure fail before mutation. Lagging relative preview and
-    scroll revisions resolve against current authority; stale selection and
-    unrelated coordinate- or phase-bound input remain strict.
+    distance, and pressure fail before mutation. Lagging relative preview,
+    scroll, and selection revisions resolve against current authority; future
+    revisions and unrelated coordinate- or phase-bound input remain strict.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
@@ -292,13 +292,16 @@ bytes.
 - **Consumer:** One healthy exact-version ORBS v10 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence using bounded surface coordinates and current modifiers;
-  Begin names the exact current frame revision and a monotonic press timestamp.
+  Begin names a frame the client presented and a monotonic press timestamp.
 - **Result:**
   - Orbit chooses host selection when authoritative terminal mouse tracking is
     absent or Shift is present, and keeps that route through Finish or Cancel.
   - Orbit alone resolves pointer positions, click repetition, cell, word, and
     logical-line boundaries, selected presentation, and copied text through
     libghostty's default gesture behavior.
+  - A Begin from an already-presented, non-future revision resolves once against
+    current authoritative terminal state, so intervening PTY output cannot
+    starve selection admission.
   - One press-drag selects cells, two select words, and three select logical
     lines; the repeat distance is one cell width and the repeat interval is 500
     milliseconds.
@@ -325,7 +328,7 @@ bytes.
     client loss or exit clears them without resetting the ORB-C8 viewport.
 - **Important failures:**
   - A backwards press timestamp safely starts a new single-click sequence.
-  - Stale revisions, invalid surface coordinates or phase order, formatting
+  - Future revisions, invalid surface coordinates or phase order, formatting
     overflow, pressure, focus loss, or pointer capture loss reject or explicitly
     cancel the gesture without partial state, text, mixed routing, or invented
     terminal input.
@@ -350,15 +353,15 @@ bytes.
 - **Proof:** `61c1dc0bc4c9fc3b592058ff8fa5f6cd7b957046`
   - **Environment:** x86_64 Linux
   - **Evidence:**
-    - [`authoritative_selection_rejects_stale_input_and_freezes_copy`](../src/interaction.rs)
+    - [`authoritative_selection_accepts_presented_input_and_freezes_copy`](../src/interaction.rs)
     - [`active_selection_tracks_scrolling_pty_output`](../src/interaction.rs)
     - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus and Eon adoption plus native Wayland dogfood remain
-  required before the compatible-live-output behavior can be promoted to
-  `Proved`.
+- **Open proof:** The lagging-Begin correction remains an uncommitted candidate.
+  Exact Venus and Eon adoption plus native Wayland dogfood remain required
+  before the compatible-live-output behavior can be promoted to `Proved`.
 
 ## ORB-C10 — Eon terminal identity
 

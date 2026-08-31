@@ -35,9 +35,11 @@ Orbit chooses terminal input at left press when authoritative mouse tracking is
 active and Shift is absent; otherwise it chooses host selection. That route is
 fixed through release or cancel. Terminal phases reuse Orbit's terminal-aware
 mouse encoder, while host phases delegate cell, word, and logical-line gesture
-semantics to libghostty. Orbit publishes selected cells through normal frames
-and returns bounded plain text frozen at release for the semantic selection
-clipboard; explicit copy targets the ordinary clipboard.
+semantics to libghostty. A host Begin from an already-presented, non-future
+revision resolves once against current authoritative state, so intervening PTY
+output cannot starve selection admission. Orbit publishes selected cells
+through normal frames and returns bounded plain text frozen at release for the
+semantic selection clipboard; explicit copy targets the ordinary clipboard.
 That frozen value survives later terminal output, resize or reflow, and active-
 screen transitions; a new selection, client loss, or exit clears it.
 Its canonical key validation rejects C0,
@@ -507,10 +509,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 14,086 |
+| Product Rust source and tests | 14,096 |
 | Governance Rust tool and tests | 767 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixtures | 104 |
-| **Total owned Rust** | **14,853** |
-| **Total owned implementation source** | **15,606** |
+| **Total owned Rust** | **14,863** |
+| **Total owned implementation source** | **15,616** |

@@ -521,10 +521,10 @@ fn handle_selection(
             modifiers,
             ..
         } => {
-            if frame_revision != presentation.revision {
+            if frame_revision > presentation.revision {
                 return client.fail(
                     FailureCode::InvalidInput,
-                    "selection frame revision is stale".into(),
+                    "selection frame revision is ahead of authority".into(),
                 );
             }
             if state.route.is_some() {
@@ -1066,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    fn authoritative_selection_rejects_stale_input_and_freezes_copy() -> Result {
+    fn authoritative_selection_accepts_presented_input_and_freezes_copy() -> Result {
         let mut text = terminal_with_scrollback(100)?;
         text.vt_write(b"A\r\n\r\nZ\r\nB\x1b[3;1H\x1b[X");
         for (start, end, expected) in [
@@ -1159,8 +1159,18 @@ mod tests {
                 frame
             }};
         }
+        let presented_revision = presentation.revision;
+        apply_pty_output(&mut terminal, &mut selection, b"live")?;
+        presentation.revision = next_revision(presentation.revision)?;
+        select!(session::SelectionAction::Begin {
+            frame_revision: presented_revision,
+            position: position(size, 0, 0),
+            time_ns: 0,
+            modifiers: Modifiers::empty(),
+        });
+        select!(session::SelectionAction::Cancel);
         reject!(session::SelectionAction::Begin {
-            frame_revision: 0,
+            frame_revision: next_revision(presentation.revision)?,
             position: position(size, 0, 0),
             time_ns: 0,
             modifiers: Modifiers::empty(),
