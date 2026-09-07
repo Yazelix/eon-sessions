@@ -294,7 +294,7 @@ bytes.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version ORBS v10 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence using bounded surface coordinates and current modifiers;
@@ -350,14 +350,14 @@ bytes.
   owns native event delivery and clipboard effects.
 - **Consumes:** Canonical ORBS v10 and ORB-C7 bounded-pressure behavior; accepted
   ORBS v9 remains the prior routing and host-selection proof. Venus
-  `1034817bbe2352fb4b1026bce6b1f02eedd67e37` and Eon
-  `df8e07462a8faf548b1afde89b77b96b8095b194` consume this behavior through
+  `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` and Eon
+  `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` consume this behavior through
   exact ORBS v10.
 - **Boundary:** Custom word separators or click
   thresholds, block selection, autoscroll, semantic command-output selection,
   search, graphics, and restart persistence are excluded.
 - **Proof:** `91999d79546422b49bdbc124166a65859d0bd872`
-  - **Environment:** x86_64 Linux
+  - **Environment:** x86_64 Linux; downstream installed Sway 1.12 native Wayland
   - **Evidence:**
     - [`authoritative_selection_accepts_presented_input_and_freezes_copy`](../src/interaction.rs)
     - [`active_selection_tracks_scrolling_pty_output`](../src/interaction.rs)
@@ -365,9 +365,14 @@ bytes.
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-- **Open proof:** Exact Venus and Eon adoption plus native Wayland dogfood remain
-  required before the compatible-live-output behavior can be promoted to
-  `Proved`.
+    - Eon `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` acceptance in
+      `eon-accept-live-output-input-nxh` composes this exact Orbit source and
+      Venus `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`. Installed EonTerm
+      passes cell/word/line drag and repeat-click selection, both clipboard
+      destinations, and explicit frozen copy while output and terminal replies
+      continue. Appends, DEC 2026 batches, and active-screen redraws retain
+      anchored history. This closes the downstream-adoption gap without
+      extending the selection scope above or proving other clipboard effects.
 
 ## ORB-C10 — Eon terminal identity
 
