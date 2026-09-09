@@ -13,6 +13,10 @@ fn frame() -> Frame {
         revision: 7,
         dimensions: Dimensions { cols: 1, rows: 1 },
         screen: Screen::Primary,
+        scroll_position: crate::ScrollPosition {
+            rows_from_live: 3,
+            history_rows: 9,
+        },
         title: "session".into(),
         working_directory: "/tmp".into(),
         capabilities: Capabilities {
@@ -270,7 +274,6 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    assert_eq!(VERSION, 10);
     let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
@@ -283,6 +286,12 @@ fn framing_is_incremental_strict_and_bounded() {
     }
 
     let mut corrupt = encoded.clone();
+    corrupt[4..6].copy_from_slice(&10_u16.to_le_bytes());
+    assert_eq!(
+        client_message_len(&corrupt),
+        Err(Error::UnsupportedVersion { version: 10 })
+    );
+    corrupt = encoded.clone();
     corrupt[0] ^= 1;
     assert_eq!(client_message_len(&corrupt), Err(Error::InvalidMagic));
     corrupt = encoded.clone();

@@ -7,30 +7,32 @@ an independent product on its current Mars and Zellij architecture.
 
 ## Status
 
-The completed `orb-bi4.1` proof rejects the released libghostty formatter as an
-exact terminal checkpoint. The `orb-bi4.2` implementation runs one real PTY
-shell and one authoritative libghostty terminal in a foreground Orbit process;
-a diagnostic client can disconnect and later reach the same live shell. The
-completed `orb-bi4.3` proof adds complete structured presentation frames and
-ordered revisions; Orbit does not render a terminal. The canonical ORBF v1
-values, bounded encoder and decoder, and strict complete-frame revision reducer
-live in the dependency-free `orbit-protocol` workspace library so Orbit and an
-exact-revision Venus consumer cannot drift into separate schemas. That
-consumer boundary is proved at
-`838b67652c4df1979e599b9c401ee664ffac66bd`.
-The same package owns accepted canonical ORBS v10 at
-`59975e9176f5caf8b78dc3273e88d9ecbb75dc3f`, replacing accepted ORBS v9 proof
-`aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`, including one input-capable
-attachment, one bounded read-only title/CWD observer, frames, lifecycle,
-semantic input, selection and copy, terminal clipboard writes, revision-carrying
-multi-row previews, typed vertical-wheel outcomes, and bounded signed
-whole-row viewport commits. The currently composed Venus and Eon sources
-consume exact accepted ORBS v10; independently composed Eonova does too. ORBS
-v10 replaces the generic Finish acknowledgement with one
-typed result naming the authoritative presentation revision at sequence
-completion. A client waits only when it has not presented that exact revision
-yet.
-Orbit's server and diagnostic client use only the canonical values.
+Orbit owns one real PTY and the authoritative libghostty terminal. A client can
+disconnect and later attach to the same live process. The dependency-free
+`orbit-protocol` library owns canonical ORBF v2 complete frames, their bounded
+codec and revision reducer, and the ORBS v11 session messages. Orbit renders no
+terminal and clients do not reconstruct terminal authority from raw output.
+
+Each frame carries `scroll_position.rows_from_live` and
+`scroll_position.history_rows`: current wrapped display-row counts, with history
+excluding the active viewport. Distance is zero at live bottom and cannot exceed
+retained history; both counts are zero on the alternate screen. Output, scrolling,
+resize/reflow, eviction, clear/reset and reattachment publish counts with the same
+revision as the cells. Engine extraction failure follows the existing attachment
+failure path instead of publishing an estimated position.
+
+ORBF v2 / ORBS v11 intentionally rejects the previous wire versions without an
+adapter. Producer proof is pending in `orb-scrollback-position-cpb`; a visible
+indicator and installed delivery belong to the Venus and Eon follow-up beads.
+Existing Venus and Eon compositions, including independent Eonova packaging,
+remain on their exact accepted ORBF v1 / ORBS v10 pins until coordinated updates.
+
+The session boundary includes one input-capable attachment, one bounded
+read-only title/CWD observer, frames, lifecycle, semantic input, selection/copy,
+terminal clipboard writes, revision-carrying row previews, typed wheel outcomes
+and bounded signed viewport commits. Selection completion names its authoritative
+frame revision so a client waits only until it presents that revision. Orbit's
+server and diagnostic client use these canonical values.
 Orbit chooses terminal input at left press when authoritative mouse tracking is
 active and Shift is absent; otherwise it chooses host selection. That route is
 fixed through release or cancel. Terminal phases reuse Orbit's terminal-aware
@@ -102,7 +104,7 @@ repository carries no permanent test target for the rejected reconstruction
 path. Orbit uses no fork, binding extension, compatibility wrapper, second
 terminal engine, or replay fallback.
 
-The focused Orbit terminal conformance corpus reuses seven authoritative unit
+The focused Orbit terminal conformance corpus reuses eight authoritative unit
 and real-PTY tests under one filter:
 
 ```sh
@@ -123,11 +125,11 @@ optional `serve --ansi-palette-v1 RGB,...` component input accepts exactly 16
 six-digit sRGB entries before the command separator. It replaces only
 libghostty palette indices 0 through 15 for that process; omission retains the
 built-in defaults, and ordinary OSC overrides and resets remain terminal-owned.
-The `orb-bi4.3` proof uses `RenderState::update` and its public row and cell
+The authoritative extractor uses `RenderState::update` and its public row and cell
 iterators to encode a complete versioned frame containing geometry, styled
 graphemes, colors and palette, cursor state, active screen, title, working
-directory, and hyperlinks. Version 1 explicitly advertises hyperlink support
-and declares Kitty graphics unsupported.
+directory, hyperlinks and scroll position. Frames explicitly advertise hyperlink
+support and declare Kitty graphics unsupported.
 
 Each frame has a 4 MiB and 100,000-cell bound. Nonblocking client output retains
 the initial frame and at most one coalesced latest frame when no non-frame
@@ -150,9 +152,9 @@ client during continuous PTY output, background-only erased cells, semantic
 interrupt fairness, and final-state convergence after reattach. The proof adds
 no dependency.
 
-[`crates/protocol`](crates/protocol) is the sole ORBF v1 format owner. Its
+[`crates/protocol`](crates/protocol) is the sole ORBF v2 format owner. Its
 strict decoder validates magic, version, dimensions, tags, reserved flags,
-UTF-8, cursor bounds, truncation, trailing bytes, and the 4 MiB/100,000-cell
+UTF-8, cursor/scroll bounds, truncation, trailing bytes, and the 4 MiB/100,000-cell
 limits before making payload-sized allocations. Canonical incremental size
 accounting prevents Orbit from retaining rows or cells beyond the same frame
 budget while it materializes authoritative state. Its rich owned-frame corpus
@@ -161,7 +163,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The accepted ORBS v10 producer uses a 12-byte explicit little-endian header with `ORBS`
+The ORBS v11 producer uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -206,7 +208,7 @@ the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v10 codec. An exact-version
+client and server use only the bounded ORBS v11 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
@@ -509,10 +511,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 14,096 |
+| Product Rust source and tests | 14,338 |
 | Governance Rust tool and tests | 767 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixtures | 104 |
-| **Total owned Rust** | **14,863** |
-| **Total owned implementation source** | **15,616** |
+| **Total owned Rust** | **15,105** |
+| **Total owned implementation source** | **15,858** |

@@ -12,21 +12,21 @@ use std::{fmt, str};
 pub mod management;
 pub mod session;
 
-/// Maximum decoded cell count accepted by ORBF v1.
+/// Maximum decoded cell count accepted by ORBF v2.
 pub const MAX_CELLS: usize = 100_000;
-/// Maximum encoded ORBF v1 payload size.
+/// Maximum encoded ORBF v2 payload size.
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 /// ORBF frame discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBF";
 /// The only protocol revision accepted by this package.
-pub const VERSION: u16 = 1;
-/// Number of RGB entries in an ORBF v1 palette.
+pub const VERSION: u16 = 2;
+/// Number of RGB entries in an ORBF v2 palette.
 pub const PALETTE_LEN: usize = 256;
 
 const ROW_FLAG_MASK: u8 = 0b0000_0111;
 const STYLE_FLAG_MASK: u16 = 0b0000_0011_1111_1111;
 const STRING_LENGTH_BYTES: usize = std::mem::size_of::<u32>();
-const FRAME_FIXED_BYTES: usize = 801;
+const FRAME_FIXED_BYTES: usize = 817;
 const ROW_FIXED_BYTES: usize = 1;
 const CELL_FIXED_BYTES: usize = 16;
 const MIN_FRAME_BYTES: usize =
@@ -56,7 +56,7 @@ pub enum Error {
     InvalidFlags { field: &'static str, value: u16 },
     /// An owned frame does not match its declared dimensions.
     InvalidShape { field: &'static str },
-    /// A string cannot be represented by the ORBF v1 length prefix.
+    /// A string cannot be represented by the ORBF v2 length prefix.
     StringTooLong { field: &'static str, length: usize },
     /// A complete frame revision is not strictly newer than the current one.
     RevisionNotNewer { current: u64, incoming: u64 },
@@ -131,9 +131,9 @@ pub enum Screen {
 /// Capabilities carried by this complete frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
-    /// Must be true in ORBF v1: frames carry hyperlink metadata.
+    /// Must be true in ORBF v2: frames carry hyperlink metadata.
     pub hyperlinks: bool,
-    /// Must be false in ORBF v1: Kitty graphics are unsupported.
+    /// Must be false in ORBF v2: Kitty graphics are unsupported.
     pub kitty_graphics: bool,
 }
 
@@ -250,7 +250,17 @@ pub struct Row {
     pub cells: Vec<Cell>,
 }
 
-/// One complete ORBF v1 presentation revision.
+/// Authoritative position in current wrapped display rows, not logical lines.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScrollPosition {
+    /// Distance from live bottom, bounded by `history_rows`; zero means live.
+    pub rows_from_live: u64,
+    /// Retained history excluding the active viewport. Both counts are zero
+    /// on the alternate screen and may change after output, pruning or reflow.
+    pub history_rows: u64,
+}
+
+/// One complete ORBF v2 presentation revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
     pub revision: u64,
@@ -261,17 +271,18 @@ pub struct Frame {
     pub capabilities: Capabilities,
     pub colors: Colors,
     pub cursor: Cursor,
+    pub scroll_position: ScrollPosition,
     pub rows: Vec<Row>,
 }
 
 impl Frame {
-    /// Encode this frame as canonical ORBF v1 bytes.
+    /// Encode this frame as canonical ORBF v2 bytes.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_frame(self)
     }
 }
 
-/// Incremental ORBF v1 byte accounting for bounded frame construction.
+/// Incremental ORBF v2 byte accounting for bounded frame construction.
 ///
 /// Producers use this before retaining variable-sized strings in an owned
 /// [`Frame`]. The final value is also checked by [`encode_frame`].
@@ -338,7 +349,8 @@ impl FrameSize {
     }
 }
 
-/// Retains frames with supported ORBF v1 capabilities, valid cell-width topology, and strictly increasing revisions.
+/// Retains frames with valid capabilities, scroll position, cell-width topology,
+/// and strictly increasing revisions.
 #[derive(Debug, Default)]
 pub struct FrameReducer {
     current: Option<Frame>,
@@ -350,9 +362,10 @@ impl FrameReducer {
         self.current.as_ref()
     }
 
-    /// Validate ORBF v1 capabilities and cell widths, then accept only a newer frame.
+    /// Validate canonical capabilities, scroll position and cell widths before admission.
     pub fn push(&mut self, frame: Frame) -> Result<&Frame> {
         validate_capabilities(frame.capabilities)?;
+        validate_scroll_position(frame.scroll_position, frame.screen)?;
         for row in &frame.rows {
             validate_cell_width_topology(row)?;
         }
@@ -368,7 +381,7 @@ impl FrameReducer {
         Ok(self.current.as_ref().expect("frame was stored"))
     }
 
-    /// Decode and accept one complete ORBF v1 frame.
+    /// Decode and accept one complete ORBF v2 frame.
     pub fn decode_and_push(&mut self, bytes: &[u8]) -> Result<&Frame> {
         self.push(decode_frame(bytes)?)
     }
@@ -379,7 +392,7 @@ impl FrameReducer {
     }
 }
 
-/// Encode one owned frame as canonical ORBF v1 bytes.
+/// Encode one owned frame as canonical ORBF v2 bytes.
 pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
     let encoded_size = validate_frame(frame)?;
     let mut encoder = Encoder(Vec::with_capacity(encoded_size));
@@ -412,6 +425,8 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
         encoder.u16(cursor.y)?;
         encoder.boolean(cursor.at_wide_tail)?;
     }
+    encoder.u64(frame.scroll_position.rows_from_live)?;
+    encoder.u64(frame.scroll_position.history_rows)?;
 
     for row in &frame.rows {
         encode_row(&mut encoder, row)?;
@@ -420,7 +435,7 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
     Ok(encoder.0)
 }
 
-/// Decode and strictly validate one complete ORBF v1 payload.
+/// Decode and strictly validate one complete ORBF v2 payload.
 pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(Error::FrameTooLarge { size: bytes.len() });
@@ -481,6 +496,11 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
         },
     };
 
+    let scroll_position = ScrollPosition {
+        rows_from_live: decoder.u64()?,
+        history_rows: decoder.u64()?,
+    };
+    validate_scroll_position(scroll_position, screen)?;
     let mut rows = Vec::with_capacity(usize::from(dimensions.rows));
     for _ in 0..dimensions.rows {
         rows.push(decode_row(&mut decoder, dimensions.cols)?);
@@ -504,6 +524,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
             palette,
         },
         cursor,
+        scroll_position,
         rows,
     })
 }
@@ -665,6 +686,7 @@ fn validate_dimensions(dimensions: Dimensions) -> Result<usize> {
 fn validate_frame(frame: &Frame) -> Result<usize> {
     validate_dimensions(frame.dimensions)?;
     validate_capabilities(frame.capabilities)?;
+    validate_scroll_position(frame.scroll_position, frame.screen)?;
     if frame.rows.len() != usize::from(frame.dimensions.rows) {
         return Err(Error::InvalidShape { field: "row" });
     }
@@ -690,6 +712,18 @@ fn validate_frame(frame: &Frame) -> Result<usize> {
         }
     }
     Ok(size.bytes())
+}
+
+fn validate_scroll_position(position: ScrollPosition, screen: Screen) -> Result<()> {
+    if position.rows_from_live > position.history_rows
+        || (screen == Screen::Alternate && position.history_rows != 0)
+    {
+        Err(Error::InvalidShape {
+            field: "scroll position",
+        })
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_capabilities(capabilities: Capabilities) -> Result<()> {
@@ -988,11 +1022,11 @@ mod tests {
     const CURSOR_COLOR_PRESENCE_OFFSET: usize = 35;
     const CURSOR_SHAPE_OFFSET: usize = 807;
     const CURSOR_VIEWPORT_PRESENCE_OFFSET: usize = 808;
-    const ROW_FLAGS_OFFSET: usize = 809;
-    const CELL_WIDTH_OFFSET: usize = 810;
-    const FOREGROUND_TAG_OFFSET: usize = 811;
-    const STYLE_FLAGS_OFFSET: usize = 823;
-    const UNDERLINE_OFFSET: usize = 825;
+    const ROW_FLAGS_OFFSET: usize = 825;
+    const CELL_WIDTH_OFFSET: usize = 826;
+    const FOREGROUND_TAG_OFFSET: usize = 827;
+    const STYLE_FLAGS_OFFSET: usize = 839;
+    const UNDERLINE_OFFSET: usize = 841;
 
     fn plain_style() -> CellStyle {
         CellStyle {
@@ -1018,6 +1052,7 @@ mod tests {
             revision,
             dimensions: Dimensions { cols: 1, rows: 1 },
             screen: Screen::Primary,
+            scroll_position: ScrollPosition::default(),
             title: String::new(),
             working_directory: String::new(),
             capabilities: Capabilities {
@@ -1100,6 +1135,7 @@ mod tests {
             revision: 42,
             dimensions: Dimensions { cols: 2, rows: 2 },
             screen: Screen::Alternate,
+            scroll_position: ScrollPosition::default(),
             title: "rich 🪐".into(),
             working_directory: "file:///tmp/orbit".into(),
             capabilities: Capabilities {
@@ -1167,6 +1203,70 @@ mod tests {
     }
 
     #[test]
+    fn scroll_position_is_canonical_at_every_acceptance_boundary() {
+        let mut canonical = minimal_frame(0);
+        canonical.scroll_position = ScrollPosition {
+            rows_from_live: 4,
+            history_rows: 20,
+        };
+        let bytes = canonical.encode().unwrap();
+        assert_eq!(decode_frame(&bytes).unwrap(), canonical);
+        let mut reducer = FrameReducer::default();
+        reducer.push(canonical.clone()).unwrap();
+        let error = Error::InvalidShape {
+            field: "scroll position",
+        };
+        for (screen, position) in [
+            (
+                Screen::Primary,
+                ScrollPosition {
+                    rows_from_live: 21,
+                    history_rows: 20,
+                },
+            ),
+            (
+                Screen::Primary,
+                ScrollPosition {
+                    rows_from_live: u64::MAX,
+                    history_rows: 0,
+                },
+            ),
+            (Screen::Alternate, canonical.scroll_position),
+            (
+                Screen::Alternate,
+                ScrollPosition {
+                    rows_from_live: 0,
+                    history_rows: 20,
+                },
+            ),
+        ] {
+            let mut invalid = canonical.clone();
+            invalid.revision = 1;
+            invalid.screen = screen;
+            invalid.scroll_position = position;
+            assert_eq!(invalid.encode().unwrap_err(), error);
+            assert_eq!(reducer.push(invalid).unwrap_err(), error);
+            assert_eq!(reducer.current(), Some(&canonical));
+            let mut invalid = bytes.clone();
+            invalid[SCREEN_OFFSET] = screen_tag(screen);
+            invalid[809..817].copy_from_slice(&position.rows_from_live.to_le_bytes());
+            invalid[817..825].copy_from_slice(&position.history_rows.to_le_bytes());
+            assert_eq!(decode_frame(&invalid).unwrap_err(), error);
+        }
+        for screen in [Screen::Primary, Screen::Alternate] {
+            let mut frame = minimal_frame(1);
+            frame.screen = screen;
+            assert_eq!(decode_frame(&frame.encode().unwrap()).unwrap(), frame);
+        }
+        let mut old = bytes;
+        old[4..6].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            decode_frame(&old),
+            Err(Error::UnsupportedVersion { version: 1 })
+        );
+    }
+
+    #[test]
     fn rich_frame_round_trips_byte_for_byte() {
         let expected = rich_frame();
         let bytes = encode_frame(&expected).unwrap();
@@ -1178,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn orbf_v1_capabilities_are_truthful_at_every_acceptance_boundary() {
+    fn orbf_v2_capabilities_are_truthful_at_every_acceptance_boundary() {
         let canonical = minimal_frame(0);
         let error = Error::InvalidShape {
             field: "capabilities",
@@ -1206,7 +1306,7 @@ mod tests {
     }
 
     #[test]
-    fn orbf_v1_cell_width_topology_is_validated_at_every_acceptance_boundary() {
+    fn orbf_v2_cell_width_topology_is_validated_at_every_acceptance_boundary() {
         use CellWidth::{Narrow, SpacerHead, SpacerTail, Wide};
 
         let canonical = frame_with_widths(0, false, &[Narrow; 4]);
@@ -1306,14 +1406,14 @@ mod tests {
     #[test]
     fn malformed_tags_flags_dimensions_and_lengths_are_rejected() {
         let canonical = minimal_frame(0).encode().unwrap();
-        assert_eq!(canonical.len(), 834);
+        assert_eq!(canonical.len(), 850);
 
         let mut cases = Vec::new();
         let mut wrong_magic = canonical.clone();
         wrong_magic[0] = b'X';
         cases.push(wrong_magic);
         let mut wrong_version = canonical.clone();
-        wrong_version[4..6].copy_from_slice(&2_u16.to_le_bytes());
+        wrong_version[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
         cases.push(wrong_version);
         let mut zero_cols = canonical.clone();
         zero_cols[14..16].copy_from_slice(&0_u16.to_le_bytes());

@@ -784,6 +784,124 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn conformance_c8_scroll_position_follows_published_terminal_state() -> Result {
+        use libghostty_vt::terminal::ScrollViewport;
+        use orbit_protocol::{Frame, ScrollPosition};
+
+        fn publish(
+            presentation: &mut Presentation,
+            client: &mut Client,
+            peer: &mut UnixStream,
+            terminal: &Terminal<'static, '_>,
+        ) -> Result<Frame> {
+            assert!(presentation.publish_change(Some(client), terminal)?);
+            let ServerMessage::Frame(frame) = flush_message(client, peer)? else {
+                return Err("expected complete presentation".into());
+            };
+            assert_eq!(frame.revision, presentation.revision);
+            Ok(*frame)
+        }
+
+        let (mut client, mut peer) = attached_client()?;
+        let mut terminal = new_terminal(
+            SurfaceSize {
+                cols: 8,
+                rows: 4,
+                ..INITIAL_SIZE
+            },
+            64 * 1024,
+        )?;
+        let mut presentation = Presentation::new()?;
+        for line in 0..100 {
+            terminal.vt_write(format!("{line:07}\r\n").as_bytes());
+        }
+        let live = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(
+            live.scroll_position,
+            ScrollPosition {
+                rows_from_live: 0,
+                history_rows: 97
+            }
+        );
+
+        terminal.scroll_viewport(ScrollViewport::Delta(-3));
+        let held = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(held.scroll_position.rows_from_live, 3);
+        terminal.vt_write(b"0000100\r\n0000101\r\n");
+        let output = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(
+            output.rows, held.rows,
+            "output must preserve the anchored viewport"
+        );
+        assert_eq!(
+            output.scroll_position,
+            ScrollPosition {
+                rows_from_live: 5,
+                history_rows: 99
+            }
+        );
+
+        terminal.vt_write(b"\x1b[?1049hAlternate\r\nscreen");
+        let alternate = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(alternate.screen, orbit_protocol::Screen::Alternate);
+        assert_eq!(alternate.scroll_position, ScrollPosition::default());
+        terminal.vt_write(b"\x1b[?1049l");
+        let primary = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(primary.scroll_position, output.scroll_position);
+        assert_eq!(primary.rows, output.rows);
+
+        terminal.resize(4, 4, 8, 16)?;
+        let reflowed = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert!(reflowed.scroll_position.history_rows > primary.scroll_position.history_rows);
+        assert!(reflowed.scroll_position.rows_from_live > primary.scroll_position.rows_from_live);
+        terminal.scroll_viewport(ScrollViewport::Top);
+        let oldest = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        for line in 102..10_102 {
+            terminal.vt_write(format!("{line:07}\r\n").as_bytes());
+        }
+        let pruned = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert!(
+            pruned.scroll_position.history_rows < 20_000,
+            "history must actually be evicted"
+        );
+        assert_eq!(
+            pruned.scroll_position.rows_from_live,
+            pruned.scroll_position.history_rows
+        );
+        assert_ne!(
+            pruned.rows, oldest.rows,
+            "oldest displayed content must be evicted"
+        );
+
+        drop(client);
+        drop(peer);
+        let (mut client, mut peer) = attached_client()?;
+        assert!(presentation.publish(Some(&mut client), &terminal)?);
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(Box::new(pruned))
+        );
+        terminal.scroll_viewport(ScrollViewport::Bottom);
+        let bottom = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(bottom.scroll_position.rows_from_live, 0);
+        assert!(bottom.scroll_position.history_rows > 0);
+        terminal.vt_write(b"\x1b[3J");
+        let cleared = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(cleared.scroll_position, ScrollPosition::default());
+        terminal.vt_write(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
+        assert!(
+            publish(&mut presentation, &mut client, &mut peer, &terminal)?
+                .scroll_position
+                .history_rows
+                > 0
+        );
+        terminal.reset();
+        let reset = publish(&mut presentation, &mut client, &mut peer, &terminal)?;
+        assert_eq!(reset.scroll_position, ScrollPosition::default());
+        Ok(())
+    }
+
+    #[test]
     fn configured_history_budget_preserves_primary_history_edges() -> Result {
         let (mut terminal, plain_rows) = measured_history("x\r\n", 1_000)?;
 

@@ -15,6 +15,25 @@ system must preserve.
 - **Retired:** the user explicitly replaced or removed the contract; its ID is
   never reused
 
+The user-approved `orb-scrollback-position-cpb` candidate changes ORB-C4,
+ORB-C6 and ORB-C8 to canonical ORBF v2 carried by ORBS v11. It adds two
+little-endian `u64` fields after cursor metadata and before rows:
+`ScrollPosition.rows_from_live` and `ScrollPosition.history_rows`. The latter
+excludes the active viewport; the former cannot exceed it and is zero at live
+bottom. Both are zero on the alternate screen. Counts describe current wrapped
+display rows, not stable logical lines, and are extracted with each complete
+frame through the existing synchronized publication owner. Output, scrolling,
+reflow, pruning, clear/reset, screen switches and reattachment therefore carry
+position at that frame's revision. Failed engine extraction does not fabricate
+zero or publish a partial frame. Existing 4 MiB/100,000-cell bounds remain.
+
+This is an explicitly breaking, exact-version boundary with no compatibility
+window. The diagnostic client and owned test fixtures consume the canonical
+crate in this repository. Venus, Eon's direct protocol consumer and Eonova's
+independent composition retain their accepted pins until their own coordinated
+updates. Producer acceptance precedes Venus consumption, then paired Eon
+delivery; this candidate does not prove or install a visible indicator.
+
 Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
 ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
 `baf8aa28dcaa50484cd221aa7730defedc2356bb`.
@@ -142,7 +161,7 @@ bytes.
 
 ## ORB-C4 — Coherent ordered presentation
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One attached exact-version presentation client.
 - **Trigger:** Attachment begins or authoritative terminal state changes.
 - **Result:** Attachment starts with one complete frame at revision N and then
@@ -152,7 +171,7 @@ bytes.
   publish partial state or violate final convergence.
 - **Owner:** Orbit attachment transport and synchronized runtime publication
   with canonical session and complete-frame codecs.
-- **Consumes:** Canonical ORBF v1 in ORBS v7.
+- **Consumes:** Candidate ORBF v2 in ORBS v11; prior proof below covers ORBF v1.
 - **Boundary:** Native presentation quality remains Venus-owned.
 - **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
@@ -196,7 +215,7 @@ bytes.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Every canonical presentation client.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
@@ -205,13 +224,13 @@ bytes.
   boundary.
 - **Owner:** Orbit's authoritative extraction and synchronized publication with
   canonical `orbit-protocol` values and codecs.
-- **Consumes:** Canonical ORBF v1 in ORBS v7.
-- **Boundary:** Kitty graphics remain explicitly unsupported in version 1.
+- **Consumes:** Candidate ORBF v2 in ORBS v11; prior proof below covers ORBF v1.
+- **Boundary:** Kitty graphics remain explicitly unsupported.
 - **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`conformance_c6_direct_rows_match_rich_canonical_frame_rows`](../src/presentation.rs)
-    - [`orbf_v1_cell_width_topology_is_validated_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
+    - [`orbf_v2_cell_width_topology_is_validated_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
     - Canonical ORBF-in-ORBS codec checks
 
 ## ORB-C7 — Bounded attachment pressure
@@ -238,7 +257,7 @@ bytes.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented; PTY output may advance Orbit before
@@ -246,6 +265,8 @@ bytes.
 - **Result:**
   - Each Session configures libghostty with a 16 MiB primary-history byte budget;
     retained rows are content-dependent and the active viewport may exceed it.
+  - Every complete frame includes the bounded display-row position described
+    above, including frames carried in wheel and signed-scroll outcomes.
   - Preview returns up to one active viewport of canonical rows, nearest first
     in the requested direction, without mutation, and names the current
     authoritative revision whose state it inspected.
@@ -273,7 +294,7 @@ bytes.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
-- **Consumes:** Canonical ORBS v10 with unchanged bytes and values; Venus
+- **Consumes:** Candidate ORBF v2 / ORBS v11. Under the prior ORBS v10 proof, Venus
   `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
   `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
   `64b225eb249490c9075894814942652a8b9d6192`.
@@ -283,6 +304,8 @@ bytes.
 - **Proof:** `64b225eb249490c9075894814942652a8b9d6192`
   - **Environment:** x86_64 Linux and the Nix-installed Eon composition
   - **Evidence:**
+    - [`conformance_c8_scroll_position_follows_published_terminal_state`](../src/runtime.rs) (candidate)
+    - [`scroll_position_is_canonical_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs) (candidate)
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
@@ -555,6 +578,7 @@ the normal suite because they do not exercise that terminal engine.
 | `conformance_c6_direct_rows_match_rich_canonical_frame_rows` | Wrapped styled text, RGB and palette colors, hyperlink, protection, combining and wide graphemes, viewport movement, and resize | Direct row extraction equals the corresponding canonical frame rows before and after reflow | Exact canonical-row equality; semantic presence of accepted rich fields and width roles | `ORB-C6` |
 | `conformance_c8_authoritative_viewport_routes_wheel_and_key_from_terminal_state` | Preview and wheel at history edges, mouse tracking, alternate screen, synchronized output, semantic key, and pressure | Orbit returns typed terminal or viewport outcomes without forbidden mutation and routes exact terminal input when required | Exact typed outcomes, revisions, and PTY bytes; semantic no-mutation and boundedness | `ORB-C8` |
 | `conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative` | One large signed commit, both history edges, lagging and future authority, routing changes, synchronized output, selection, and pressure | Orbit performs one native viewport movement and returns one result with exact requested/applied rows, one frame, and the next preview | Exact result count, rows, revision, adjacent preview, PTY absence, and failure non-mutation | `ORB-C8` |
+| `conformance_c8_scroll_position_follows_published_terminal_state` | Output while anchored, alternate screen, reflow, actual byte-budget eviction, fresh attachment, live bottom, clear and reset | Complete frames carry authoritative display-row distance and history bounds at their own revision | Exact position/content assertions through the canonical session codec | `ORB-C4`, `ORB-C6`, `ORB-C8` |
 | `conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped` | Wide and combining text, viewport movement, reversed selection, detach, alternate-screen output, and resize | Selected presentation is client-scoped while finished copy stays frozen across later terminal mutations | Exact copied Unicode text; semantic selection visibility, scope, and freeze | `ORB-C9` |
 
 A mismatch is classified from the smallest reproducer: an Orbit regression if

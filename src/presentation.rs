@@ -9,7 +9,7 @@ use libghostty_vt::{
 use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
     CursorViewport, Dimensions, Frame, FrameSize, MAX_CELLS, MAX_FRAME_BYTES, Rgb, Row,
-    Screen as ProtocolScreen, StyleColor, Underline,
+    Screen as ProtocolScreen, ScrollPosition, StyleColor, Underline,
 };
 
 pub(crate) struct Extractor {
@@ -44,6 +44,20 @@ impl Extractor {
         let screen = match terminal.active_screen()? {
             Screen::Primary => ProtocolScreen::Primary,
             Screen::Alternate => ProtocolScreen::Alternate,
+        };
+        let scrollbar = terminal.scrollbar()?;
+        if scrollbar.len != u64::from(row_count) {
+            return Err("scrollbar length differs from presentation rows".into());
+        }
+        let history_rows = scrollbar
+            .total
+            .checked_sub(scrollbar.len)
+            .ok_or("scrollbar total is smaller than its viewport")?;
+        let scroll_position = ScrollPosition {
+            rows_from_live: history_rows
+                .checked_sub(scrollbar.offset)
+                .ok_or("scrollbar offset exceeds retained history")?,
+            history_rows,
         };
         let cursor = Cursor {
             visible: snapshot.cursor_visible()?,
@@ -138,6 +152,7 @@ impl Extractor {
                 palette: colors.palette.map(rgb),
             },
             cursor,
+            scroll_position,
             rows: frame_rows,
         })
     }

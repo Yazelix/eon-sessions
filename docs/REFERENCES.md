@@ -50,6 +50,19 @@ Mars, Mars Next, or another project by default.
 
 ## Attachment and terminal state
 
+- Scroll-position extraction uses `libghostty-vt` 0.2.1 `Terminal::scrollbar`
+  and Ghostty `a887df42c56f6de86c0fe6da9c4eeca37931e083`, public
+  `terminal.h` and `PageList.zig::scrollbar`. The engine owns cached viewport
+  offsets and invalidates them after pruning and reflow; its no-history screen
+  reports total equal to viewport length even when page capacity has spare rows.
+  Orbit reads these values with each complete frame and projects only distance
+  from live output and retained history, using checked subtraction. Separate
+  position events, client counters, raw page internals and another history store
+  are rejected. The canonical wire and authoritative publication tests in
+  `orb-scrollback-position-cpb` prove the selected boundary. Ghostty's
+  [1.3.0 scrollbar](https://ghostty.org/docs/install/release-notes/1-3-0#scrollbars)
+  is UX comparison only; its native widget, dragging and rendering stay outside
+  this producer slice. No dependency or source reuse is introduced.
 - [FrankenTUI](https://github.com/Dicklesworthstone/frankentui) is required
   evidence for Orbit slices that change structured presentation generation,
   revision or damage semantics, or their proof architecture. Study its
