@@ -82,10 +82,10 @@ assuming that a plain-text cell grid is the final product contract.
 
 ## Replication boundary
 
-ORBF v1 serializes the complete visible presentation after each productive PTY
-read. This format proves attachment convergence. Any future incremental
-protocol keeps a complete frame as its resync fallback. Orbit has made no
-permanent decision to use full frames for every steady-state update.
+ORBF carries complete presentation frames. This boundary proves attachment
+convergence. Any future incremental protocol keeps a complete frame as its
+resync fallback. Orbit has made no permanent decision to use full frames for
+every steady-state update.
 
 The preferred later shape, subject to a separate user-approved protocol slice,
 divides the connection into six planes:
@@ -112,13 +112,15 @@ full-frame extraction or transfer limits the first Venus client. The decision
 must measure extraction time, encoded bytes, queue replacement, and client apply
 time under shells, Neovim, Yazi, resize storms, and high-volume output.
 
-Venus should decode ORBF v1 into persistent presentation state before drawing.
-A later patch decoder can update the same model. Orbit remains the schema owner;
-Venus must not handwrite a second interpretation. The accepted `orbit-protocol`
-package owns ORBF v1 decoding and complete-frame reduction plus ORBS v1
-attachment, frame-envelope, lifecycle, semantic-input, paste, and resize. The
-accepted ORBS v2 replaces that session revision, retains those message
-families, and adds revision-bound selection and bounded copy. The accepted ORBS
+Venus decodes canonical ORBF frames into persistent presentation state before
+drawing. A later patch decoder can update the same model. Orbit remains the
+schema owner; Venus must not handwrite a second interpretation. The
+[contract index](CONTRACTS.md) records accepted producer and consumer revisions.
+
+The original `orbit-protocol` boundary provided ORBF v1 decoding and complete-frame
+reduction plus ORBS v1 attachment, frame-envelope, lifecycle, semantic-input,
+paste, and resize. ORBS v2 replaced that session revision, retained those message
+families, and added revision-bound selection and bounded copy. The accepted ORBS
 v3 producer retains those values and carries bounded normalized clipboard
 writes as ordered effects outside replaceable presentation frames. Orbit adds
 revision-bound adjacent-row previews and typed vertical-wheel outcomes in ORBS

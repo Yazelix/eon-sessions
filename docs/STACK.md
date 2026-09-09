@@ -39,22 +39,21 @@ contains Venus, which owns native rendering, input collection, and ephemeral
 view state over Orbit-authored presentation.
 
 Raw PTY bytes and terminal-generated replies stay inside Orbit. Venus
-materializes ORBF v1 complete frames and does not run a terminal parser. A later
+materializes ORBF complete frames and does not run a terminal parser. A later
 user-approved patch protocol would update the same presentation state. Eon
 does not interpret terminal presentation. Future multiple-session work must
 keep generic Orbit session identity separate from Eon's product workspace
 policy.
 
 Orbit owns the wire schema and its state-transition rules. The
-`orbit-protocol` package owns accepted canonical ORBF v1 values, bounded
-decoding, complete-frame reduction, and accepted exact-version ORBS v9
+`orbit-protocol` package owns canonical ORBF values, bounded
+decoding, complete-frame reduction, and exact-version ORBS
 messages for one input-capable attachment, one bounded title/CWD observer,
 frames, lifecycle, semantic input, selection and copy, terminal clipboard
 writes, bounded multi-row previews, typed vertical-wheel outcomes, and bounded
-signed viewport commits. ORBS v7 remains the accepted exact consumer boundary
-until consumers adopt v9. Venus must
-record each consumed contract's proof revision and pin the exact package
-revision instead of mirroring the schema.
+signed viewport commits. The [contract index](CONTRACTS.md) records accepted
+producer and consumer revisions. Venus must record each consumed contract's
+proof revision and pin the exact package revision instead of mirroring the schema.
 
 ## Two distinct WebAssembly roles
 
