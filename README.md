@@ -22,8 +22,9 @@ revision as the cells. Engine extraction failure follows the existing attachment
 failure path instead of publishing an estimated position.
 
 ORBF v2 / ORBS v11 intentionally rejects the previous wire versions without an
-adapter. Producer proof is pending in `orb-scrollback-position-cpb`; a visible
-indicator and installed delivery belong to the Venus and Eon follow-up beads.
+adapter. Producer source `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
+is accepted in `orb-scrollback-position-cpb`; the visible indicator and installed
+delivery belong to the Venus and Eon follow-up beads.
 Existing Venus and Eon compositions, including independent Eonova packaging,
 remain on their exact accepted ORBF v1 / ORBS v10 pins until coordinated updates.
 

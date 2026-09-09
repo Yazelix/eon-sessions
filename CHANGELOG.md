@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Publish authoritative scrollback distance and retained-history display-row counts
+  in every complete frame, including output, reflow, eviction and reattachment.
+  ORBF v2 / ORBS v11 is an explicitly breaking exact-version boundary without a
+  compatibility layer (ORB-C4/C6/C8, `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`).
+  Venus/Eon consumption and the visible indicator remain separate deliveries.
+
 - Accepted Orbit `91999d79546422b49bdbc124166a65859d0bd872` hardens `ORB-C9`
   under unchanged ORBS v10: a selection Begin naming an already-presented,
   non-future frame resolves once against current authoritative state instead of

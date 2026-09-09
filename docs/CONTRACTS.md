@@ -15,7 +15,8 @@ system must preserve.
 - **Retired:** the user explicitly replaced or removed the contract; its ID is
   never reused
 
-The user-approved `orb-scrollback-position-cpb` candidate changes ORB-C4,
+Accepted producer `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
+(`orb-scrollback-position-cpb`) changes ORB-C4,
 ORB-C6 and ORB-C8 to canonical ORBF v2 carried by ORBS v11. It adds two
 little-endian `u64` fields after cursor metadata and before rows:
 `ScrollPosition.rows_from_live` and `ScrollPosition.history_rows`. The latter
@@ -32,7 +33,11 @@ window. The diagnostic client and owned test fixtures consume the canonical
 crate in this repository. Venus, Eon's direct protocol consumer and Eonova's
 independent composition retain their accepted pins until their own coordinated
 updates. Producer acceptance precedes Venus consumption, then paired Eon
-delivery; this candidate does not prove or install a visible indicator.
+delivery; this producer does not prove or install a visible indicator. The full
+workspace checks pass (77 tests; two manual measurements remain ignored) on
+x86_64 Linux, Rust 1.96.0 and Zig 0.15.2. They preserve ORB-C1-C3, ORB-C5,
+ORB-C7 and ORB-C9-C13 through the new envelope. Exact inputs, results and limits:
+`~/.local/state/eon/proofs/orb-scrollback-position-cpb-2026-09-09/REPORT.md`.
 
 Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
 ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
@@ -161,7 +166,7 @@ bytes.
 
 ## ORB-C4 — Coherent ordered presentation
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One attached exact-version presentation client.
 - **Trigger:** Attachment begins or authoritative terminal state changes.
 - **Result:** Attachment starts with one complete frame at revision N and then
@@ -171,9 +176,9 @@ bytes.
   publish partial state or violate final convergence.
 - **Owner:** Orbit attachment transport and synchronized runtime publication
   with canonical session and complete-frame codecs.
-- **Consumes:** Candidate ORBF v2 in ORBS v11; prior proof below covers ORBF v1.
+- **Consumes:** Canonical ORBF v2 in ORBS v11; installed consumers retain prior exact pins.
 - **Boundary:** Native presentation quality remains Venus-owned.
-- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
+- **Proof:** `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`synchronized_presentation_coalesces_defers_and_times_out`](../src/runtime.rs)
@@ -215,7 +220,7 @@ bytes.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Every canonical presentation client.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
@@ -224,9 +229,9 @@ bytes.
   boundary.
 - **Owner:** Orbit's authoritative extraction and synchronized publication with
   canonical `orbit-protocol` values and codecs.
-- **Consumes:** Candidate ORBF v2 in ORBS v11; prior proof below covers ORBF v1.
+- **Consumes:** Canonical ORBF v2 in ORBS v11; installed consumers retain prior exact pins.
 - **Boundary:** Kitty graphics remain explicitly unsupported.
-- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
+- **Proof:** `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
   - **Environment:** x86_64 Linux
   - **Evidence:**
     - [`conformance_c6_direct_rows_match_rich_canonical_frame_rows`](../src/presentation.rs)
@@ -257,7 +262,7 @@ bytes.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented; PTY output may advance Orbit before
@@ -294,31 +299,31 @@ bytes.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
-- **Consumes:** Candidate ORBF v2 / ORBS v11. Under the prior ORBS v10 proof, Venus
+- **Consumes:** Canonical ORBF v2 / ORBS v11. Under the prior ORBS v10 proof, Venus
   `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
   `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
   `64b225eb249490c9075894814942652a8b9d6192`.
 - **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
   kinetic effects, graphics, and restart persistence are excluded; physical
   wheels retain their existing typed terminal-routed or one-row behavior.
-- **Proof:** `64b225eb249490c9075894814942652a8b9d6192`
-  - **Environment:** x86_64 Linux and the Nix-installed Eon composition
+- **Proof:** `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
+  - **Environment:** x86_64 Linux, headless producer checks
   - **Evidence:**
-    - [`conformance_c8_scroll_position_follows_published_terminal_state`](../src/runtime.rs) (candidate)
-    - [`scroll_position_is_canonical_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs) (candidate)
+    - [`conformance_c8_scroll_position_follows_published_terminal_state`](../src/runtime.rs)
+    - [`scroll_position_is_canonical_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
-    - Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
+    - Prior ORBS v10 installed proof only: Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
       `/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0` and passed the
       same split real-PTY regression against its installed Orbit binary.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
 - **Status:** Proved
-- **Consumer:** One healthy exact-version ORBS v10 attachment.
+- **Consumer:** One healthy exact-version ORBS v11 attachment.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence using bounded surface coordinates and current modifiers;
   Begin names a frame the client presented and a monotonic press timestamp.
@@ -369,9 +374,9 @@ bytes.
   - A partially written frame remains ordered and completes before a newer
     selection frame.
 - **Owner:** Orbit's semantic interaction owner with authoritative mouse modes,
-  libghostty current-viewport gesture selection, and canonical ORBS v10. Venus
+  libghostty current-viewport gesture selection, and canonical ORBS v11. Venus
   owns native event delivery and clipboard effects.
-- **Consumes:** Canonical ORBS v10 and ORB-C7 bounded-pressure behavior; accepted
+- **Consumes:** Canonical ORBS v11 and ORB-C7 bounded-pressure behavior; accepted
   ORBS v9 remains the prior routing and host-selection proof. Venus
   `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` and Eon
   `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` consume this behavior through
