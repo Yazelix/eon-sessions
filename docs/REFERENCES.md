@@ -133,6 +133,25 @@ Mars, Mars Next, or another project by default.
   history fetches, and separate image-cell hydration. Orbit may borrow those
   protocol ideas without adopting WezTerm code, its terminal engine, or its
   coupled multiplexer surface.
+- [ptyZZZ at `d23e046dff3b`](https://github.com/cablehead/ptyZZZ/tree/d23e046dff3b389d0a8a70929087bbfb2007ee5e)
+  is conditional comparison evidence when measured presentation or transport cost
+  justifies incremental frames, or an authorized browser slice needs a thin client.
+  Its [protocol](https://github.com/cablehead/ptyZZZ/blob/d23e046dff3b389d0a8a70929087bbfb2007ee5e/PROTOCOL.md)
+  and [emitter and regression tests](https://github.com/cablehead/ptyZZZ/blob/d23e046dff3b389d0a8a70929087bbfb2007ee5e/src/main.rs)
+  keep one emulator beside the PTY, track stable-row damage, suppress identical
+  redraws, and combine keyframes with diffs. A diff's `base` names the last frame
+  actually emitted, not the terminal damage counter advanced by suppressed output.
+  Study explicit resynchronization and fresh keyframes requested only after a
+  subscriber is following live output. The bundled
+  [web adapter](https://github.com/cablehead/ptyZZZ/blob/d23e046dff3b389d0a8a70929087bbfb2007ee5e/serve.nu)
+  applies diffs without checking `base`; its demo does not establish the protocol's
+  gap-rejection guarantee. Independently prove skipped-frame detection, no-op
+  suppression, fresh attachment and slow-reader convergence before adopting a delta
+  contract. Preserve Orbit's bounded complete frames until measured need, sole
+  libghostty authority and rich structured presentation. MIT source inspection only;
+  reject HTML as Orbit's wire format, WezTerm/portable-pty adoption, cross.stream
+  storage, periodic healing as a substitute for coherent attachment, inherited
+  multi-viewer scope, and performance extrapolation from the web demo.
 - [Mosh](https://mosh.org/) and its
   [state-synchronization paper](https://mosh.org/mosh-paper-draft.pdf) show how
   a receiver can converge on recent state while the sender skips obsolete
