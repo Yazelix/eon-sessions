@@ -114,4 +114,4 @@ jobs:
       - name: Verify native runtime
         run: |
           cargo check --locked --workspace --all-targets
-          cargo test --locked --workspace -- --test-threads=1
+          cargo test --locked --workspace

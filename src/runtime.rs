@@ -756,7 +756,9 @@ pub(crate) mod tests {
     use orbit_protocol::session::{
         ClientMessage, Failure, FailureCode, Modifiers, MouseAction, MouseButton,
     };
-    use std::{io::Read, os::unix::net::UnixStream, thread, time::Instant};
+    use std::{io::Read, os::unix::net::UnixStream};
+    #[cfg(target_os = "linux")]
+    use std::{thread, time::Instant};
 
     pub(crate) fn terminal() -> Result<Terminal<'static, 'static>> {
         terminal_with_scrollback(0)
@@ -1180,7 +1182,7 @@ pub(crate) mod tests {
         let (mut client, mut peer) = attached_client()?;
         write_message(&mut peer, &ClientMessage::Paste(b"ignored".to_vec()))?;
         client.close_when_flushed();
-        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
@@ -1203,7 +1205,7 @@ pub(crate) mod tests {
     #[test]
     fn pty_write_pressure_rejects_whole_input_and_closes_client() -> Result {
         let (mut client, mut peer) = attached_client()?;
-        let pty = Pty::spawn(&["/bin/sh".into()], INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
@@ -1300,6 +1302,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn exited_child_output_is_drained_into_authoritative_state() -> Result {
         let size = INITIAL_SIZE;
         let command = [

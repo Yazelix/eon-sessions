@@ -50,30 +50,20 @@ pub(crate) struct Pty {
 }
 
 impl Pty {
+    #[cfg(test)]
+    pub(crate) fn without_child_for_test(size: SurfaceSize) -> Result<Self> {
+        let (master, _) = open_pty(size)?;
+        Ok(Self {
+            master,
+            child: None,
+        })
+    }
+
     pub(crate) fn spawn(command: &[String], size: SurfaceSize) -> Result<Self> {
         if command.is_empty() {
             return Err("PTY command cannot be empty".into());
         }
-        let mut master_fd = -1;
-        let mut slave_fd = -1;
-        let mut winsize = winsize(size);
-        let result = unsafe {
-            libc::openpty(
-                &raw mut master_fd,
-                &raw mut slave_fd,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                &raw mut winsize,
-            )
-        };
-        if result == -1 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        let master = unsafe { File::from_raw_fd(master_fd) };
-        let slave = unsafe { File::from_raw_fd(slave_fd) };
-        set_fd_flags(master.as_raw_fd(), libc::O_NONBLOCK)?;
-        set_fd_flags(slave.as_raw_fd(), 0)?;
+        let (master, slave) = open_pty(size)?;
 
         let stdin = slave.try_clone()?;
         let stdout = slave.try_clone()?;
@@ -166,6 +156,29 @@ impl Pty {
         self.child = None;
         Ok(status)
     }
+}
+
+fn open_pty(size: SurfaceSize) -> Result<(File, File)> {
+    let mut master_fd = -1;
+    let mut slave_fd = -1;
+    let mut winsize = winsize(size);
+    if unsafe {
+        libc::openpty(
+            &raw mut master_fd,
+            &raw mut slave_fd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &raw mut winsize,
+        )
+    } == -1
+    {
+        return Err(io::Error::last_os_error().into());
+    }
+    let master = unsafe { File::from_raw_fd(master_fd) };
+    let slave = unsafe { File::from_raw_fd(slave_fd) };
+    set_fd_flags(master.as_raw_fd(), libc::O_NONBLOCK)?;
+    set_fd_flags(slave.as_raw_fd(), 0)?;
+    Ok((master, slave))
 }
 
 fn configure_child_terminal() -> io::Result<()> {
