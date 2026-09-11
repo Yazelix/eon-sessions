@@ -986,12 +986,18 @@ pub(crate) mod tests {
         })
     }
 
+    #[track_caller]
     pub(crate) fn flush_message(
         client: &mut Client,
         peer: &mut UnixStream,
     ) -> Result<ServerMessage> {
         let _ = client.flush()?;
-        read_message(peer)?.ok_or_else(|| "client output closed".into())
+        let caller = std::panic::Location::caller();
+        read_message(peer)
+            .map_err(|error| -> Box<dyn std::error::Error> {
+                format!("client output at {caller}: {error}").into()
+            })?
+            .ok_or_else(|| "client output closed".into())
     }
 
     fn expect_frame(

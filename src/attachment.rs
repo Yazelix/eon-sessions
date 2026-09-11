@@ -260,6 +260,7 @@ impl Client {
     pub(crate) fn test_pair(negotiation_deadline: Option<Instant>) -> Result<(Self, UnixStream)> {
         let (stream, peer) = UnixStream::pair()?;
         stream.set_nonblocking(true)?;
+        peer.set_read_timeout(Some(Duration::from_secs(2)))?;
         Ok((Self::new(stream, negotiation_deadline), peer))
     }
 
