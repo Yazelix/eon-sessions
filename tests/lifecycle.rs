@@ -3,17 +3,20 @@ use std::{
     io::{BufReader, Read, Write},
     net::Shutdown,
     os::unix::{
-        fs::PermissionsExt,
+        ffi::OsStringExt,
+        fs::{MetadataExt, PermissionsExt},
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Barrier,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
-#[cfg(target_os = "linux")]
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage,
     FailureCode as ManagementFailureCode, LiveIdentity, ObjectIdentity, ProcessOutcome,
@@ -27,12 +30,6 @@ use orbit_protocol::{
         encode_client_message,
     },
 };
-#[cfg(target_os = "linux")]
-use std::{
-    os::unix::{ffi::OsStringExt, fs::MetadataExt},
-    sync::{Arc, Barrier},
-};
-
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
@@ -80,17 +77,14 @@ impl Drop for Server {
     }
 }
 
-#[cfg(target_os = "linux")]
 struct ProcessCleanup(Option<(u32, u64)>);
 
-#[cfg(target_os = "linux")]
 impl ProcessCleanup {
     fn disarm(&mut self) {
         self.0 = None;
     }
 }
 
-#[cfg(target_os = "linux")]
 impl Drop for ProcessCleanup {
     fn drop(&mut self) {
         let Some((pid, start)) = self.0 else {
@@ -111,12 +105,10 @@ impl Drop for ProcessCleanup {
     }
 }
 
-#[cfg(target_os = "linux")]
 struct ManagementClient {
     reader: BufReader<UnixStream>,
 }
 
-#[cfg(target_os = "linux")]
 impl ManagementClient {
     fn request(
         &mut self,
@@ -438,7 +430,6 @@ fn read_message(reader: &mut impl Read) -> TestResult<ServerMessage> {
     Ok(decode_server_message(&framed)?)
 }
 
-#[cfg(target_os = "linux")]
 fn read_management_message(reader: &mut impl Read) -> TestResult<ManagementServerMessage> {
     let mut header = [0; management::HEADER_BYTES];
     reader.read_exact(&mut header)?;
@@ -451,7 +442,6 @@ fn read_management_message(reader: &mut impl Read) -> TestResult<ManagementServe
     Ok(management::decode_server_message(&framed)?)
 }
 
-#[cfg(target_os = "linux")]
 fn wait_management_record(path: &Path) -> TestResult<ManagementRecord> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -468,7 +458,6 @@ fn wait_management_record(path: &Path) -> TestResult<ManagementRecord> {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn acquire_management(
     record_path: &Path,
     identity: &LiveIdentity,
@@ -666,7 +655,29 @@ fn process_start_identity(pid: u32) -> TestResult<u64> {
         .parse()?)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+fn process_start_identity(pid: u32) -> TestResult<u64> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    if read != size || info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
+        return Err("invalid macOS process start identity".into());
+    }
+    info.pbi_start_tvsec
+        .checked_mul(1_000_000)
+        .and_then(|seconds| seconds.checked_add(info.pbi_start_tvusec))
+        .filter(|identity| *identity != 0)
+        .ok_or_else(|| "invalid macOS process start identity".into())
+}
+
 fn process_identity_matches(pid: u32, start: u64) -> bool {
     process_start_identity(pid).is_ok_and(|current| current == start)
 }
@@ -1908,33 +1919,6 @@ fn signal_during_startup_removes_socket() -> TestResult {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
-fn macos_management_launch_fails_before_session_side_effects() -> TestResult {
-    let dir = TestDir::new("management-unsupported")?;
-    let socket = dir.0.join("orbit.sock");
-    let marker = dir.0.join("child-ran");
-    let status = server_command()
-        .arg(&socket)
-        .args([
-            "--management-v1",
-            "session",
-            "run",
-            "component",
-            "--",
-            "/bin/sh",
-            "-c",
-            "touch \"$ORBIT_CHILD_RAN\"",
-        ])
-        .env("ORBIT_CHILD_RAN", &marker)
-        .status()?;
-
-    assert!(!status.success());
-    assert!(fs::read_dir(&dir.0)?.next().is_none());
-    Ok(())
-}
-
-#[test]
-#[cfg(target_os = "linux")]
 fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestResult {
     let dir = TestDir::new("managed-owner")?;
     let socket = dir.0.join("orbit.sock");
@@ -1998,19 +1982,22 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
         identity.process_start + 1,
     ))));
     let pty_pid = wait_file_text(&pty_pid_path)?.parse::<u32>()?;
-    let inherited_sockets = [
-        format!("socket:[{}]", identity.presentation.object.inode),
-        format!("socket:[{}]", identity.management.object.inode),
-    ];
-    for descriptor in fs::read_dir(format!("/proc/{pty_pid}/fd"))? {
-        let target = fs::read_link(descriptor?.path())?;
-        assert!(
-            !inherited_sockets
-                .iter()
-                .any(|socket| target == Path::new(socket)),
-            "PTY child inherited an Orbit listener: {}",
-            target.display()
-        );
+    #[cfg(target_os = "linux")]
+    {
+        let inherited_sockets = [
+            format!("socket:[{}]", identity.presentation.object.inode),
+            format!("socket:[{}]", identity.management.object.inode),
+        ];
+        for descriptor in fs::read_dir(format!("/proc/{pty_pid}/fd"))? {
+            let target = fs::read_link(descriptor?.path())?;
+            assert!(
+                !inherited_sockets
+                    .iter()
+                    .any(|socket| target == Path::new(socket)),
+                "PTY child inherited an Orbit listener: {}",
+                target.display()
+            );
+        }
     }
 
     let mut wrong_identity = identity.clone();
@@ -2076,8 +2063,8 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     presentation.wait_title("survived")?;
     assert!(presentation.frame.revision > initial_revision);
     assert_eq!(identity.process_id, orbit_pid);
-    assert!(Path::new(&format!("/proc/{orbit_pid}")).exists());
-    assert!(Path::new(&format!("/proc/{pty_pid}")).exists());
+    assert!(process_identity_matches(orbit_pid, identity.process_start));
+    assert_eq!(unsafe { libc::kill(pty_pid as libc::pid_t, 0) }, 0);
 
     let stop = management::encode_client_message(&ManagementClientMessage::Stop)?;
     winner.reader.get_mut().write_all(&stop)?;
@@ -2099,7 +2086,6 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
 }
 
 #[test]
-#[cfg(target_os = "linux")]
 fn management_authority_negatives_fail_closed_without_stopping_session() -> TestResult {
     let dir = TestDir::new("management-negatives")?;
     let socket = dir.0.join("orbit.sock");

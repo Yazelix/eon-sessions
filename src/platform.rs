@@ -354,8 +354,13 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn peer_uid(_: &UnixStream) -> Result<u32> {
-    Err("Orbit management is not supported on macOS".into())
+pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32> {
+    let mut uid = 0;
+    let mut gid = 0;
+    if unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) } == -1 {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(uid)
 }
 
 #[cfg(target_os = "linux")]
@@ -371,7 +376,29 @@ pub(crate) fn process_start_identity() -> Result<u64> {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn process_start_identity() -> Result<u64> {
-    Err("Orbit management is not supported on macOS".into())
+    let pid = std::process::id();
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    if read == 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    if read != size || info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
+        return Err("invalid macOS process start identity".into());
+    }
+    info.pbi_start_tvsec
+        .checked_mul(1_000_000)
+        .and_then(|seconds| seconds.checked_add(info.pbi_start_tvusec))
+        .filter(|identity| *identity != 0)
+        .ok_or_else(|| "invalid macOS process start identity".into())
 }
 
 pub(crate) fn endpoint_identity(path: &Path) -> Result<EndpointIdentity> {
@@ -681,10 +708,8 @@ fn set_signal_handler(signals: &[libc::c_int], handler: usize) -> Result {
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "linux")]
     struct TestDir(PathBuf);
 
-    #[cfg(target_os = "linux")]
     impl TestDir {
         fn new(name: &str) -> Result<Self> {
             let path = env::temp_dir().join(format!(
@@ -698,7 +723,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     impl Drop for TestDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -727,7 +751,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn management_ready_claim_has_one_winner_and_survives_record_removal() -> Result {
         let directory = TestDir::new("ready-claim")?;
         let record_path = directory.0.join("orbit.record");
@@ -779,7 +802,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
     fn management_artifacts_and_kernel_identity_fail_closed() -> Result {
         let directory = TestDir::new("management")?;
         let record_path = directory.0.join("orbit.record");
