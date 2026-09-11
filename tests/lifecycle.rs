@@ -777,7 +777,12 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
     let mut unsupported = encode_client_message(&ClientMessage::Hello)?;
     unsupported[4..6].copy_from_slice(&(session::VERSION + 1).to_le_bytes());
     incompatible.write_all(&unsupported)?;
-    assert_eq!(incompatible.read(&mut [0; 1])?, 0);
+    assert_eq!(
+        incompatible
+            .read(&mut [0; 1])
+            .map_err(|error| format!("unsupported-version disconnect read: {error}"))?,
+        0
+    );
     drop(incompatible);
 
     let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
@@ -799,7 +804,12 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
     drop(second);
 
     drop(Client::attach(&socket)?);
-    assert_eq!(first.read(&mut [0; 1])?, 0);
+    assert_eq!(
+        first
+            .read(&mut [0; 1])
+            .map_err(|error| format!("expired pending-client disconnect read: {error}"))?,
+        0
+    );
     assert!(server.shutdown()?.success());
     Ok(())
 }
