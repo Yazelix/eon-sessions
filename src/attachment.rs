@@ -7,10 +7,12 @@ use std::{
     collections::VecDeque,
     io::{self, Read, Write},
     os::unix::net::{UnixListener, UnixStream},
+    thread,
     time::{Duration, Instant},
 };
 
 const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
+const FINISH_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_OUTPUT_BYTES: usize =
     MAX_FRAME_BYTES + session::MAX_PAYLOAD_BYTES + 2 * session::HEADER_BYTES + 4096;
 
@@ -246,7 +248,13 @@ impl Client {
             if !self.close_after_flush {
                 let _ = self.push_message(&ServerMessage::Exited { code })?;
             }
-            let _ = self.output.flush(&mut self.stream);
+            let deadline = Instant::now() + FINISH_TIMEOUT;
+            while !self.output.is_empty() && Instant::now() < deadline {
+                if !self.output.flush(&mut self.stream)? {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
         }
         Ok(())
     }
@@ -651,19 +659,28 @@ mod tests {
         let (mut client, mut peer) = Client::test_pair(None)?;
         let failure = ServerMessage::Failure(Failure {
             code: FailureCode::Protocol,
-            detail: "terminal".into(),
+            detail: "x".repeat(session::MAX_FAILURE_BYTES),
         });
-        let expected = session::encode_server_message(&failure)?;
-        assert!(client.push_message(&failure)?);
+        let message = session::encode_server_message(&failure)?;
+        for _ in 0..1024 {
+            assert!(client.push_message(&failure)?);
+        }
         client.close_when_flushed();
 
-        client.finish_session(17)?;
-        assert!(client.output.is_empty());
-        drop(client);
+        let actual = std::thread::scope(|scope| -> Result<Vec<u8>> {
+            let reader = scope.spawn(move || -> io::Result<Vec<u8>> {
+                std::thread::sleep(Duration::from_millis(10));
+                let mut actual = Vec::new();
+                peer.read_to_end(&mut actual)?;
+                Ok(actual)
+            });
+            client.finish_session(17)?;
+            assert!(client.output.is_empty());
+            drop(client);
+            Ok(reader.join().map_err(|_| "finish reader panicked")??)
+        })?;
 
-        let mut actual = Vec::new();
-        peer.read_to_end(&mut actual)?;
-        assert_eq!(actual, expected);
+        assert_eq!(actual, message.repeat(1024));
         Ok(())
     }
 }
