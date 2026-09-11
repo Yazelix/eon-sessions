@@ -30,6 +30,10 @@ const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 const SHUTDOWN_POLL: Duration = Duration::from_millis(10);
 const PTY_EIO_RETRY_DELAY: Duration = Duration::from_millis(10);
 #[cfg(target_os = "linux")]
+const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY as libc::c_ulong;
+#[cfg(target_os = "macos")]
+const TIOCSCTTY_REQUEST: libc::c_ulong = 0x2000_7461;
+#[cfg(target_os = "linux")]
 const TIOCSWINSZ_REQUEST: libc::c_ulong = libc::TIOCSWINSZ as libc::c_ulong;
 #[cfg(target_os = "macos")]
 const TIOCSWINSZ_REQUEST: libc::c_ulong = 0x8008_7467;
@@ -165,18 +169,11 @@ impl Pty {
 }
 
 fn configure_child_terminal() -> io::Result<()> {
-    #[cfg(target_os = "linux")]
     unsafe {
         if libc::setsid() == -1 {
             return Err(io::Error::last_os_error());
         }
-        if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    #[cfg(target_os = "macos")]
-    unsafe {
-        if libc::login_tty(libc::STDIN_FILENO) == -1 {
+        if libc::ioctl(libc::STDIN_FILENO, TIOCSCTTY_REQUEST, 0) == -1 {
             return Err(io::Error::last_os_error());
         }
     }
