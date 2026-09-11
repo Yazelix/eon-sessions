@@ -2109,7 +2109,9 @@ fn management_authority_negatives_fail_closed_without_stopping_session() -> Test
             .env("ORBIT_NATURAL_EXIT", &natural_exit)
             .spawn()?,
     );
-    let identity = match wait_management_record(&record_path)? {
+    let identity = match wait_management_record(&record_path)
+        .map_err(|error| format!("initial management record: {error}"))?
+    {
         ManagementRecord::Live(identity) => identity,
         record => return Err(format!("expected live management record, got {record:?}").into()),
     };
@@ -2172,7 +2174,9 @@ fn management_authority_negatives_fail_closed_without_stopping_session() -> Test
     assert_eq!(server.wait()?.code(), Some(23));
     assert!(socket.exists(), "replacement endpoint was removed");
     assert!(!management_path.exists());
-    let ManagementRecord::Tombstone(tombstone) = wait_management_record(&record_path)? else {
+    let ManagementRecord::Tombstone(tombstone) = wait_management_record(&record_path)
+        .map_err(|error| format!("terminal management record: {error}"))?
+    else {
         return Err("natural exit did not publish a tombstone".into());
     };
     assert_eq!(tombstone.reason, TerminationReason::NaturalExit);
