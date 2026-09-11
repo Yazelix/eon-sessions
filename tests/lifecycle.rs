@@ -2087,7 +2087,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
 
 #[test]
 fn management_authority_negatives_fail_closed_without_stopping_session() -> TestResult {
-    let dir = TestDir::new("management-negatives")?;
+    let dir = TestDir::new("management-deny")?;
     let socket = dir.0.join("orbit.sock");
     let mut record_path = socket.as_os_str().to_os_string();
     record_path.push(".record");
