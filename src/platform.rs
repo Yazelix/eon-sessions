@@ -29,6 +29,10 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 const SHUTDOWN_POLL: Duration = Duration::from_millis(10);
 const PTY_EIO_RETRY_DELAY: Duration = Duration::from_millis(10);
+#[cfg(target_os = "linux")]
+const TIOCSWINSZ_REQUEST: libc::c_ulong = libc::TIOCSWINSZ as libc::c_ulong;
+#[cfg(target_os = "macos")]
+const TIOCSWINSZ_REQUEST: libc::c_ulong = 0x8008_7467;
 
 pub(crate) enum PtyIo {
     Ready(usize),
@@ -48,14 +52,14 @@ impl Pty {
         }
         let mut master_fd = -1;
         let mut slave_fd = -1;
-        let winsize = winsize(size);
+        let mut winsize = winsize(size);
         let result = unsafe {
             libc::openpty(
                 &raw mut master_fd,
                 &raw mut slave_fd,
                 std::ptr::null_mut(),
-                std::ptr::null(),
-                &winsize,
+                std::ptr::null_mut(),
+                &raw mut winsize,
             )
         };
         if result == -1 {
@@ -78,15 +82,7 @@ impl Pty {
             .env("TERM", "eon")
             .env("COLORTERM", "truecolor");
         unsafe {
-            child_command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
+            child_command.pre_exec(configure_child_terminal);
         }
         let child = child_command.spawn()?;
         Ok(Self {
@@ -97,7 +93,7 @@ impl Pty {
 
     pub(crate) fn resize(&self, size: SurfaceSize) -> Result {
         let winsize = winsize(size);
-        let result = unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &winsize) };
+        let result = unsafe { libc::ioctl(self.master.as_raw_fd(), TIOCSWINSZ_REQUEST, &winsize) };
         if result == -1 {
             return Err(io::Error::last_os_error().into());
         }
@@ -166,6 +162,25 @@ impl Pty {
         self.child = None;
         Ok(status)
     }
+}
+
+fn configure_child_terminal() -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        if libc::setsid() == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY as _, 0) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        if libc::login_tty(libc::STDIN_FILENO) == -1 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 impl Drop for Pty {
@@ -306,6 +321,7 @@ pub(crate) fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32> {
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
@@ -327,6 +343,12 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32> {
     Ok(credentials.uid)
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn peer_uid(_: &UnixStream) -> Result<u32> {
+    Err("Orbit management is not supported on macOS".into())
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn process_start_identity() -> Result<u64> {
     let stat = fs::read_to_string("/proc/self/stat")?;
     let fields = stat.rsplit_once(')').ok_or("malformed /proc/self/stat")?.1;
@@ -335,6 +357,11 @@ pub(crate) fn process_start_identity() -> Result<u64> {
         .nth(19)
         .ok_or_else(|| "missing process start identity".into())
         .and_then(|value| value.parse::<u64>().map_err(Into::into))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn process_start_identity() -> Result<u64> {
+    Err("Orbit management is not supported on macOS".into())
 }
 
 pub(crate) fn endpoint_identity(path: &Path) -> Result<EndpointIdentity> {
@@ -644,8 +671,10 @@ fn set_signal_handler(signals: &[libc::c_int], handler: usize) -> Result {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     struct TestDir(PathBuf);
 
+    #[cfg(target_os = "linux")]
     impl TestDir {
         fn new(name: &str) -> Result<Self> {
             let path = env::temp_dir().join(format!(
@@ -659,6 +688,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     impl Drop for TestDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
@@ -687,6 +717,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn management_ready_claim_has_one_winner_and_survives_record_removal() -> Result {
         let directory = TestDir::new("ready-claim")?;
         let record_path = directory.0.join("orbit.record");
@@ -738,6 +769,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn management_artifacts_and_kernel_identity_fail_closed() -> Result {
         let directory = TestDir::new("management")?;
         let record_path = directory.0.join("orbit.record");

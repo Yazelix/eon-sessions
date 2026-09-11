@@ -78,3 +78,40 @@ jobs:
             --manifest .agent-protocols.json \
             --agents AGENTS.md
           cargo clippy --locked --workspace --all-targets -- -D warnings
+
+  macos:
+    if: github.event_name == 'workflow_dispatch'
+    name: Rust (Apple Silicon macOS)
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Zig 0.15.2
+        run: |
+          curl --fail --location --silent --show-error --retry 3 \
+            --proto '=https' --proto-redir '=https' \
+            --output "$RUNNER_TEMP/zig.tar.xz" \
+            https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz
+          printf '%s  %s\n' \
+            '3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b' \
+            "$RUNNER_TEMP/zig.tar.xz" | shasum --algorithm 256 --check
+          tar --extract --xz --file "$RUNNER_TEMP/zig.tar.xz" \
+            --directory "$RUNNER_TEMP"
+          printf '%s\n' "$RUNNER_TEMP/zig-aarch64-macos-0.15.2" >> "$GITHUB_PATH"
+
+      - name: Log toolchain versions
+        run: |
+          test "$(uname -m)" = arm64
+          sw_vers
+          rustc --version --verbose
+          cargo --version --verbose
+          zig version
+
+      - name: Verify native runtime
+        run: |
+          cargo check --locked --workspace --all-targets
+          cargo test --locked --workspace

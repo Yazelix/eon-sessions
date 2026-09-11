@@ -53,6 +53,13 @@ pub(super) fn take_launch(arguments: &mut Vec<String>) -> Result<Option<Launch>>
         .iter()
         .position(|argument| argument == "--")
         .unwrap_or(arguments.len());
+    #[cfg(target_os = "macos")]
+    if arguments[..launch_end]
+        .iter()
+        .any(|argument| argument == ARGUMENT)
+    {
+        return Err("--management-v1 is not supported on macOS".into());
+    }
     let mut positions = arguments[..launch_end]
         .iter()
         .enumerate()

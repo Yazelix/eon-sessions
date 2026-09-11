@@ -1,36 +1,36 @@
-#![cfg(target_os = "linux")]
-
 use std::{
     fs::{self, OpenOptions},
     io::{BufReader, Read, Write},
     net::Shutdown,
     os::unix::{
-        ffi::OsStringExt,
-        fs::{MetadataExt, PermissionsExt},
+        fs::PermissionsExt,
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{
-        Arc, Barrier,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
+use orbit_protocol::management::{
+    self as management, ClientMessage as ManagementClientMessage,
+    FailureCode as ManagementFailureCode, LiveIdentity, ObjectIdentity, ProcessOutcome,
+    Record as ManagementRecord, ServerMessage as ManagementServerMessage, TerminationReason,
+};
 use orbit_protocol::{
     Frame, Rgb, Screen,
-    management::{
-        self as management, ClientMessage as ManagementClientMessage,
-        FailureCode as ManagementFailureCode, LiveIdentity, ObjectIdentity, ProcessOutcome,
-        Record as ManagementRecord, ServerMessage as ManagementServerMessage, TerminationReason,
-    },
     session::{
         self, ClientMessage, FailureCode, FocusEvent, KeyAction, KeyEvent, Modifiers, PhysicalKey,
         SelectionAction, SelectionPosition, ServerMessage, SurfaceSize, decode_server_message,
         encode_client_message,
     },
+};
+#[cfg(target_os = "linux")]
+use std::{
+    os::unix::{ffi::OsStringExt, fs::MetadataExt},
+    sync::{Arc, Barrier},
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -80,14 +80,17 @@ impl Drop for Server {
     }
 }
 
+#[cfg(target_os = "linux")]
 struct ProcessCleanup(Option<(u32, u64)>);
 
+#[cfg(target_os = "linux")]
 impl ProcessCleanup {
     fn disarm(&mut self) {
         self.0 = None;
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for ProcessCleanup {
     fn drop(&mut self) {
         let Some((pid, start)) = self.0 else {
@@ -108,10 +111,12 @@ impl Drop for ProcessCleanup {
     }
 }
 
+#[cfg(target_os = "linux")]
 struct ManagementClient {
     reader: BufReader<UnixStream>,
 }
 
+#[cfg(target_os = "linux")]
 impl ManagementClient {
     fn request(
         &mut self,
@@ -437,6 +442,7 @@ fn read_message(reader: &mut impl Read) -> TestResult<ServerMessage> {
     Ok(decode_server_message(&framed)?)
 }
 
+#[cfg(target_os = "linux")]
 fn read_management_message(reader: &mut impl Read) -> TestResult<ManagementServerMessage> {
     let mut header = [0; management::HEADER_BYTES];
     reader.read_exact(&mut header)?;
@@ -449,6 +455,7 @@ fn read_management_message(reader: &mut impl Read) -> TestResult<ManagementServe
     Ok(management::decode_server_message(&framed)?)
 }
 
+#[cfg(target_os = "linux")]
 fn wait_management_record(path: &Path) -> TestResult<ManagementRecord> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -465,6 +472,7 @@ fn wait_management_record(path: &Path) -> TestResult<ManagementRecord> {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn acquire_management(
     record_path: &Path,
     identity: &LiveIdentity,
@@ -624,7 +632,7 @@ fn wait_bounded(server: &mut Server) -> TestResult<ExitStatus> {
 }
 
 fn wait_process_gone(pid: u32) -> TestResult {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
         if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
@@ -637,6 +645,7 @@ fn wait_process_gone(pid: u32) -> TestResult {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn process_start_identity(pid: u32) -> TestResult<u64> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
     let fields = stat.rsplit_once(')').ok_or("malformed process stat")?.1;
@@ -647,10 +656,12 @@ fn process_start_identity(pid: u32) -> TestResult<u64> {
         .parse()?)
 }
 
+#[cfg(target_os = "linux")]
 fn process_identity_matches(pid: u32, start: u64) -> bool {
     process_start_identity(pid).is_ok_and(|current| current == start)
 }
 
+#[cfg(target_os = "linux")]
 fn process_group_and_session(pid: u32) -> TestResult<(u32, u32)> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
     let (_, fields) = stat
@@ -669,6 +680,7 @@ fn process_group_and_session(pid: u32) -> TestResult<(u32, u32)> {
     ))
 }
 
+#[cfg(target_os = "linux")]
 fn process_cpu_ticks(pid: u32) -> TestResult<u64> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
     let (_, fields) = stat
@@ -956,6 +968,7 @@ fn pty_pressure_disconnect_ignores_stale_client_readiness() -> TestResult {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal() -> TestResult {
     let dir = TestDir::new("transient-pty-eio")?;
     let socket = dir.0.join("orbit.sock");
@@ -1009,6 +1022,7 @@ fn transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal() -> Test
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn writing_descendant_cannot_hold_server_open_after_known_child_exit() -> TestResult {
     let dir = TestDir::new("writing-descendant")?;
     let socket = dir.0.join("orbit.sock");
@@ -1690,21 +1704,22 @@ fn stale_socket_and_safe_signal_shutdown() -> TestResult {
     let shell_pid = wait_file_text(&shell_pid_file)?.trim().parse()?;
     let foreground_pid_file = dir.0.join("foreground.pid");
     client.paste(format!(
-        "sh -c 'trap \"\" HUP; echo $$ > {}; printf \"\\033]2;foreground-ready\\033\\\\\"; exec sleep 60'",
+        "sh -c 'trap \"\" HUP; echo $$ > {}; printf \"\\033]2;foreground-ready\\033\\\\\"; exec sleep 2'",
         foreground_pid_file.display()
     ))?;
     client.enter()?;
     client.wait_title("foreground-ready")?;
-    let foreground_pid = fs::read_to_string(&foreground_pid_file)?.trim().parse()?;
-    let foreground_start = process_start_identity(foreground_pid)?;
-    let _foreground_cleanup = ProcessCleanup(Some((foreground_pid, foreground_start)));
+    let foreground_pid = fs::read_to_string(&foreground_pid_file)?
+        .trim()
+        .parse::<u32>()?;
     let mode = fs::metadata(&socket)?.permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 
     assert!(server.shutdown()?.success());
     assert!(!socket.exists());
     wait_process_gone(shell_pid)?;
-    assert!(process_identity_matches(foreground_pid, foreground_start));
+    assert_eq!(unsafe { libc::kill(foreground_pid as libc::pid_t, 0) }, 0);
+    wait_process_gone(foreground_pid)?;
 
     fs::write(&socket, b"do not remove")?;
     let mut refused = spawn_default_server(&dir.0)?;
@@ -1750,6 +1765,7 @@ fn shutdown_hups_the_unreaped_direct_child() -> TestResult {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn shutdown_escalates_foreground_and_permits_a_detached_process() -> TestResult {
     let dir = TestDir::new("portable-shutdown")?;
     let socket = dir.0.join("orbit.sock");
@@ -1888,6 +1904,33 @@ fn signal_during_startup_removes_socket() -> TestResult {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn macos_management_launch_fails_before_session_side_effects() -> TestResult {
+    let dir = TestDir::new("management-unsupported")?;
+    let socket = dir.0.join("orbit.sock");
+    let marker = dir.0.join("child-ran");
+    let status = server_command()
+        .arg(&socket)
+        .args([
+            "--management-v1",
+            "session",
+            "run",
+            "component",
+            "--",
+            "/bin/sh",
+            "-c",
+            "touch \"$ORBIT_CHILD_RAN\"",
+        ])
+        .env("ORBIT_CHILD_RAN", &marker)
+        .status()?;
+
+    assert!(!status.success());
+    assert!(fs::read_dir(&dir.0)?.next().is_none());
+    Ok(())
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestResult {
     let dir = TestDir::new("managed-owner")?;
     let socket = dir.0.join("orbit.sock");
@@ -2052,6 +2095,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn management_authority_negatives_fail_closed_without_stopping_session() -> TestResult {
     let dir = TestDir::new("management-negatives")?;
     let socket = dir.0.join("orbit.sock");

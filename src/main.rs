@@ -1,5 +1,3 @@
-#![cfg(target_os = "linux")]
-
 mod attachment;
 mod diagnostic;
 mod interaction;
