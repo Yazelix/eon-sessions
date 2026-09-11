@@ -1021,11 +1021,6 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    pub(crate) fn fill_output(client: &mut Client) -> Result {
-        client.fill_output_for_test();
-        Ok(())
-    }
-
     #[test]
     fn synchronized_presentation_coalesces_defers_and_times_out() -> Result {
         let (mut client, mut peer) = attached_client()?;
@@ -1094,7 +1089,7 @@ pub(crate) mod tests {
         expect_frame(&mut attaching, &mut attaching_peer, 6, "exit-release")?;
 
         let (mut blocked, _) = attached_client()?;
-        fill_output(&mut blocked)?;
+        blocked.fill_output_for_test();
         terminal.vt_write(b"\x1b[?2026hpressure");
         assert!(presentation.publish_change(Some(&mut blocked), &terminal)?);
         terminal.vt_write(b"\x1b[?2026l");
@@ -1173,7 +1168,7 @@ pub(crate) mod tests {
     #[test]
     fn clipboard_output_pressure_disconnects_without_retaining_effects() -> Result {
         let (mut client, _peer) = attached_client()?;
-        fill_output(&mut client)?;
+        client.fill_output_for_test();
         let pending = RefCell::new(PendingClipboardWrites {
             enabled: true,
             writes: VecDeque::from([(ClipboardLocation::Standard, "copy".into())]),

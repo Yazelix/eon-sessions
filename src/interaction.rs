@@ -1008,10 +1008,7 @@ mod tests {
         presentation::Extractor,
         runtime::{
             INITIAL_SIZE, MAX_PTY_WRITE_BYTES,
-            tests::{
-                attached_client, fill_output, flush_message, terminal, terminal_with_scrollback,
-                wheel,
-            },
+            tests::{attached_client, flush_message, terminal, terminal_with_scrollback, wheel},
         },
     };
     use libghostty_vt::selection::Selection;
@@ -1275,7 +1272,7 @@ mod tests {
         assert_eq!(selection.copied.as_deref(), Some("alpha 界"));
 
         let (mut blocked, _) = attached_client()?;
-        fill_output(&mut blocked)?;
+        blocked.fill_output_for_test();
         let stable_revision = presentation.revision;
         assert!(!handle_client_message(
             &mut blocked,
@@ -1503,7 +1500,7 @@ mod tests {
         presentation.revision = saved_revision;
 
         let (mut blocked, _) = attached_client()?;
-        fill_output(&mut blocked)?;
+        blocked.fill_output_for_test();
         assert!(!handle_client_message(
             &mut blocked,
             ClientMessage::Selection(SelectionAction::Begin {
@@ -2244,7 +2241,7 @@ mod tests {
         terminal.vt_write(b"\x1b[?1000l\x1b[?1006l");
 
         let (mut blocked_client, _) = attached_client()?;
-        fill_output(&mut blocked_client)?;
+        blocked_client.fill_output_for_test();
         let blocked_revision = presentation.revision;
         let blocked_offset = terminal.scrollbar()?.offset;
         assert!(!handle_client_message(
@@ -2488,7 +2485,7 @@ mod tests {
         terminal.vt_write(b"\x1b[?1007l\x1b[?1049l");
 
         let (mut blocked, _) = attached_client()?;
-        fill_output(&mut blocked)?;
+        blocked.fill_output_for_test();
         assert!(!handle_client_message(
             &mut blocked,
             ClientMessage::ScrollVertical {

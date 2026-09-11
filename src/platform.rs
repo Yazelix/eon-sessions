@@ -29,14 +29,8 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(2);
 const SHUTDOWN_POLL: Duration = Duration::from_millis(10);
 const PTY_EIO_RETRY_DELAY: Duration = Duration::from_millis(10);
-#[cfg(target_os = "linux")]
 const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY as libc::c_ulong;
-#[cfg(target_os = "macos")]
-const TIOCSCTTY_REQUEST: libc::c_ulong = 0x2000_7461;
-#[cfg(target_os = "linux")]
 const TIOCSWINSZ_REQUEST: libc::c_ulong = libc::TIOCSWINSZ as libc::c_ulong;
-#[cfg(target_os = "macos")]
-const TIOCSWINSZ_REQUEST: libc::c_ulong = 0x8008_7467;
 
 pub(crate) enum PtyIo {
     Ready(usize),

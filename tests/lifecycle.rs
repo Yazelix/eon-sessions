@@ -782,16 +782,14 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
     let socket = dir.0.join("orbit.sock");
     let server = spawn_server(&socket)?;
 
-    let mut incompatible = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
-    incompatible.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut incompatible = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
     let mut unsupported = encode_client_message(&ClientMessage::Hello)?;
     unsupported[4..6].copy_from_slice(&(session::VERSION + 1).to_le_bytes());
     incompatible.write_all(&unsupported)?;
     assert_eq!(incompatible.read(&mut [0; 1])?, 0);
     drop(incompatible);
 
-    let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
-    unordered.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut unordered = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
     write_message(&mut unordered, &ClientMessage::Focus(FocusEvent::Gained))?;
     match read_message(&mut unordered)? {
         ServerMessage::Failure(failure) => assert_eq!(failure.code, FailureCode::Protocol),
@@ -800,10 +798,8 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
     drop(unordered);
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut first = connect_bounded(&socket, deadline)?;
-    first.set_read_timeout(Some(Duration::from_secs(2)))?;
-    let mut second = connect_bounded(&socket, deadline)?;
-    second.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut first = connect_with_timeouts(&socket, deadline)?;
+    let mut second = connect_with_timeouts(&socket, deadline)?;
 
     assert_eq!(read_message(&mut second)?, ServerMessage::Busy);
     drop(second);
@@ -883,8 +879,7 @@ fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> Te
     drop(rejected);
 
     let mut observer = MetadataObserver::attach(&socket)?;
-    let mut excess = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
-    excess.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut excess = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
     let _ = write_message(&mut excess, &ClientMessage::ObserveMetadata);
     assert_eq!(read_message(&mut excess)?, ServerMessage::Busy);
 
@@ -1486,8 +1481,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     }))?;
     let _ = second.reader.get_mut().write_all(&wheel.repeat(4096));
     fs::write(&pressure, b"pressure")?;
-    let mut busy = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
-    busy.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut busy = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
     write_message(&mut busy, &ClientMessage::Hello)?;
     assert_eq!(read_message(&mut busy)?, ServerMessage::Busy);
     drop(busy);
