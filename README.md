@@ -23,10 +23,10 @@ failure path instead of publishing an estimated position.
 
 ORBF v2 / ORBS v11 intentionally rejects the previous wire versions without an
 adapter. Producer source `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
-is accepted in `orb-scrollback-position-cpb`; the visible indicator and installed
-delivery belong to the Venus and Eon follow-up beads.
-Existing Venus and Eon compositions, including independent Eonova packaging,
-remain on their exact accepted ORBF v1 / ORBS v10 pins until coordinated updates.
+is accepted in `orb-scrollback-position-cpb`. Venus source
+`d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86` and Eon's current alpha component
+graph consume that exact Orbit revision. Eonova remains an independent product
+line and is not part of Eon's component graph.
 
 The session boundary includes one input-capable attachment, one bounded
 read-only title/CWD observer, frames, lifecycle, semantic input, selection/copy,
@@ -308,9 +308,9 @@ authoritative terminal state. The initial contract covers surviving client and
 observer exits and disconnections while Orbit continues running; it does not
 cover Orbit or machine restarts.
 
-Venus source `e5e37a3df119ee2bcfa2493a2ce5a46307493732` consumes canonical ORBF v1
-over ORBS v6 at exact Orbit proof
-`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`. Eon source
+The first accepted cross-repository integration used Venus source
+`e5e37a3df119ee2bcfa2493a2ce5a46307493732` with canonical ORBF v1 over
+ORBS v6 at exact Orbit proof `780f5d746175b4a9b71df57c51ed4bfcc4c4c375`. Eon source
 `10c402b3754d600a6bb0a0da0de2ff6d1d4feca3` composes that accepted pair;
 Eonova source `92acf64e8c43531bd4c5d639bdfa99b717dfe5b3` consumes the resulting Eon
 runtime. Accepted x86_64 Linux evidence
@@ -347,9 +347,8 @@ Bead is accepted and the exact proof-bearing commit is recorded.
 
 ## Initial boundaries
 
-- Linux first and the only required initial target; the product core and
-  cross-repository contracts remain macOS-credible without promising a macOS
-  backend, build, CI, packaging, or support
+- x86_64 Linux is the only proved target; Apple Silicon macOS is the active
+  Nix-only expansion under ORB-C14 and remains unsupported until native proof
 - local Unix socket transport
 - one terminal session, one input-capable client, and one read-only metadata
   observer
@@ -362,7 +361,7 @@ Bead is accepted and the exact proof-bearing commit is recorded.
   proved at
   `838b67652c4df1979e599b9c401ee664ffac66bd`, Orbit accepts the minimum Venus
   consumer relationship recorded at
-  `8149002c7275a00db1c08fded171e09f249dd977`, and current Venus proof
+  `8149002c7275a00db1c08fded171e09f249dd977`, and Venus proof
   `8929c9f9d151641a343813ddeb6005cb9c771286` preserves that boundary while
   passing the pre-graduation workload envelope
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,

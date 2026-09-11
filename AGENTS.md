@@ -245,6 +245,14 @@ Mars and Zellij architecture while the experiment runs.
 Use `Superlogical terminal multiplexer` for Superlogical's published first
 product. Do not invent a shorter product name or research codename.
 
+## Status
+
+Orbit's accepted runtime proofs remain x86_64 Linux. On 2026-09-11 the user
+activated one Nix-only `aarch64-darwin` expansion for Eon. `ORB-C14` owns that
+planned platform proof. Orbit is the sole active implementation frontier;
+Venus and Eon macOS implementation wait for its accepted revision. Apple
+Silicon macOS is not supported until the contract is proved.
+
 ## Core rule
 
 The user decides scope. Do not add a feature, compatibility surface, module,
@@ -301,9 +309,9 @@ accepts and authorizes the proof-bearing commit. Commit the candidate while the
 Bead remains in progress, then update the index with that exact revision and
 close the Bead in a metadata follow-up. Never point proof at a moving branch.
 
-## Fixed initial boundaries
+## Fixed product boundaries
 
-- Linux first
+- x86_64 Linux proved first; `aarch64-darwin` is the only active expansion
 - local Unix socket transport
 - one terminal session
 - one active client; multiplayer is a deliberate non-goal
@@ -314,29 +322,33 @@ close the Bead in a metadata follow-up. Never point proof at a moving branch.
 
 Do not broaden these boundaries without an explicit user decision.
 
-## Linux-first portable core
+## Portable core and active Apple Silicon frontier
 
-Linux is the only required implementation, packaging, and verification target
-for the initial experiment. This does not authorize a Linux-shaped product
-core. Terminal authority, semantic input, presentation frames, revisions,
-protocols, and durable state must remain platform-neutral.
+x86_64 Linux remains the only proved Orbit platform. `aarch64-darwin` is the
+only additional implementation and verification target authorized by the user;
+its initial package path is Nix-only. Terminal authority, semantic input,
+presentation frames, revisions, protocols, and durable state remain one shared
+platform-neutral core.
 
 Keep PTY creation, process groups, signals, polling, file-descriptor flags,
 socket paths and permissions, and platform-specific EOF or error behavior
 behind one narrow platform seam. Prefer the smallest concrete seam justified by
-current code; do not build a generic portability framework, a speculative trait
-hierarchy, a macOS backend, cross-compilation, or macOS CI until the user
-chooses that scope.
+current code. Add only Darwin mechanics required by `ORB-C14`; do not build a
+generic portability framework, speculative trait hierarchy, second owner loop,
+or another platform backend. One bounded Apple Silicon hosted-CI job may prove
+headless runtime behavior that cannot run locally, but compilation alone is not
+runtime proof.
 
 Every product implementation Bead records one portability disposition for its
-result: `neutral`, `isolated platform dependency`, or `macOS blocker`. A blocker
-states the exact assumption, affected contracts or boundary, replacement shape,
-and estimated removal cost, then stops for user choice before it becomes part
-of a cross-repository protocol or durable format.
+result: `neutral`, `isolated Linux dependency`, `isolated Darwin dependency`,
+or `platform blocker`. A blocker states the exact assumption, affected
+contracts or boundary, replacement shape, and estimated removal cost, then
+stops for user choice before it becomes part of a cross-repository protocol or
+durable format.
 
-The crate gate evaluates macOS feasibility, but portability alone does not
-justify a larger dependency. Actual macOS behavior or support receives a
-contract ID only after the user authorizes that product scope.
+Portability alone does not justify a larger dependency. `x86_64-darwin`,
+signing, notarization, direct distribution, remote transport, and restart
+persistence remain outside `ORB-C14`.
 
 `orb-pmp` is the platform-seam gate. It must close after the Linux PTY candidate
 and before `orb-bi4.3` begins the structured-presentation implementation.

@@ -561,6 +561,31 @@ bytes.
       composed recovery and Stop acceptance is recorded at Eon
       `0bf0b165d06b4a8162be497011070f61f6c2000a`.
 
+## ORB-C14 — Apple Silicon macOS platform
+
+- **Status:** Planned
+- **Consumer:** Exact Venus and Eon compositions on `aarch64-darwin`.
+- **Trigger:** A Nix-composed product launches Orbit with one local Unix
+  endpoint and one PTY child on Apple Silicon macOS.
+- **Result:** The same Orbit package, owner loop, terminal authority, semantic
+  input, canonical protocols, presentation frames, and management state used
+  on Linux preserve ORB-C1 through ORB-C13. Only PTY, process-group, signal,
+  polling, descriptor, resize, EOF, peer-identity, socket, permission, and
+  cleanup mechanics vary inside the existing platform owner.
+- **Important failures:** Unsupported Darwin mechanics, unsafe endpoint or peer
+  identity, incompatible libghostty behavior, lifecycle mismatch, or incomplete
+  native evidence fails explicitly. Target evaluation or compilation alone is
+  not a runtime or support claim.
+- **Owner:** Orbit's existing platform seam owns native mechanics; the shared
+  runtime and protocol owners retain every product invariant.
+- **Boundary:** ORB-C12 keeps its accepted bounded process-group and direct-child
+  semantics, including the possibility of deliberately detached survivors.
+  `x86_64-darwin`, signing, notarization, direct distribution, remote transport,
+  and restart persistence remain unsupported.
+- **Proof:** None.
+- **Open proof:** `orb-prove-orbit-apple-silicon-macos-w4j` must record exact
+  native hardware, OS, toolchain, artifacts, commands, failures, and results.
+
 ## Focused terminal conformance corpus
 
 The current corpus groups six accepted `orb-8s0` tests and the accepted x12
@@ -641,7 +666,5 @@ Orbit's accepted long-term direction includes host-owned terminal-session state
 and native, web, or mobile clients. Eon owns product workspace topology and
 policy. Multiple sessions, windows, tabs, splits, restart recovery, remote
 transport, web, mobile, and multiplayer are not initial Orbit contracts and
-receive no IDs until the user authorizes their implementation scope. macOS
-credibility is an architecture discipline rather than a claim of supported
-behavior; actual macOS runtime support also receives no contract ID until the
-user authorizes it.
+receive no IDs until the user authorizes their implementation scope. ORB-C14 is
+the sole authorized platform expansion and remains unproved.
