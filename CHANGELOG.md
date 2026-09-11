@@ -6,7 +6,7 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
-- Accepted Orbit `b08a4747294d2755c508d75fc9a1b230a33a3a30` proves ordinary
+- Accepted Orbit `6c90ef467abb520a2226a8674a7d0d7fb6f54099` proves ordinary
   real-PTY Sessions on Apple Silicon macOS with the shared Unix runtime path,
   including attach, input, resize, detach/reconnect, EOF, private endpoints,
   and bounded signal shutdown. Management v1 fails before Session side effects

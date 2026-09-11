@@ -106,13 +106,13 @@ bytes.
 - **Owner:** Orbit's concrete runtime coordinator with the isolated platform PTY
   lifecycle.
 - **Boundary:** Persistence across Orbit or machine restart is excluded.
-- **Proof:** `b08a4747294d2755c508d75fc9a1b230a33a3a30`
+- **Proof:** `6c90ef467abb520a2226a8674a7d0d7fb6f54099`
   - **Environment:** x86_64 Linux; Apple M1 arm64, macOS 15.7.9 (24G830)
   - **Evidence:**
     - [`transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal`](../tests/lifecycle.rs)
     - [`simultaneous_stale_socket_claim_has_one_reachable_owner`](../tests/lifecycle.rs)
     - Native Apple Silicon and Linux CI run
-      [34646366869](https://github.com/Yazelix/eon-sessions/actions/runs/34646366869)
+      [34649967366](https://github.com/Yazelix/eon-sessions/actions/runs/34649967366)
 
 ## ORB-C2 — Sole terminal-state authority
 
@@ -483,7 +483,7 @@ bytes.
     whole-descendant cleanup. Native macOS proof covers direct-child HUP and
     reaping; the special detached and foreground-group topology remains
     Linux-proved only.
-- **Proof:** `b08a4747294d2755c508d75fc9a1b230a33a3a30`
+- **Proof:** `6c90ef467abb520a2226a8674a7d0d7fb6f54099`
   - **Environment:** x86_64 Linux; Apple M1 arm64, macOS 15.7.9 (24G830)
   - **Evidence:**
     - [`shutdown_hups_the_unreaped_direct_child`](../tests/lifecycle.rs)
@@ -493,7 +493,7 @@ bytes.
     - Prior accepted Linux lifecycle proof
       `7de9980ffbd6417758698d5c33356204eeb24de5`
     - Native Apple Silicon CI run
-      [34646366869](https://github.com/Yazelix/eon-sessions/actions/runs/34646366869)
+      [34649967366](https://github.com/Yazelix/eon-sessions/actions/runs/34649967366)
       proves direct-child HUP/reap and bounded signal shutdown.
     - Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54` consumes this shutdown
       boundary; composed recovery and Stop acceptance is recorded at Eon
@@ -581,7 +581,7 @@ bytes.
   canonical protocols, and presentation frames used on Linux preserve the
   native platform-sensitive parts of ORB-C1 through ORB-C12. Shared Unix logic
   owns PTY, process-group, signal, polling, descriptor, resize, EOF, socket,
-  permission, and cleanup behavior; only OS ioctl values vary there. ORB-C13
+  permission, and cleanup behavior; libc supplies the OS ioctl values. ORB-C13
   management remains Linux-only and fails before Session side effects on macOS.
 - **Important failures:** Unsupported Darwin mechanics, unsafe endpoint or peer
   identity, incompatible libghostty behavior, lifecycle mismatch, or incomplete
@@ -593,11 +593,11 @@ bytes.
   direct-child shutdown. ORB-C13 management, Venus and Eon integration, Nix
   packaging, `x86_64-darwin`, signing, notarization, direct distribution,
   remote transport, and restart persistence remain unsupported.
-- **Proof:** `b08a4747294d2755c508d75fc9a1b230a33a3a30`
+- **Proof:** `6c90ef467abb520a2226a8674a7d0d7fb6f54099`
   - **Environment:** GitHub-hosted Apple M1 arm64, macOS 15.7.9 (24G830),
     Rust/Cargo 1.98.1, Zig 0.15.2.
   - **Evidence:** Native Apple Silicon CI run
-    [34646366869](https://github.com/Yazelix/eon-sessions/actions/runs/34646366869)
+    [34649967366](https://github.com/Yazelix/eon-sessions/actions/runs/34649967366)
     passed all 30 runnable Orbit unit tests and all 14 native lifecycle tests;
     the same source passed all 33 runnable Orbit unit tests and all 18 Linux
     lifecycle tests. The native lifecycle covers attachment negotiation, real
