@@ -1093,7 +1093,7 @@ mod tests {
         assert_eq!(format_selection(&text)?, "A");
 
         let (mut client, mut peer) = attached_client()?;
-        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test()?;
         let mut terminal = terminal()?;
         terminal.vt_write("alpha 界\r\n".as_bytes());
         let mut size = INITIAL_SIZE;
@@ -1306,7 +1306,7 @@ mod tests {
     #[test]
     fn authoritative_left_pointer_route_is_pinned_and_shift_selects() -> Result {
         let (mut client, mut peer) = attached_client()?;
-        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test()?;
         let mut terminal = terminal()?;
         terminal.vt_write(b"alpha beta\r\n\x1b[?1000h\x1b[?1006h");
         let mut size = INITIAL_SIZE;
@@ -1803,7 +1803,7 @@ mod tests {
     #[test]
     fn host_selection_supersedes_unpresented_drag_frames_before_release() -> Result {
         let (mut client, mut peer) = attached_client()?;
-        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test()?;
         let mut terminal = terminal()?;
         terminal.vt_write(b"alpha beta\r\n");
         let mut size = INITIAL_SIZE;
@@ -1874,7 +1874,7 @@ mod tests {
     #[test]
     fn conformance_c8_authoritative_viewport_routes_wheel_and_key_from_terminal_state() -> Result {
         let (mut client, mut peer) = attached_client()?;
-        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test()?;
         let mut terminal = terminal_with_scrollback(100)?;
         for line in 0..32 {
             terminal.vt_write(format!("history-{line:02}\r\n").as_bytes());
@@ -2282,7 +2282,7 @@ mod tests {
     #[test]
     fn conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative() -> Result {
         let (mut client, mut peer) = attached_client()?;
-        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test()?;
         let mut terminal = terminal_with_scrollback(16 * 1024 * 1024)?;
         for line in 0..120 {
             terminal.vt_write(format!("history-{line:03}\r\n").as_bytes());

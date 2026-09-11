@@ -51,10 +51,12 @@ pub(crate) struct Pty {
 
 impl Pty {
     #[cfg(test)]
-    pub(crate) fn without_child_for_test(size: SurfaceSize) -> Result<Self> {
-        let (master, _) = open_pty(size)?;
+    pub(crate) fn without_child_for_test() -> Result<Self> {
         Ok(Self {
-            master,
+            master: OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/null")?,
             child: None,
         })
     }
@@ -86,6 +88,10 @@ impl Pty {
     }
 
     pub(crate) fn resize(&self, size: SurfaceSize) -> Result {
+        #[cfg(test)]
+        if self.child.is_none() {
+            return Ok(());
+        }
         let winsize = winsize(size);
         let result = unsafe { libc::ioctl(self.master.as_raw_fd(), TIOCSWINSZ_REQUEST, &winsize) };
         if result == -1 {

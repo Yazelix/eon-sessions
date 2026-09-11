@@ -1182,7 +1182,7 @@ pub(crate) mod tests {
         let (mut client, mut peer) = attached_client()?;
         write_message(&mut peer, &ClientMessage::Paste(b"ignored".to_vec()))?;
         client.close_when_flushed();
-        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test()?;
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
@@ -1205,7 +1205,7 @@ pub(crate) mod tests {
     #[test]
     fn pty_write_pressure_rejects_whole_input_and_closes_client() -> Result {
         let (mut client, mut peer) = attached_client()?;
-        let pty = Pty::without_child_for_test(INITIAL_SIZE)?;
+        let pty = Pty::without_child_for_test()?;
         let mut terminal = terminal()?;
         let mut size = INITIAL_SIZE;
         let writes = RefCell::new(VecDeque::new());
