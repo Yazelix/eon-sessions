@@ -203,13 +203,18 @@ impl Client {
         let deadline = Instant::now() + Duration::from_secs(5);
         let hello = encode_client_message(&ClientMessage::Hello)?;
         loop {
-            let stream = connect_bounded(socket, deadline)?;
-            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+            let stream = connect_bounded(socket, deadline)
+                .map_err(|error| format!("attach connect: {error}"))?;
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .map_err(|error| format!("attach read timeout: {error}"))?;
+            stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .map_err(|error| format!("attach write timeout: {error}"))?;
             let mut reader = BufReader::new(stream);
             if let Err(error) = reader.get_mut().write_all(&hello) {
                 if Instant::now() >= deadline {
-                    return Err(error.into());
+                    return Err(format!("attach write: {error}").into());
                 }
                 thread::yield_now();
                 continue;
@@ -231,7 +236,7 @@ impl Client {
                     Err(error) if Instant::now() < deadline && error.is::<std::io::Error>() => {
                         break;
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => return Err(format!("attach response: {error}").into()),
                 }
             }
             thread::yield_now();
