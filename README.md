@@ -13,6 +13,13 @@ disconnect and later attach to the same live process. The dependency-free
 codec and revision reducer, and the ORBS v11 session messages. Orbit renders no
 terminal and clients do not reconstruct terminal authority from raw output.
 
+The ordinary Orbit server and client are proved on x86_64 Linux and Apple
+Silicon macOS. Native macOS evidence covers real PTY spawn, attach, input,
+resize, detach/reconnect, private socket permissions, EOF, and bounded signal
+shutdown. Management v1 remains Linux-only and fails before PTY or socket side
+effects on macOS; Venus, Eon, Nix packaging, signing, and distribution have not
+yet adopted the macOS target.
+
 Each frame carries `scroll_position.rows_from_live` and
 `scroll_position.history_rows`: current wrapped display-row counts, with history
 excluding the active viewport. Distance is zero at live bottom and cannot exceed
@@ -228,7 +235,7 @@ role negotiation, rejects an excess role with `Busy`, retains the last PTY size
 while detached, reaps an exited child, and removes the socket after normal or
 signal-driven shutdown.
 
-The private same-boot management owner is enabled with
+On Linux, the private same-boot management owner is enabled with
 `serve SOCKET --management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
 It derives `SOCKET.management` and `SOCKET.record`, publishes the live record
 only after the PTY, terminal owner, and both sockets are usable, and permits one
@@ -244,25 +251,27 @@ Eonova consume this owner for accepted same-boot recovery and owner-routed
 Stop; this mode does not promise logout, reboot, machine-restart, topology, or
 same-UID isolation.
 
-Orbit starts a Linux PTY Session with ordinary user process permissions and no
-service-manager or delegated-cgroup requirement. SIGINT, SIGTERM, SIGHUP, and
-an authorized management Stop send SIGHUP to the initial PTY process group and
-the terminal's current foreground group. Orbit gives the child up to 500 ms to
-exit. If it remains unreaped, Orbit sends SIGKILL to its still-stable initial
-group and re-reads the terminal's foreground group before escalating it. If the
-child exits during the grace period, Orbit sends no later signal to the cached
-foreground-group number. Orbit requires the direct child to be reaped within
-two seconds before reporting success. A child that had already exited before
-shutdown is reaped without signaling its recyclable numeric identity.
+Orbit starts ordinary PTY Sessions on x86_64 Linux and Apple Silicon macOS with
+user process permissions and no service-manager requirement. SIGINT, SIGTERM,
+and SIGHUP send SIGHUP to the initial PTY process group and the terminal's
+current foreground group; authorized management Stop uses the same path on
+Linux. Orbit gives the child up to 500 ms to exit. If it remains unreaped,
+Orbit sends SIGKILL to its still-stable initial group and re-reads the
+terminal's foreground group before escalating it. If the child exits during
+the grace period, Orbit sends no later signal to the cached foreground-group
+number. Orbit requires the direct child to be reaped within two seconds before
+reporting success. A child that had already exited before shutdown is reaped
+without signaling its recyclable numeric identity.
 
 This is terminal cleanup, not whole-process-tree ownership. A deliberately
 detached process, a non-foreground group outside the initial group, or a
 SIGHUP-ignoring foreground job whose shell exits during the grace period may
 survive. Orbit does not scan process names, ancestry, session IDs, or procfs to
 find it. Client disconnection remains non-destructive and separate from
-explicit Session stop. This is not a macOS support claim.
+explicit Session stop. Native macOS proof covers direct-child HUP and reaping;
+the special detached and foreground-group topology remains Linux-proved only.
 
-The proof pins `libc` 0.2.189 for the small Linux `openpty`, controlling-terminal,
+The proof pins `libc` 0.2.189 for the small Unix `openpty`, controlling-terminal,
 poll, resize, and signal boundary. This avoids `portable-pty` 0.9.0's general
 cross-platform abstraction and dependency stack. `rustix` 1.1.4 exposes the
 lower-level PTY calls, but a complete open-PTY path also needs
@@ -274,11 +283,11 @@ reduced owned Rust by 44 lines while adding `pty-process`, `rustix`, and
 `linux-raw-sys` to the normal Linux graph. Adopting it remains a separate crate
 decision.
 
-Linux PTY, process-group, descriptor, polling, signal, socket-path, permission,
-and EOF mechanics live in one concrete `src/platform.rs` seam. The owner loop
-sees platform-neutral PTY I/O and readiness outcomes; terminal authority,
-semantic input, and the attachment protocol do not contain `libc` values. This
-is an isolation boundary, not a macOS backend or support claim.
+Shared Unix PTY, process-group, descriptor, polling, signal, socket-path,
+permission, and EOF mechanics live in one concrete `src/platform.rs` seam.
+Only OS ioctl values and Linux management identity mechanics diverge. The owner
+loop sees platform-neutral PTY I/O and readiness outcomes; terminal authority,
+semantic input, and the attachment protocol do not contain `libc` values.
 
 The subprocess checks in [`tests/lifecycle.rs`](tests/lifecycle.rs) use typed
 protocol responses, presentation frames, and PTY state as synchronization. They
@@ -316,8 +325,8 @@ Eonova source `92acf64e8c43531bd4c5d639bdfa99b717dfe5b3` consumes the resulting 
 runtime. Accepted x86_64 Linux evidence
 covers same-boot recovery, owner-routed Stop, and native Wayland delivery to the
 primary selection. Ordinary clipboard delivery, Wayland without data-control,
-broader compositors, and macOS remain unproved. No adapter, feature probe,
-dual-version support, or compatibility window exists.
+broader compositors, and macOS Venus/Eon composition remain unproved. No
+adapter, feature probe, dual-version support, or compatibility window exists.
 ORBS v7 at `baf8aa28dcaa50484cd221aa7730defedc2356bb` expanded the accepted
 ORBS v6 one-row preview into a bounded row window.
 ORBS v8 at `d9b22eb294f8f42b4f49324fd5467eab239c2917` replaced client-authored
@@ -347,8 +356,9 @@ Bead is accepted and the exact proof-bearing commit is recorded.
 
 ## Initial boundaries
 
-- x86_64 Linux is the only proved target; Apple Silicon macOS is the active
-  Nix-only expansion under ORB-C14 and remains unsupported until native proof
+- ordinary Orbit PTY Sessions are proved on x86_64 Linux and Apple Silicon
+  macOS; management, Venus/Eon composition, packaging, and distribution remain
+  unsupported on macOS under partial ORB-C14
 - local Unix socket transport
 - one terminal session, one input-capable client, and one read-only metadata
   observer
@@ -503,7 +513,7 @@ features or dependencies.
 Implementation Beads begin with a recorded execution baseline, then pass the
 reference gate and any triggered crate gate before code shape is chosen. Proof
 is tied to exact commits, cross-repository consumers pin those revisions, and
-only the user may grant a narrowly recorded protocol exception. Linux-specific
+only the user may grant a narrowly recorded protocol exception. OS-specific
 runtime mechanics stay behind a narrow platform seam while the core ownership
 and protocol remain platform-neutral.
 

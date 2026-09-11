@@ -6,6 +6,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `b08a4747294d2755c508d75fc9a1b230a33a3a30` proves ordinary
+  real-PTY Sessions on Apple Silicon macOS with the shared Unix runtime path,
+  including attach, input, resize, detach/reconnect, EOF, private endpoints,
+  and bounded signal shutdown. Management v1 fails before Session side effects
+  and remains Linux-only; Venus, Eon, packaging, and distribution adopt macOS
+  separately (partial ORB-C14).
+
 - Publish authoritative scrollback distance and retained-history display-row counts
   in every complete frame, including output, reflow, eviction and reattachment.
   ORBF v2 / ORBS v11 is an explicitly breaking exact-version boundary without a
