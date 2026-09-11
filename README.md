@@ -456,12 +456,16 @@ wrong-output screenshots, or internal timestamps.
 
 The [CI workflow](.github/workflows/ci.yml) runs on pushes to `edge` that
 change Cargo metadata, Rust source or tests, `build.rs`, Rust toolchain files,
-the governance tool or its governed metadata, or the workflow itself. It can
-also be run deliberately with `gh workflow run ci.yml --ref edge`. One standard
-Ubuntu job installs a checksum-verified Zig 0.15.2 toolchain, logs the toolchain
+the governance tool or its governed metadata, or the workflow itself. Its
+standard Ubuntu job installs checksum-verified Zig 0.15.2, logs toolchain
 versions, installs Starcompass from its immutable public Git revision, and runs
-the workspace and consumer-import checks above. Superseded runs are cancelled,
-and each job is limited to ten minutes.
+the workspace and consumer-import checks above with a ten-minute limit.
+
+`gh workflow run ci.yml --ref edge` additionally starts one manual-only Apple
+Silicon macOS job. It verifies the arm64 host and toolchain, installs the
+checksum-verified Zig 0.15.2 macOS archive, and runs the all-target workspace
+check and full native test suite with a twenty-minute limit. Pushes do not start
+the macOS job. Superseded runs are cancelled.
 
 The repository or its owning account must retain a $0 Actions product budget
 with **Stop usage when budget limit is reached**, budget threshold alerts, and
