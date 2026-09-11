@@ -756,9 +756,9 @@ pub(crate) mod tests {
     use orbit_protocol::session::{
         ClientMessage, Failure, FailureCode, Modifiers, MouseAction, MouseButton,
     };
-    use std::{io::Read, os::unix::net::UnixStream};
     #[cfg(target_os = "linux")]
-    use std::{thread, time::Instant};
+    use std::time::Instant;
+    use std::{io::Read, os::unix::net::UnixStream, thread};
 
     pub(crate) fn terminal() -> Result<Terminal<'static, 'static>> {
         terminal_with_scrollback(0)
@@ -991,13 +991,21 @@ pub(crate) mod tests {
         client: &mut Client,
         peer: &mut UnixStream,
     ) -> Result<ServerMessage> {
-        let _ = client.flush()?;
         let caller = std::panic::Location::caller();
-        read_message(peer)
-            .map_err(|error| -> Box<dyn std::error::Error> {
-                format!("client output at {caller}: {error}").into()
-            })?
-            .ok_or_else(|| "client output closed".into())
+        let message = thread::scope(|scope| {
+            let reader = scope.spawn(|| read_message(peer).map_err(|error| error.to_string()));
+            while !reader.is_finished() {
+                client.flush().map_err(|error| error.to_string())?;
+                thread::yield_now();
+            }
+            reader
+                .join()
+                .map_err(|_| "client output reader panicked".to_owned())?
+        })
+        .map_err(|error| -> Box<dyn std::error::Error> {
+            format!("client output at {caller}: {error}").into()
+        })?;
+        message.ok_or_else(|| "client output closed".into())
     }
 
     fn expect_frame(
