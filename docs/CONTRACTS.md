@@ -107,7 +107,8 @@ bytes.
   lifecycle.
 - **Boundary:** Persistence across Orbit or machine restart is excluded.
 - **Proof:** `6c90ef467abb520a2226a8674a7d0d7fb6f54099`
-  - **Environment:** x86_64 Linux; Apple M1 arm64, macOS 15.7.9 (24G830)
+  - **Environment:** x86_64 Linux; GitHub-hosted `macos-15-arm64` runner,
+    macOS 15.7.9 (24G830)
   - **Evidence:**
     - [`transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal`](../tests/lifecycle.rs)
     - [`simultaneous_stale_socket_claim_has_one_reachable_owner`](../tests/lifecycle.rs)
@@ -484,7 +485,8 @@ bytes.
     reaping; the special detached and foreground-group topology remains
     Linux-proved only.
 - **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
-  - **Environment:** x86_64 Linux; Apple M1 arm64, macOS 15.7.9 (24G830)
+  - **Environment:** x86_64 Linux; GitHub-hosted `macos-15-arm64` runner,
+    macOS 15.7.9 (24G830)
   - **Evidence:**
     - [`shutdown_hups_the_unreaped_direct_child`](../tests/lifecycle.rs)
     - [`shutdown_escalates_foreground_and_permits_a_detached_process`](../tests/lifecycle.rs)
@@ -561,8 +563,8 @@ bytes.
     endpoint, permission, record, and polling mechanics with isolated Linux and
     Darwin peer-credential and process-start identity mechanisms.
 - **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
-  - **Environment:** x86_64 Linux; GitHub-hosted Apple M1 arm64, macOS 15.7.9
-    (24G830), Rust/Cargo 1.98.1, Zig 0.15.2
+  - **Environment:** x86_64 Linux; GitHub-hosted `macos-15-arm64` runner,
+    macOS 15.7.9 (24G830), Rust/Cargo 1.98.1, Zig 0.15.2
   - **Evidence:**
     - Accepted management proof `3186519af709a94005974a97212814c05715a99d`
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
@@ -597,8 +599,8 @@ bytes.
   packaging, `x86_64-darwin`, signing, notarization, direct distribution,
   remote transport, and restart persistence remain unsupported.
 - **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
-  - **Environment:** GitHub-hosted Apple M1 arm64, macOS 15.7.9 (24G830),
-    Rust/Cargo 1.98.1, Zig 0.15.2.
+  - **Environment:** GitHub-hosted `macos-15-arm64` runner, macOS 15.7.9
+    (24G830), Rust/Cargo 1.98.1, Zig 0.15.2.
   - **Evidence:** Native Apple Silicon CI run
     [34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
     passed 32 Orbit unit tests (2 ignored) and all 15 native lifecycle tests;
