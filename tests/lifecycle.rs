@@ -144,9 +144,7 @@ impl MetadataObserver {
         let deadline = Instant::now() + Duration::from_secs(5);
         let observe = encode_client_message(&ClientMessage::ObserveMetadata)?;
         loop {
-            let stream = connect_bounded(socket, deadline)?;
-            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+            let stream = connect_with_timeouts(socket, deadline)?;
             let mut reader = BufReader::new(stream);
             reader.get_mut().write_all(&observe)?;
             let mut observing = false;
@@ -203,18 +201,11 @@ impl Client {
         let deadline = Instant::now() + Duration::from_secs(5);
         let hello = encode_client_message(&ClientMessage::Hello)?;
         loop {
-            let stream = connect_bounded(socket, deadline)
-                .map_err(|error| format!("attach connect: {error}"))?;
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .map_err(|error| format!("attach read timeout: {error}"))?;
-            stream
-                .set_write_timeout(Some(Duration::from_secs(2)))
-                .map_err(|error| format!("attach write timeout: {error}"))?;
+            let stream = connect_with_timeouts(socket, deadline)?;
             let mut reader = BufReader::new(stream);
             if let Err(error) = reader.get_mut().write_all(&hello) {
                 if Instant::now() >= deadline {
-                    return Err(format!("attach write: {error}").into());
+                    return Err(error.into());
                 }
                 thread::yield_now();
                 continue;
@@ -236,7 +227,7 @@ impl Client {
                     Err(error) if Instant::now() < deadline && error.is::<std::io::Error>() => {
                         break;
                     }
-                    Err(error) => return Err(format!("attach response: {error}").into()),
+                    Err(error) => return Err(error),
                 }
             }
             thread::yield_now();
@@ -530,6 +521,20 @@ fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
     }
 }
 
+fn connect_with_timeouts(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
+    loop {
+        let stream = connect_bounded(socket, deadline)?;
+        match stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(2))))
+        {
+            Ok(()) => return Ok(stream),
+            Err(_) if Instant::now() < deadline => thread::yield_now(),
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 fn wait_file_text(path: &Path) -> TestResult<String> {
     wait_file_text_matching(path, |text| !text.trim().is_empty())
 }
@@ -775,70 +780,37 @@ fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
 fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult {
     let dir = TestDir::new("negotiation")?;
     let socket = dir.0.join("orbit.sock");
-    let server = spawn_server(&socket).map_err(|error| format!("server spawn: {error}"))?;
+    let server = spawn_server(&socket)?;
 
-    let mut incompatible = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))
-        .map_err(|error| format!("unsupported-version connect: {error}"))?;
-    incompatible
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| format!("unsupported-version read timeout: {error}"))?;
+    let mut incompatible = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
+    incompatible.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut unsupported = encode_client_message(&ClientMessage::Hello)?;
     unsupported[4..6].copy_from_slice(&(session::VERSION + 1).to_le_bytes());
-    incompatible
-        .write_all(&unsupported)
-        .map_err(|error| format!("unsupported-version write: {error}"))?;
-    assert_eq!(
-        incompatible
-            .read(&mut [0; 1])
-            .map_err(|error| format!("unsupported-version disconnect read: {error}"))?,
-        0
-    );
+    incompatible.write_all(&unsupported)?;
+    assert_eq!(incompatible.read(&mut [0; 1])?, 0);
     drop(incompatible);
 
-    let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))
-        .map_err(|error| format!("unordered connect: {error}"))?;
-    unordered
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| format!("unordered read timeout: {error}"))?;
-    write_message(&mut unordered, &ClientMessage::Focus(FocusEvent::Gained))
-        .map_err(|error| format!("unordered write: {error}"))?;
-    match read_message(&mut unordered).map_err(|error| format!("unordered response: {error}"))? {
+    let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
+    unordered.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write_message(&mut unordered, &ClientMessage::Focus(FocusEvent::Gained))?;
+    match read_message(&mut unordered)? {
         ServerMessage::Failure(failure) => assert_eq!(failure.code, FailureCode::Protocol),
         message => return Err(format!("unexpected unordered response: {message:?}").into()),
     }
     drop(unordered);
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut first = connect_bounded(&socket, deadline)
-        .map_err(|error| format!("first pending connect: {error}"))?;
-    first
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| format!("first pending read timeout: {error}"))?;
-    let mut second = connect_bounded(&socket, deadline)
-        .map_err(|error| format!("second pending connect: {error}"))?;
-    second
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|error| format!("second pending read timeout: {error}"))?;
+    let mut first = connect_bounded(&socket, deadline)?;
+    first.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut second = connect_bounded(&socket, deadline)?;
+    second.set_read_timeout(Some(Duration::from_secs(2)))?;
 
-    assert_eq!(
-        read_message(&mut second).map_err(|error| format!("second pending response: {error}"))?,
-        ServerMessage::Busy
-    );
+    assert_eq!(read_message(&mut second)?, ServerMessage::Busy);
     drop(second);
 
-    drop(Client::attach(&socket).map_err(|error| format!("canonical attach: {error}"))?);
-    assert_eq!(
-        first
-            .read(&mut [0; 1])
-            .map_err(|error| format!("expired pending-client disconnect read: {error}"))?,
-        0
-    );
-    assert!(
-        server
-            .shutdown()
-            .map_err(|error| format!("server shutdown: {error}"))?
-            .success()
-    );
+    drop(Client::attach(&socket)?);
+    assert_eq!(first.read(&mut [0; 1])?, 0);
+    assert!(server.shutdown()?.success());
     Ok(())
 }
 
