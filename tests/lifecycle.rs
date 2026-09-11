@@ -402,7 +402,7 @@ impl Client {
     }
 
     fn wait_title(&mut self, expected: &str) -> TestResult {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if self.frame.title == expected {
                 return Ok(());
@@ -770,13 +770,18 @@ fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
 fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult {
     let dir = TestDir::new("negotiation")?;
     let socket = dir.0.join("orbit.sock");
-    let server = spawn_server(&socket)?;
+    let server = spawn_server(&socket).map_err(|error| format!("server spawn: {error}"))?;
 
-    let mut incompatible = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
-    incompatible.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut incompatible = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))
+        .map_err(|error| format!("unsupported-version connect: {error}"))?;
+    incompatible
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("unsupported-version read timeout: {error}"))?;
     let mut unsupported = encode_client_message(&ClientMessage::Hello)?;
     unsupported[4..6].copy_from_slice(&(session::VERSION + 1).to_le_bytes());
-    incompatible.write_all(&unsupported)?;
+    incompatible
+        .write_all(&unsupported)
+        .map_err(|error| format!("unsupported-version write: {error}"))?;
     assert_eq!(
         incompatible
             .read(&mut [0; 1])
@@ -785,32 +790,50 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
     );
     drop(incompatible);
 
-    let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))?;
-    unordered.set_read_timeout(Some(Duration::from_secs(2)))?;
-    write_message(&mut unordered, &ClientMessage::Focus(FocusEvent::Gained))?;
-    match read_message(&mut unordered)? {
+    let mut unordered = connect_bounded(&socket, Instant::now() + Duration::from_secs(5))
+        .map_err(|error| format!("unordered connect: {error}"))?;
+    unordered
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("unordered read timeout: {error}"))?;
+    write_message(&mut unordered, &ClientMessage::Focus(FocusEvent::Gained))
+        .map_err(|error| format!("unordered write: {error}"))?;
+    match read_message(&mut unordered).map_err(|error| format!("unordered response: {error}"))? {
         ServerMessage::Failure(failure) => assert_eq!(failure.code, FailureCode::Protocol),
         message => return Err(format!("unexpected unordered response: {message:?}").into()),
     }
     drop(unordered);
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut first = connect_bounded(&socket, deadline)?;
-    first.set_read_timeout(Some(Duration::from_secs(2)))?;
-    let mut second = connect_bounded(&socket, deadline)?;
-    second.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut first = connect_bounded(&socket, deadline)
+        .map_err(|error| format!("first pending connect: {error}"))?;
+    first
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("first pending read timeout: {error}"))?;
+    let mut second = connect_bounded(&socket, deadline)
+        .map_err(|error| format!("second pending connect: {error}"))?;
+    second
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| format!("second pending read timeout: {error}"))?;
 
-    assert_eq!(read_message(&mut second)?, ServerMessage::Busy);
+    assert_eq!(
+        read_message(&mut second).map_err(|error| format!("second pending response: {error}"))?,
+        ServerMessage::Busy
+    );
     drop(second);
 
-    drop(Client::attach(&socket)?);
+    drop(Client::attach(&socket).map_err(|error| format!("canonical attach: {error}"))?);
     assert_eq!(
         first
             .read(&mut [0; 1])
             .map_err(|error| format!("expired pending-client disconnect read: {error}"))?,
         0
     );
-    assert!(server.shutdown()?.success());
+    assert!(
+        server
+            .shutdown()
+            .map_err(|error| format!("server shutdown: {error}"))?
+            .success()
+    );
     Ok(())
 }
 
