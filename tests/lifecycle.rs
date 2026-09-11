@@ -2001,7 +2001,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     }
 
     let mut wrong_identity = identity.clone();
-    wrong_identity.run_id = "wrong-run".into();
+    wrong_identity.process_start += 1;
     let (response, rejected) = acquire_management(&record_path, &wrong_identity)?;
     assert!(matches!(
         response,
