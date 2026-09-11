@@ -1008,12 +1008,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn fill_output(client: &mut Client) -> Result {
-        let failure = ServerMessage::Failure(Failure {
-            code: FailureCode::Terminal,
-            detail: "x".repeat(session::MAX_FAILURE_BYTES),
-        });
-        while client.push_message(&failure)? {}
-        while client.push_message(&ServerMessage::Accepted)? {}
+        client.fill_output_for_test();
         Ok(())
     }
 

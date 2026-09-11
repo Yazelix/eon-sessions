@@ -272,6 +272,14 @@ impl Client {
     pub(crate) fn output_is_empty(&self) -> bool {
         self.output.is_empty()
     }
+
+    #[cfg(test)]
+    pub(crate) fn fill_output_for_test(&mut self) {
+        assert!(
+            self.output
+                .push(vec![0; MAX_OUTPUT_BYTES], MessageClass::Ordered)
+        );
+    }
 }
 
 pub(crate) fn accept(
