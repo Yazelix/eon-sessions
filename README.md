@@ -13,12 +13,12 @@ disconnect and later attach to the same live process. The dependency-free
 codec and revision reducer, and the ORBS v11 session messages. Orbit renders no
 terminal and clients do not reconstruct terminal authority from raw output.
 
-The ordinary Orbit server and client are proved on x86_64 Linux and Apple
-Silicon macOS. Native macOS evidence covers real PTY spawn, attach, input,
-resize, detach/reconnect, private socket permissions, EOF, and bounded signal
-shutdown. Management v1 remains Linux-only and fails before PTY or socket side
-effects on macOS; Venus, Eon, Nix packaging, signing, and distribution have not
-yet adopted the macOS target.
+The ordinary and managed Orbit server and client are proved on x86_64 Linux
+and Apple Silicon macOS. Native macOS evidence covers real PTY spawn, attach,
+input, resize, detach/reconnect, private socket permissions, EOF, bounded signal
+shutdown, and management launch, replacement, status, Stop, tombstones, and
+fail-closed identity checks. Venus, Eon, Nix packaging, signing, and
+distribution have not yet adopted the macOS target.
 
 Each frame carries `scroll_position.rows_from_live` and
 `scroll_position.history_rows`: current wrapped display-row counts, with history
@@ -235,8 +235,8 @@ role negotiation, rejects an excess role with `Busy`, retains the last PTY size
 while detached, reaps an exited child, and removes the socket after normal or
 signal-driven shutdown.
 
-On Linux, the private same-boot management owner is enabled with
-`serve SOCKET --management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
+On Linux and Apple Silicon macOS, the private same-boot management owner is
+enabled with `serve SOCKET --management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
 It derives `SOCKET.management` and `SOCKET.record`, publishes the live record
 only after the PTY, terminal owner, and both sockets are usable, and permits one
 UID- and identity-validated management lease. A launcher may retain an empty
@@ -251,17 +251,17 @@ Eonova consume this owner for accepted same-boot recovery and owner-routed
 Stop; this mode does not promise logout, reboot, machine-restart, topology, or
 same-UID isolation.
 
-Orbit starts ordinary PTY Sessions on x86_64 Linux and Apple Silicon macOS with
-user process permissions and no service-manager requirement. SIGINT, SIGTERM,
-and SIGHUP send SIGHUP to the initial PTY process group and the terminal's
-current foreground group; authorized management Stop uses the same path on
-Linux. Orbit gives the child up to 500 ms to exit. If it remains unreaped,
-Orbit sends SIGKILL to its still-stable initial group and re-reads the
-terminal's foreground group before escalating it. If the child exits during
-the grace period, Orbit sends no later signal to the cached foreground-group
-number. Orbit requires the direct child to be reaped within two seconds before
-reporting success. A child that had already exited before shutdown is reaped
-without signaling its recyclable numeric identity.
+Orbit starts ordinary and managed PTY Sessions on x86_64 Linux and Apple
+Silicon macOS with user process permissions and no service-manager requirement.
+SIGINT, SIGTERM, and SIGHUP send SIGHUP to the initial PTY process group and the
+terminal's current foreground group; authorized management Stop uses the same
+path on both proved targets. Orbit gives the child up to 500 ms to exit. If it
+remains unreaped, Orbit sends SIGKILL to its still-stable initial group and
+re-reads the terminal's foreground group before escalating it. If the child
+exits during the grace period, Orbit sends no later signal to the cached
+foreground-group number. Orbit requires the direct child to be reaped within
+two seconds before reporting success. A child that had already exited before
+shutdown is reaped without signaling its recyclable numeric identity.
 
 This is terminal cleanup, not whole-process-tree ownership. A deliberately
 detached process, a non-foreground group outside the initial group, or a
@@ -285,9 +285,10 @@ decision.
 
 Shared Unix PTY, process-group, descriptor, polling, signal, socket-path,
 permission, and EOF mechanics live in one concrete `src/platform.rs` seam.
-Only OS ioctl values and Linux management identity mechanics diverge. The owner
-loop sees platform-neutral PTY I/O and readiness outcomes; terminal authority,
-semantic input, and the attachment protocol do not contain `libc` values.
+Only OS ioctl values, peer credentials, process-start identities, and PTY EOF
+classification diverge. The owner loop sees platform-neutral PTY I/O,
+readiness, and management identities; terminal authority, semantic input, and
+the attachment protocol do not contain `libc` values.
 
 The subprocess checks in [`tests/lifecycle.rs`](tests/lifecycle.rs) use typed
 protocol responses, presentation frames, and PTY state as synchronization. They
@@ -356,9 +357,9 @@ Bead is accepted and the exact proof-bearing commit is recorded.
 
 ## Initial boundaries
 
-- ordinary Orbit PTY Sessions are proved on x86_64 Linux and Apple Silicon
-  macOS; management, Venus/Eon composition, packaging, and distribution remain
-  unsupported on macOS under partial ORB-C14
+- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux and Apple
+  Silicon macOS; Venus/Eon composition, packaging, and distribution remain
+  unsupported on macOS as separate downstream scope
 - local Unix socket transport
 - one terminal session, one input-capable client, and one read-only metadata
   observer

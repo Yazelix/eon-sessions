@@ -483,7 +483,7 @@ bytes.
     whole-descendant cleanup. Native macOS proof covers direct-child HUP and
     reaping; the special detached and foreground-group topology remains
     Linux-proved only.
-- **Proof:** `6c90ef467abb520a2226a8674a7d0d7fb6f54099`
+- **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
   - **Environment:** x86_64 Linux; Apple M1 arm64, macOS 15.7.9 (24G830)
   - **Evidence:**
     - [`shutdown_hups_the_unreaped_direct_child`](../tests/lifecycle.rs)
@@ -493,8 +493,9 @@ bytes.
     - Prior accepted Linux lifecycle proof
       `7de9980ffbd6417758698d5c33356204eeb24de5`
     - Native Apple Silicon CI run
-      [34649967366](https://github.com/Yazelix/eon-sessions/actions/runs/34649967366)
-      proves direct-child HUP/reap and bounded signal shutdown.
+      [34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
+      proves direct-child HUP/reap, bounded signal shutdown, and authorized
+      management Stop.
     - Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54` consumes this shutdown
       boundary; composed recovery and Stop acceptance is recorded at Eon
       `0bf0b165d06b4a8162be497011070f61f6c2000a`.
@@ -548,7 +549,7 @@ bytes.
     malformed or incompatible state, and slow peers fail closed without blocking
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
-  Linux mechanics remain isolated, while Eon owns consumer policy.
+  platform mechanics remain isolated, while Eon owns consumer policy.
 - **Consumes:** Canonical management v1 and ORB-C12.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
@@ -556,57 +557,58 @@ bytes.
   - No workspace topology, retained log, Orbit or machine restart, logout or
     reboot survival, multiplayer, remote access, public protocol,
     service-manager requirement, or same-UID sandbox is promised.
-  - Platform-neutral identity, lease, status, and failure values use isolated
-    Linux spawn/stdio, peer-credential, process/start-identity, endpoint,
-    permission, and polling mechanics. Linux is first and macOS remains
-    unproved.
-- **Proof:** `7de9980ffbd6417758698d5c33356204eeb24de5`
-  - **Environment:** x86_64 Linux
+  - Platform-neutral identity, lease, status, and failure values use shared
+    endpoint, permission, record, and polling mechanics with isolated Linux and
+    Darwin peer-credential and process-start identity mechanisms.
+- **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
+  - **Environment:** x86_64 Linux; GitHub-hosted Apple M1 arm64, macOS 15.7.9
+    (24G830), Rust/Cargo 1.98.1, Zig 0.15.2
   - **Evidence:**
     - Accepted management proof `3186519af709a94005974a97212814c05715a99d`
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
     - [`management_authority_negatives_fail_closed_without_stopping_session`](../tests/lifecycle.rs)
+    - Native Apple Silicon and Linux CI run
+      [34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
     - Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54` consumes management v1;
       composed recovery and Stop acceptance is recorded at Eon
       `0bf0b165d06b4a8162be497011070f61f6c2000a`.
 
 ## ORB-C14 — Apple Silicon macOS platform
 
-- **Status:** Partially proved
-- **Consumer:** A native Orbit user, followed by exact Venus and Eon
-  compositions on `aarch64-darwin`.
-- **Trigger:** The Orbit server launches one ordinary, non-managed PTY Session
-  with a local Unix endpoint on Apple Silicon macOS.
+- **Status:** Proved
+- **Consumer:** A native Orbit user on `aarch64-darwin`.
+- **Trigger:** The Orbit server launches one ordinary or managed PTY Session
+  with local Unix endpoints on Apple Silicon macOS.
 - **Result:** The same binary, owner loop, terminal authority, semantic input,
   canonical protocols, and presentation frames used on Linux preserve the
-  native platform-sensitive parts of ORB-C1 through ORB-C12. Shared Unix logic
+  native platform-sensitive parts of ORB-C1 through ORB-C13. Shared Unix logic
   owns PTY, process-group, signal, polling, descriptor, resize, EOF, socket,
-  permission, and cleanup behavior; libc supplies the OS ioctl values. ORB-C13
-  management remains Linux-only and fails before Session side effects on macOS.
+  permission, and cleanup behavior; libc supplies the OS ioctl values and
+  isolated Darwin peer and process-start identity calls. ORB-C13 management
+  preserves the same platform-neutral authority and failure contract.
 - **Important failures:** Unsupported Darwin mechanics, unsafe endpoint or peer
   identity, incompatible libghostty behavior, lifecycle mismatch, or incomplete
   native evidence fails explicitly. Target evaluation or compilation alone is
   not a runtime or support claim.
 - **Owner:** Orbit's existing platform seam owns native mechanics; the shared
   runtime and protocol owners retain every product invariant.
-- **Boundary:** Native proof covers ordinary Orbit Sessions, including bounded
-  direct-child shutdown. ORB-C13 management, Venus and Eon integration, Nix
+- **Boundary:** Native proof covers ordinary and managed Orbit Sessions,
+  including bounded direct-child shutdown. Venus and Eon integration, Nix
   packaging, `x86_64-darwin`, signing, notarization, direct distribution,
   remote transport, and restart persistence remain unsupported.
-- **Proof:** `6c90ef467abb520a2226a8674a7d0d7fb6f54099`
+- **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
   - **Environment:** GitHub-hosted Apple M1 arm64, macOS 15.7.9 (24G830),
     Rust/Cargo 1.98.1, Zig 0.15.2.
   - **Evidence:** Native Apple Silicon CI run
-    [34649967366](https://github.com/Yazelix/eon-sessions/actions/runs/34649967366)
-    passed all 30 runnable Orbit unit tests and all 14 native lifecycle tests;
-    the same source passed all 33 runnable Orbit unit tests and all 18 Linux
+    [34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
+    passed 32 Orbit unit tests (2 ignored) and all 15 native lifecycle tests;
+    the same source passed 33 Orbit unit tests (2 ignored) and all 18 Linux
     lifecycle tests. The native lifecycle covers attachment negotiation, real
     PTY input and resize, detach/reconnect, bounded pressure, metadata,
     owner-only endpoint permissions, EOF, stale-socket ownership, direct-child
-    HUP/reaping, signal cleanup, and fail-closed management launch.
-- **Open proof:** `orb-prove-orbit-apple-silicon-macos-w4j.2` owns native
-  ORB-C13 management. Venus/Eon consumption and distribution require their own
-  accepted deliveries.
+    HUP/reaping, signal cleanup, management launch and replacement, Busy,
+    status, Stop, tombstones, stale process-start identity, record and endpoint
+    substitution, and fail-closed permission checks.
 
 ## Focused terminal conformance corpus
 

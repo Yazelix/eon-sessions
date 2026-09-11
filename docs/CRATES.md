@@ -24,8 +24,8 @@ Beads retain the full candidate evidence.
 ### Platform-specific PTY and local-runtime mechanics
 
 - **Selected shape:** One concrete `src/platform.rs` seam around direct `libc` 0.2.189 calls
-- **Status:** Selected and proved for ordinary x86_64 Linux and Apple Silicon macOS
-  Sessions; management remains Linux-only
+- **Status:** Selected and proved for ordinary and managed x86_64 Linux and Apple
+  Silicon macOS Sessions
 - **Credible alternatives:** Handwritten C ABI with no crate; `pty-process` 0.5.3; `nix`
   0.31.3 with narrow `fs`, `poll`, `process`, `signal`, and `term` features; `portable-pty`
   0.9.0; `rustix` 1.1.4 with `rustix-openpty` 0.2.0
@@ -42,12 +42,16 @@ Beads retain the full candidate evidence.
   `rustix`, and `linux-raw-sys` to the normal Linux graph. The accepted proof retains the
   no-manifest candidate; adopting `pty-process` remains a separate user-approved crate gate.
   Native Apple Silicon proof confirms Darwin's zero-length master-read closure maps to the
-  existing platform-neutral `Closed` outcome without a second PTY implementation.
+  existing platform-neutral `Closed` outcome without a second PTY implementation. The same
+  seam uses Darwin `getpeereid` and `proc_pidinfo(PROC_PIDTBSDINFO)` for the existing
+  management peer and opaque process-start identities without changing management policy or
+  adding a dependency.
 - **Evidence:** Retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
   and libc sources plus the portability disposition are recorded in `orb-pmp`;
   post-candidate `pty-process` evidence is recorded there for a future decision; accepted
-  ORB-C14 proof `6c90ef467abb520a2226a8674a7d0d7fb6f54099` in
-  [native run 34649967366](https://github.com/Yazelix/eon-sessions/actions/runs/34649967366)
+  ordinary ORB-C14 proof `6c90ef467abb520a2226a8674a7d0d7fb6f54099`; accepted native
+  management proof `0233f4d34b294a50c5bc7f373859cf4ec04d2414` in
+  [native run 34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
 
 ### Linux PTY Session shutdown
 

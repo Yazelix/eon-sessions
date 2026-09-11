@@ -247,12 +247,11 @@ product. Do not invent a shorter product name or research codename.
 
 ## Status
 
-Orbit's accepted runtime proofs cover x86_64 Linux and ordinary, non-managed
-Apple Silicon macOS Sessions. `ORB-C14` is partially proved: `ORB-C13`
-management remains Linux-only and fails before Session side effects on macOS,
-while Venus, Eon, Nix packaging, signing, and distribution have not adopted the
-target. Further macOS implementation begins only when the user activates its
-Bead.
+Orbit's accepted runtime proofs cover ordinary and managed Sessions on x86_64
+Linux and Apple Silicon macOS, proving `ORB-C14` at the Orbit boundary. Venus,
+Eon, Nix packaging, signing, and distribution have not adopted the target.
+Further macOS implementation begins only when the user activates its Bead in
+the owning repository.
 
 ## Core rule
 
@@ -312,7 +311,7 @@ close the Bead in a metadata follow-up. Never point proof at a moving branch.
 
 ## Fixed product boundaries
 
-- x86_64 Linux proved first; `aarch64-darwin` is the only active expansion
+- x86_64 Linux proved first; `aarch64-darwin` is the only proved expansion
 - local Unix socket transport
 - one terminal session
 - one active client; multiplayer is a deliberate non-goal
@@ -323,22 +322,23 @@ close the Bead in a metadata follow-up. Never point proof at a moving branch.
 
 Do not broaden these boundaries without an explicit user decision.
 
-## Portable core and active Apple Silicon frontier
+## Portable core and Apple Silicon frontier
 
-Ordinary Orbit PTY Sessions are proved on x86_64 Linux and `aarch64-darwin`.
-`ORB-C14` remains partial because macOS management and downstream product and
-distribution adoption are unproved. Terminal authority, semantic input,
+Ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux and
+`aarch64-darwin`, proving `ORB-C14` at the Orbit boundary. Downstream product
+and distribution adoption remain unproved. Terminal authority, semantic input,
 presentation frames, revisions, protocols, and durable state remain one shared
-platform-neutral core.
+platform-neutral core. The next macOS implementation frontier belongs to Venus
+and Eon and activates only through a user-chosen Bead in its owning repository.
 
 Keep PTY creation, process groups, signals, polling, file-descriptor flags,
 socket paths and permissions, and platform-specific EOF or error behavior
 behind one narrow platform seam. Prefer the smallest concrete seam justified by
-current code. Add only Darwin mechanics required by `ORB-C14`; do not build a
-generic portability framework, speculative trait hierarchy, second owner loop,
-or another platform backend. One bounded manual Apple Silicon hosted-CI job
-proves headless runtime behavior that cannot run locally; compilation alone is
-not a runtime proof.
+current code. Keep Darwin mechanics limited to those required by `ORB-C14`; do
+not build a generic portability framework, speculative trait hierarchy, second
+owner loop, or another platform backend. One bounded manual Apple Silicon
+hosted-CI job proves headless runtime behavior that cannot run locally;
+compilation alone is not a runtime proof.
 
 Every product implementation Bead records one portability disposition for its
 result: `neutral`, `isolated Linux dependency`, `isolated Darwin dependency`,

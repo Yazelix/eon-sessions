@@ -6,12 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
-- Accepted Orbit `6c90ef467abb520a2226a8674a7d0d7fb6f54099` proves ordinary
-  real-PTY Sessions on Apple Silicon macOS with the shared Unix runtime path,
-  including attach, input, resize, detach/reconnect, EOF, private endpoints,
-  and bounded signal shutdown. Management v1 fails before Session side effects
-  and remains Linux-only; Venus, Eon, packaging, and distribution adopt macOS
-  separately (partial ORB-C14).
+- Accepted Orbit `0233f4d34b294a50c5bc7f373859cf4ec04d2414` proves ordinary and
+  managed real-PTY Sessions on Apple Silicon macOS with the shared Unix runtime
+  path, including attach, input, resize, detach/reconnect, EOF, private
+  endpoints, bounded signal shutdown, management replacement and Stop, and
+  fail-closed identity checks. Venus, Eon, packaging, and distribution adopt
+  macOS separately (ORB-C14).
 
 - Publish authoritative scrollback distance and retained-history display-row counts
   in every complete frame, including output, reflow, eviction and reattachment.
