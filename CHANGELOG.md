@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` changes
+  `ORB-C8` under exact-version ORBS v12: one `ReturnToLive` request moves the
+  primary viewport to live output without PTY input or repeated row batches.
+  ORBF v2 is unchanged. Venus, Eon, and Eonova retain their ORBS v11 pins
+  until separate adoption; native macOS proof of the new action remains open.
+
 - Accepted Orbit `0233f4d34b294a50c5bc7f373859cf4ec04d2414` proves ordinary and
   managed real-PTY Sessions on Apple Silicon macOS with the shared Unix runtime
   path, including attach, input, resize, detach/reconnect, EOF, private

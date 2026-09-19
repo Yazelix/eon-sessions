@@ -39,7 +39,8 @@ x86_64 Linux, Rust 1.96.0 and Zig 0.15.2. They preserve ORB-C1-C3, ORB-C5,
 ORB-C7 and ORB-C9-C13 through the new envelope. Exact inputs, results and limits:
 `~/.local/state/eon/proofs/orb-scrollback-position-cpb-2026-09-09/REPORT.md`.
 
-`orb-return-to-live-scroll-b62` is an uncommitted ORBS v12 producer candidate:
+Accepted producer `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`
+(`orb-return-to-live-scroll-b62`) changes ORB-C8 under exact-version ORBS v12:
 one zero-payload `ReturnToLive` request moves the authoritative primary viewport
 to live output with no PTY input, even beyond the relative 1,024-row limit.
 Orbit uses the existing libghostty Bottom operation and complete-frame publisher;
@@ -274,7 +275,7 @@ bytes.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented, or requests an absolute return to
@@ -317,7 +318,8 @@ bytes.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
-- **Consumes:** Canonical ORBF v2 in accepted ORBS v11 and candidate ORBS v12.
+- **Consumes:** Canonical ORBF v2 in ORBS v12. External consumers remain on
+  their accepted ORBS v11 pins until separate adoption.
   Under the prior ORBS v10 proof, Venus
   `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
   `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
@@ -325,7 +327,9 @@ bytes.
 - **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
   kinetic effects, graphics, and restart persistence are excluded; physical
   wheels retain their existing typed terminal-routed or one-row behavior.
-- **Proof:** `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
+  Venus, Eon, and Eonova have not adopted ORBS v12; native Apple Silicon proof
+  of the new action is outside this Linux producer proof.
+- **Proof:** `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`
   - **Environment:** x86_64 Linux, headless producer checks
   - **Evidence:**
     - [`conformance_c8_scroll_position_follows_published_terminal_state`](../src/runtime.rs)
@@ -333,18 +337,17 @@ bytes.
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
+    - [`conformance_c8_return_to_live_is_one_authoritative_jump_without_pty_input`](../src/interaction.rs)
+    - [`return_to_live_has_zero_payload`](../crates/protocol/src/session/tests.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
+    - `cargo fmt --check`, `cargo check --workspace --locked`,
+      `cargo test --workspace --locked` (79 passed, 2 ignored), and
+      `cargo clippy --workspace --locked --all-targets -- -D warnings` passed.
+    - Prior ORBS v11 producer proof: `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`.
     - Prior ORBS v10 installed proof only: Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
       `/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0` and passed the
       same split real-PTY regression against its installed Orbit binary.
-- **Open proof:** Accepted ORBS v11 remains at the proof above. The ORBS v12
-  `ReturnToLive` action is an uncommitted candidate. The focused codec and
-  authoritative interaction tests pass in the working tree, including deep
-  history, continuing output, terminal-owned routing, synchronized deferral,
-  alternate screen, pressure and live no-op. A closed PTY uses the existing
-  common input rejection path. The full Rust workspace passes fmt, check,
-  tests and strict Clippy; no proof-bearing commit or downstream UI proof exists.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
