@@ -39,6 +39,15 @@ x86_64 Linux, Rust 1.96.0 and Zig 0.15.2. They preserve ORB-C1-C3, ORB-C5,
 ORB-C7 and ORB-C9-C13 through the new envelope. Exact inputs, results and limits:
 `~/.local/state/eon/proofs/orb-scrollback-position-cpb-2026-09-09/REPORT.md`.
 
+`orb-return-to-live-scroll-b62` is an uncommitted ORBS v12 producer candidate:
+one zero-payload `ReturnToLive` request moves the authoritative primary viewport
+to live output with no PTY input, even beyond the relative 1,024-row limit.
+Orbit uses the existing libghostty Bottom operation and complete-frame publisher;
+ORBF v2 is unchanged. The request fails without mutation when terminal-owned
+routing or the alternate screen is active, waits for synchronized output, and
+preflights bounded frame admission. Accepted ORBS v11 consumers remain pinned;
+Venus, Eon, and independent Eonova adoption require separate exact proofs.
+
 Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
 ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
 `baf8aa28dcaa50484cd221aa7730defedc2356bb`.
@@ -265,11 +274,11 @@ bytes.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
-  complete-frame revision it has presented; PTY output may advance Orbit before
-  the request is handled.
+  complete-frame revision it has presented, or requests an absolute return to
+  live output; PTY output may advance Orbit before the request is handled.
 - **Result:**
   - Each Session configures libghostty with a 16 MiB primary-history byte budget;
     retained rows are content-dependent and the active viewport may exceed it.
@@ -289,6 +298,9 @@ bytes.
     request once without exposing partial state.
   - Negative movement goes toward older history, positive movement goes toward
     the live area, and movement clamps at history boundaries.
+  - An explicit return-to-live action moves any retained primary viewport to
+    zero in one authoritative complete frame without sending PTY input. It
+    clears host selection and does not require a client-side row counter.
   - A successful semantic key that emits PTY bytes returns primary history to
     the live area; detach does not transfer, reconstruct, or reset viewport
     ownership.
@@ -299,10 +311,14 @@ bytes.
     distance, and pressure fail before mutation. Lagging relative preview,
     scroll, and selection revisions resolve against current authority; future
     revisions and unrelated coordinate- or phase-bound input remain strict.
+  - Return-to-live rejects terminal-owned or alternate-screen routing; under
+    synchronized output it waits for the existing release/watchdog boundary,
+    and full client output pressure fails before viewport mutation.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
-- **Consumes:** Canonical ORBF v2 / ORBS v11. Under the prior ORBS v10 proof, Venus
+- **Consumes:** Canonical ORBF v2 in accepted ORBS v11 and candidate ORBS v12.
+  Under the prior ORBS v10 proof, Venus
   `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
   `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
   `64b225eb249490c9075894814942652a8b9d6192`.
@@ -322,6 +338,13 @@ bytes.
     - Prior ORBS v10 installed proof only: Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
       `/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0` and passed the
       same split real-PTY regression against its installed Orbit binary.
+- **Open proof:** Accepted ORBS v11 remains at the proof above. The ORBS v12
+  `ReturnToLive` action is an uncommitted candidate. The focused codec and
+  authoritative interaction tests pass in the working tree, including deep
+  history, continuing output, terminal-owned routing, synchronized deferral,
+  alternate screen, pressure and live no-op. A closed PTY uses the existing
+  common input rejection path. The full Rust workspace passes fmt, check,
+  tests and strict Clippy; no proof-bearing commit or downstream UI proof exists.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 

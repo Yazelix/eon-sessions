@@ -83,6 +83,7 @@ fn every_client_message_round_trips() {
     let messages = [
         ClientMessage::Hello,
         ClientMessage::ObserveMetadata,
+        ClientMessage::ReturnToLive,
         ClientMessage::Key(KeyEvent {
             action: KeyAction::Repeat,
             key: PhysicalKey::A,
@@ -286,10 +287,10 @@ fn framing_is_incremental_strict_and_bounded() {
     }
 
     let mut corrupt = encoded.clone();
-    corrupt[4..6].copy_from_slice(&10_u16.to_le_bytes());
+    corrupt[4..6].copy_from_slice(&11_u16.to_le_bytes());
     assert_eq!(
         client_message_len(&corrupt),
-        Err(Error::UnsupportedVersion { version: 10 })
+        Err(Error::UnsupportedVersion { version: 11 })
     );
     corrupt = encoded.clone();
     corrupt[0] ^= 1;
@@ -1069,5 +1070,15 @@ fn vertical_scroll_batches_are_bounded_and_canonical() {
         Err(Error::InvalidValue {
             field: "vertical scroll rows",
         })
+    );
+}
+
+#[test]
+fn return_to_live_has_zero_payload() {
+    assert_eq!(
+        encode_client_message(&ClientMessage::ReturnToLive)
+            .unwrap()
+            .len(),
+        HEADER_BYTES
     );
 }

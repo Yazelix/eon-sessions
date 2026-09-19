@@ -15,6 +15,7 @@ const CLIENT_SELECTION: u8 = 7;
 const CLIENT_PREVIEW_VERTICAL: u8 = 8;
 const CLIENT_OBSERVE_METADATA: u8 = 9;
 const CLIENT_SCROLL_VERTICAL: u8 = 10;
+const CLIENT_RETURN_TO_LIVE: u8 = 11;
 const SERVER_ATTACHED: u8 = 129;
 pub(super) const SERVER_BUSY: u8 = 130;
 pub(super) const SERVER_FRAME: u8 = 132;
@@ -90,6 +91,7 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
         CLIENT_SELECTION => Ok((1, 27)),
         CLIENT_PREVIEW_VERTICAL => Ok((9, 9)),
         CLIENT_SCROLL_VERTICAL => Ok((10, 10)),
+        CLIENT_RETURN_TO_LIVE => Ok((0, 0)),
         value => Err(Error::InvalidTag {
             field: "client message",
             value,
@@ -122,7 +124,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v11 header.
+/// Encodes one client message with an ORBS v12 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -241,6 +243,7 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
             put_i16(&mut payload, *rows);
             CLIENT_SCROLL_VERTICAL
         }
+        ClientMessage::ReturnToLive => CLIENT_RETURN_TO_LIVE,
     };
     frame_message(kind, payload, client_payload_limits(kind)?.1)
 }
@@ -382,6 +385,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
                 rows,
             }
         }
+        CLIENT_RETURN_TO_LIVE => ClientMessage::ReturnToLive,
         value => {
             return Err(Error::InvalidTag {
                 field: "client message",
@@ -393,7 +397,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v11 header.
+/// Encodes one server message with an ORBS v12 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {

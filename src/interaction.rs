@@ -104,6 +104,9 @@ pub(crate) fn handle_client_message(
             selection,
         );
     }
+    if let ClientMessage::ReturnToLive = message {
+        return handle_return_to_live(client, terminal, presentation, selection);
+    }
     if let ClientMessage::Selection(action) = message {
         return handle_selection(
             client,
@@ -377,6 +380,39 @@ fn handle_vertical_scroll(
         return Err("scroll outcome admission contradicted its preflight".into());
     }
     Ok(true)
+}
+
+fn handle_return_to_live(
+    client: &mut Client,
+    terminal: &mut Terminal<'static, '_>,
+    presentation: &mut Presentation,
+    selection: &mut SelectionState,
+) -> Result<bool> {
+    if terminal.active_screen()? != Screen::Primary || routes_vertical_wheel_to_terminal(terminal)?
+    {
+        return client.fail(
+            FailureCode::InvalidInput,
+            "live history is unavailable while the terminal owns scrolling".into(),
+        );
+    }
+    if terminal.mode(Mode::SYNC_OUTPUT)? {
+        return defer_vertical(client, presentation, ClientMessage::ReturnToLive);
+    }
+    if !client.can_push_frame_message() {
+        return client.fail(
+            FailureCode::Terminal,
+            "client output queue cannot admit the live viewport".into(),
+        );
+    }
+    let next = match next_revision(presentation.revision) {
+        Ok(next) => next,
+        Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
+    };
+    clear_selection(terminal, selection, false)?;
+    terminal.scroll_viewport(ScrollViewport::Bottom);
+    presentation.revision = next;
+    presentation.synchronized_until = None;
+    presentation.publish(Some(client), terminal)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -963,7 +999,8 @@ fn encode_input(
         | ClientMessage::Resize(_)
         | ClientMessage::Selection(_)
         | ClientMessage::PreviewVertical { .. }
-        | ClientMessage::ScrollVertical { .. } => Err("message is not terminal input".into()),
+        | ClientMessage::ScrollVertical { .. }
+        | ClientMessage::ReturnToLive => Err("message is not terminal input".into()),
     }
 }
 
@@ -2501,6 +2538,138 @@ mod tests {
         )?);
         assert_eq!(presentation.revision, stable_revision);
         assert_eq!(terminal.scrollbar()?.offset, stable_offset);
+        Ok(())
+    }
+
+    #[test]
+    fn conformance_c8_return_to_live_is_one_authoritative_jump_without_pty_input() -> Result {
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::without_child_for_test()?;
+        let mut terminal = terminal_with_scrollback(16 * 1024 * 1024)?;
+        for line in 0..1_300 {
+            terminal.vt_write(format!("history-{line:04}\r\n").as_bytes());
+        }
+        terminal.scroll_viewport(ScrollViewport::Top);
+        terminal.vt_write(b"continued-output\r\n");
+        let mut size = INITIAL_SIZE;
+        let writes = RefCell::new(VecDeque::new());
+        let mut presentation = Presentation::new()?;
+        let mut selection = SelectionState::default();
+        macro_rules! jump {
+            () => {{
+                assert!(handle_client_message(
+                    &mut client,
+                    ClientMessage::ReturnToLive,
+                    &mut terminal,
+                    Some(&pty),
+                    &mut size,
+                    &writes,
+                    &mut presentation,
+                    &mut selection,
+                )?);
+                flush_message(&mut client, &mut peer)?
+            }};
+        }
+        assert!(
+            presentation
+                .extractor
+                .frame(0, &terminal)?
+                .scroll_position
+                .rows_from_live
+                > u64::from(session::MAX_SCROLL_ROWS as u16)
+        );
+
+        let selected = selection_between(&terminal, (0, 0), (1, 0))?;
+        terminal.set_selection(Some(&selected))?;
+        selection.has_selection = true;
+        assert!(matches!(
+            jump!(),
+            ServerMessage::Frame(frame)
+                if frame.revision == 1 && frame.scroll_position.rows_from_live == 0
+        ));
+        assert!(!selection.has_selection);
+        assert!(writes.borrow().is_empty());
+
+        terminal.scroll_viewport(ScrollViewport::Delta(-8));
+        let before = terminal.scrollbar()?.offset;
+        terminal.vt_write(b"\x1b[?1000h\x1b[?1006h");
+        assert!(matches!(
+            jump!(),
+            ServerMessage::Failure(Failure {
+                code: FailureCode::InvalidInput,
+                ..
+            })
+        ));
+        assert_eq!(terminal.scrollbar()?.offset, before);
+        assert_eq!(presentation.revision, 1);
+        terminal.vt_write(b"\x1b[?1000l\x1b[?1006l");
+
+        terminal.set_mode(Mode::SYNC_OUTPUT, true)?;
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::ReturnToLive,
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert_eq!(terminal.scrollbar()?.offset, before);
+        assert!(client.output_is_empty());
+        terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
+        let deferred = presentation
+            .take_deferred_vertical()
+            .ok_or("missing deferred jump")?;
+        assert!(handle_client_message(
+            &mut client,
+            deferred,
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(frame)
+                if frame.revision == 2 && frame.scroll_position.rows_from_live == 0
+        ));
+        assert!(matches!(
+            jump!(),
+            ServerMessage::Frame(frame)
+                if frame.revision == 3 && frame.scroll_position.rows_from_live == 0
+        ));
+
+        terminal.vt_write(b"\x1b[?1049h");
+        assert!(matches!(
+            jump!(),
+            ServerMessage::Failure(Failure {
+                code: FailureCode::InvalidInput,
+                ..
+            })
+        ));
+        assert_eq!(presentation.revision, 3);
+        terminal.vt_write(b"\x1b[?1049l");
+
+        terminal.scroll_viewport(ScrollViewport::Delta(-8));
+        let before_pressure = terminal.scrollbar()?.offset;
+        let (mut blocked, _) = attached_client()?;
+        blocked.fill_output_for_test();
+        assert!(!handle_client_message(
+            &mut blocked,
+            ClientMessage::ReturnToLive,
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert_eq!(terminal.scrollbar()?.offset, before_pressure);
+        assert_eq!(presentation.revision, 3);
+        assert!(writes.borrow().is_empty());
         Ok(())
     }
 

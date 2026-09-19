@@ -10,7 +10,7 @@ an independent product on its current Mars and Zellij architecture.
 Orbit owns one real PTY and the authoritative libghostty terminal. A client can
 disconnect and later attach to the same live process. The dependency-free
 `orbit-protocol` library owns canonical ORBF v2 complete frames, their bounded
-codec and revision reducer, and the ORBS v11 session messages. Orbit renders no
+codec and revision reducer, and the ORBS v12 candidate session messages. Orbit renders no
 terminal and clients do not reconstruct terminal authority from raw output.
 
 The ordinary and managed Orbit server and client are proved on x86_64 Linux
@@ -34,6 +34,8 @@ is accepted in `orb-scrollback-position-cpb`. Venus source
 `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86` and Eon's current alpha component
 graph consume that exact Orbit revision. Eonova remains an independent product
 line and is not part of Eon's component graph.
+The uncommitted ORBS v12 candidate adds one return-to-live action; accepted
+consumers remain on v11 until separately updated and proved.
 
 The session boundary includes one input-capable attachment, one bounded
 read-only title/CWD observer, frames, lifecycle, semantic input, selection/copy,
@@ -171,7 +173,7 @@ accepts only strictly newer complete revisions. The package is private,
 `std`-only, platform-neutral, and has no direct or transitive dependency;
 libghostty, PTYs, sockets, input, and rendering remain outside it.
 
-The ORBS v11 producer uses a 12-byte explicit little-endian header with `ORBS`
+The ORBS v12 candidate uses a 12-byte explicit little-endian header with `ORBS`
 magic, one exact revision, a typed message kind, zero reserved flags, and a
 bounded payload length. Decoding is
 incremental and rejects unsupported revisions, wrong-role or unknown kinds, and
@@ -199,6 +201,10 @@ typed result with the requested and applied distance, one newer complete frame,
 and the next bounded row window or authoritative edge. A request claiming a
 future revision fails before mutation. The session layer embeds canonical ORBF
 frames without interpreting them again and adds no dependency.
+The candidate `ReturnToLive` request jumps an eligible primary viewport to live
+output in one authoritative frame, without PTY bytes or repeated row batches.
+Terminal-owned and alternate-screen routing reject it; synchronized output
+defers it, and output pressure fails before mutation.
 
 ## PTY-lifetime proof
 
@@ -216,7 +222,7 @@ the same entry in its runtime closure.
 
 The server owns the PTY, child process, terminal state, presentation extraction,
 input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v11 codec. An exact-version
+client and server use only the bounded ORBS v12 candidate codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
@@ -526,10 +532,10 @@ and protocol remain platform-neutral.
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 14,468 |
+| Product Rust source and tests | 14,654 |
 | Governance Rust tool and tests | 767 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixtures | 104 |
-| **Total owned Rust** | **15,235** |
-| **Total owned implementation source** | **15,988** |
+| **Total owned Rust** | **15,421** |
+| **Total owned implementation source** | **16,174** |
