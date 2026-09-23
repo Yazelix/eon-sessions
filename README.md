@@ -487,9 +487,8 @@ the macOS job. Superseded runs are cancelled.
 
 The repository or its owning account must retain a $0 Actions product budget
 with **Stop usage when budget limit is reached**, budget threshold alerts, and
-included-usage alerts enabled. CI can consume the private repository's
-included runner minutes, but this budget prevents paid overage. The workflow
-does not run for unrelated documentation.
+included-usage alerts enabled. The workflow does not run for unrelated
+documentation.
 
 The governance command checks only deterministic repository facts:
 
