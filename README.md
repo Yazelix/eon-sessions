@@ -539,6 +539,11 @@ only the user may grant a narrowly recorded protocol exception. OS-specific
 runtime mechanics stay behind a narrow platform seam while the core ownership
 and protocol remain platform-neutral.
 
+## License
+
+The copyright holder offers the project-owned source history under
+[Apache-2.0](LICENSE).
+
 ## LOC scorecard
 
 | Surface | Lines |
