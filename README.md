@@ -38,7 +38,8 @@ return-to-live action under exact-version ORBS v12. Venus and Eon's alpha
 component graph pin that exact revision. The action has Linux headless producer
 proof; native macOS proof is separate.
 
-The worktree's ORBS v13 candidate adds one upward host-selection tick: Orbit
+Accepted producer `b6cecf8f2ee35570b41cfdc578b095889d917fe2` adds one
+upward host-selection tick under exact-version ORBS v13: Orbit
 scrolls at most one retained row, extends the same tracked gesture, and returns
 the applied distance with a complete frame. Venus and Eon still pin ORBS v12;
 their pointer cadence and installed acceptance are separate work.

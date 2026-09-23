@@ -6,6 +6,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2` extends
+  `ORB-C8` and `ORB-C9` under exact-version ORBS v13: a held host selection can
+  tick upward through retained history one row at a time, preserving the same
+  tracked gesture and returning the applied distance with a complete frame.
+  ORBF v2 is unchanged. Venus and Eon retain their ORBS v12 pins until separate
+  adoption; native macOS proof of the new action remains open.
+
 - Accepted Orbit `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` changes
   `ORB-C8` under exact-version ORBS v12: one `ReturnToLive` request moves the
   primary viewport to live output without PTY input or repeated row batches.
