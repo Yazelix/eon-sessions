@@ -5,6 +5,12 @@ subsystem is a clean-room Rust experiment that owns session lifetime and
 terminal state beneath the Venus subsystem in Eon Desktop. Yazelix Nova remains
 an independent product on its current Mars and Zellij architecture.
 
+## Product demo
+
+[![Eon showing two Orbit Sessions in a native Wayland window](https://raw.githubusercontent.com/Yazelix/eon/a8e5874a31a3b7b27eaa754e8ad9a6d44cbb07c8/assets/demo/eon-demo.png)](https://github.com/Yazelix/eon/blob/a8e5874a31a3b7b27eaa754e8ad9a6d44cbb07c8/assets/demo/eon-demo.mp4)
+
+[Watch the scripted recording](https://github.com/Yazelix/eon/blob/a8e5874a31a3b7b27eaa754e8ad9a6d44cbb07c8/assets/demo/eon-demo.mp4) of the composed Linux alpha. Orbit owns the two persistent terminal Sessions; Eon and Venus supply the workspace and native window.
+
 ## Status
 
 Orbit owns one real PTY and the authoritative libghostty terminal. A client can
