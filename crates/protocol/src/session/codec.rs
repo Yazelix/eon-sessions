@@ -40,6 +40,7 @@ const SELECTION_UPDATE: u8 = 1;
 const SELECTION_FINISH: u8 = 2;
 const SELECTION_COPY: u8 = 3;
 const SELECTION_CANCEL: u8 = 4;
+const SELECTION_AUTOSCROLL_UP: u8 = 5;
 
 /// Returns the complete client-message length once a valid header is available.
 pub fn client_message_len(bytes: &[u8]) -> Result<Option<usize>> {
@@ -124,7 +125,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v12 header.
+/// Encodes one client message with an ORBS v13 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -223,6 +224,11 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
                 }
                 SelectionAction::Copy => payload.push(SELECTION_COPY),
                 SelectionAction::Cancel => payload.push(SELECTION_CANCEL),
+                SelectionAction::AutoscrollUp { position } => {
+                    payload.push(SELECTION_AUTOSCROLL_UP);
+                    put_u32(&mut payload, position.x.to_bits());
+                    put_u32(&mut payload, position.y.to_bits());
+                }
             }
             CLIENT_SELECTION
         }
@@ -362,6 +368,12 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
                 },
                 SELECTION_COPY => SelectionAction::Copy,
                 SELECTION_CANCEL => SelectionAction::Cancel,
+                SELECTION_AUTOSCROLL_UP => SelectionAction::AutoscrollUp {
+                    position: SelectionPosition {
+                        x: f32::from_bits(reader.u32()?),
+                        y: f32::from_bits(reader.u32()?),
+                    },
+                },
                 value => {
                     return Err(Error::InvalidTag {
                         field: "selection action",
@@ -397,7 +409,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v12 header.
+/// Encodes one server message with an ORBS v13 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -810,6 +822,9 @@ fn validate_selection(action: &SelectionAction) -> Result<()> {
             modifiers,
         } => {
             checked_modifiers(modifiers.bits())?;
+            validate_surface_position(position.x, position.y)
+        }
+        SelectionAction::AutoscrollUp { position } => {
             validate_surface_position(position.x, position.y)
         }
         SelectionAction::Cancel | SelectionAction::Copy => Ok(()),

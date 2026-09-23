@@ -130,6 +130,9 @@ fn every_client_message_round_trips() {
             position: SelectionPosition { x: 67.5, y: 144.25 },
             modifiers: Modifiers::ALT,
         }),
+        ClientMessage::Selection(SelectionAction::AutoscrollUp {
+            position: SelectionPosition { x: 12.5, y: 0.25 },
+        }),
         ClientMessage::Selection(SelectionAction::Cancel),
         ClientMessage::Selection(SelectionAction::Copy),
     ];
@@ -287,10 +290,10 @@ fn framing_is_incremental_strict_and_bounded() {
     }
 
     let mut corrupt = encoded.clone();
-    corrupt[4..6].copy_from_slice(&11_u16.to_le_bytes());
+    corrupt[4..6].copy_from_slice(&12_u16.to_le_bytes());
     assert_eq!(
         client_message_len(&corrupt),
-        Err(Error::UnsupportedVersion { version: 11 })
+        Err(Error::UnsupportedVersion { version: 12 })
     );
     corrupt = encoded.clone();
     corrupt[0] ^= 1;
@@ -678,6 +681,16 @@ fn malformed_typed_payloads_are_rejected() {
     });
     assert_eq!(
         encode_client_message(&invalid_selection),
+        Err(Error::InvalidCoordinates)
+    );
+
+    assert_eq!(
+        encode_client_message(&ClientMessage::Selection(SelectionAction::AutoscrollUp {
+            position: SelectionPosition {
+                x: f32::NAN,
+                y: 0.0,
+            },
+        })),
         Err(Error::InvalidCoordinates)
     );
 

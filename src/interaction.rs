@@ -20,7 +20,9 @@ use libghostty_vt::{
     screen::{GridRef, Screen},
     selection::{
         FormatOptions,
-        gesture::{DragEvent, Geometry, Gesture, PressEvent, ReleaseEvent},
+        gesture::{
+            Autoscroll, AutoscrollTickEvent, DragEvent, Geometry, Gesture, PressEvent, ReleaseEvent,
+        },
     },
     terminal::{Mode, Point, PointCoordinate, ScrollViewport},
 };
@@ -55,6 +57,7 @@ struct GestureState {
     gesture: Gesture<'static>,
     press: PressEvent<'static>,
     drag: DragEvent<'static>,
+    autoscroll: AutoscrollTickEvent<'static>,
     release: ReleaseEvent<'static>,
 }
 
@@ -64,6 +67,7 @@ impl GestureState {
             gesture: Gesture::new()?,
             press: PressEvent::new()?,
             drag: DragEvent::new()?,
+            autoscroll: AutoscrollTickEvent::new()?,
             release: ReleaseEvent::new()?,
         })
     }
@@ -519,6 +523,9 @@ fn handle_selection(
     presentation: &mut Presentation,
     state: &mut SelectionState,
 ) -> Result<bool> {
+    if let SelectionAction::AutoscrollUp { position } = action {
+        return handle_selection_autoscroll(client, position, terminal, size, presentation, state);
+    }
     if matches!(action, SelectionAction::Copy) {
         return match &state.copied {
             Some(text) => client.push_message(&ServerMessage::CopiedText {
@@ -595,7 +602,9 @@ fn handle_selection(
             }
             (position, modifiers)
         }
-        SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
+        SelectionAction::AutoscrollUp { .. } | SelectionAction::Cancel | SelectionAction::Copy => {
+            unreachable!("handled above")
+        }
     };
 
     let route = match action {
@@ -675,6 +684,113 @@ fn handle_selection(
     Ok(true)
 }
 
+fn handle_selection_autoscroll(
+    client: &mut Client,
+    position: SelectionPosition,
+    terminal: &Terminal<'static, '_>,
+    size: SurfaceSize,
+    presentation: &mut Presentation,
+    state: &mut SelectionState,
+) -> Result<bool> {
+    if state.route != Some(PointerRoute::Host) || terminal.active_screen()? != Screen::Primary {
+        return client.fail(
+            FailureCode::InvalidInput,
+            "selection autoscroll requires an active primary-screen host gesture".into(),
+        );
+    }
+    let Some(point) = viewport_point(position, size).filter(|point| point.y == 0) else {
+        return client.fail(
+            FailureCode::InvalidInput,
+            "selection autoscroll position must be in the top row".into(),
+        );
+    };
+    let Some(gesture) = state.gesture.as_mut() else {
+        return client.fail(
+            FailureCode::InvalidInput,
+            "selection gesture is missing".into(),
+        );
+    };
+    if gesture.gesture.anchor(terminal)?.is_none() {
+        clear_selection(terminal, state, false)?;
+        return client.fail(
+            FailureCode::InvalidInput,
+            "selection anchor is no longer valid".into(),
+        );
+    }
+    if terminal.mode(Mode::SYNC_OUTPUT)? {
+        return defer_vertical(
+            client,
+            presentation,
+            ClientMessage::Selection(SelectionAction::AutoscrollUp { position }),
+        );
+    }
+    if !client.can_push_scroll_outcome() {
+        return client.fail(
+            FailureCode::Terminal,
+            "client output queue cannot admit selection scroll outcome".into(),
+        );
+    }
+    let next_revision = match next_revision(presentation.revision) {
+        Ok(next) => next,
+        Err(error) => return client.fail(FailureCode::Terminal, error.to_string()),
+    };
+    let grid_ref = terminal.grid_ref(Point::Viewport(point))?;
+    let before = terminal.scrollbar()?.offset;
+    let selected = (|| -> Result<_> {
+        gesture
+            .drag
+            .set_position(f64::from(position.x), 0.0)?
+            .apply(
+                &mut gesture.gesture,
+                terminal,
+                grid_ref,
+                selection_geometry(size),
+            )?;
+        if gesture.gesture.autoscroll(terminal)? != Autoscroll::Up {
+            return Err("selection gesture did not enter upward autoscroll".into());
+        }
+        Ok(gesture
+            .autoscroll
+            .set_position(f64::from(position.x), 0.0)?
+            .apply(
+                &mut gesture.gesture,
+                terminal,
+                point,
+                selection_geometry(size),
+            )?)
+    })();
+    let selected = match selected {
+        Ok(selected) => selected,
+        Err(error) => {
+            clear_selection(terminal, state, false)?;
+            return client.fail(FailureCode::Terminal, error.to_string());
+        }
+    };
+    terminal.set_selection(selected.as_ref())?;
+    state.has_selection = selected.is_some();
+    let after = terminal.scrollbar()?.offset;
+    let applied_rows = i16::try_from(i128::from(after) - i128::from(before))
+        .map_err(|_| "terminal applied an invalid selection scroll delta")?;
+    if !matches!(applied_rows, -1..=0) {
+        return Err("terminal applied rows outside one upward selection tick".into());
+    }
+    presentation.revision = next_revision;
+    presentation.synchronized_until = None;
+    let frame = presentation.extractor.frame(next_revision, terminal)?;
+    let next = viewport_preview(terminal, presentation, VerticalDirection::Up)?;
+    if !client.push_message(&ServerMessage::ScrollOutcome(
+        session::ScrollOutcome::Viewport {
+            requested_rows: -1,
+            applied_rows,
+            frame: Box::new(frame),
+            next,
+        },
+    ))? {
+        return Err("selection scroll outcome admission contradicted its preflight".into());
+    }
+    Ok(true)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_terminal_pointer(
     client: &mut Client,
@@ -719,7 +835,11 @@ fn handle_terminal_pointer(
             SelectionAction::Begin { .. } => MouseAction::Press,
             SelectionAction::Update { .. } => MouseAction::Motion,
             SelectionAction::Finish { .. } => MouseAction::Release,
-            SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
+            SelectionAction::AutoscrollUp { .. }
+            | SelectionAction::Cancel
+            | SelectionAction::Copy => {
+                unreachable!("handled above")
+            }
         },
         button: Some(MouseButton::Left),
         modifiers,
@@ -785,15 +905,12 @@ fn apply_selection_gesture(
                     &mut gesture.gesture,
                     terminal,
                     grid_ref.clone(),
-                    Geometry {
-                        columns: u32::from(size.cols),
-                        cell_width: size.cell_width,
-                        padding_left: size.padding_left,
-                        screen_height: size.screen_height,
-                    },
+                    selection_geometry(size),
                 )?
         }
-        SelectionAction::Cancel | SelectionAction::Copy => unreachable!("handled above"),
+        SelectionAction::AutoscrollUp { .. } | SelectionAction::Cancel | SelectionAction::Copy => {
+            unreachable!("handled above")
+        }
     };
 
     terminal.set_selection(selected.as_ref())?;
@@ -813,6 +930,15 @@ fn apply_selection_gesture(
             .transpose()?;
     }
     Ok(())
+}
+
+fn selection_geometry(size: SurfaceSize) -> Geometry {
+    Geometry {
+        columns: u32::from(size.cols),
+        cell_width: size.cell_width,
+        padding_left: size.padding_left,
+        screen_height: size.screen_height,
+    }
 }
 
 fn viewport_point(position: SelectionPosition, size: SurfaceSize) -> Option<PointCoordinate> {
@@ -1338,6 +1464,183 @@ mod tests {
     }
 
     #[test]
+    fn conformance_c9_upward_selection_scroll_keeps_one_gesture_and_exact_copy() -> Result {
+        let size = SurfaceSize {
+            cols: 12,
+            rows: 4,
+            screen_width: 12 * INITIAL_SIZE.cell_width + 5,
+            screen_height: 4 * INITIAL_SIZE.cell_height + 6,
+            padding_left: 5,
+            padding_top: 6,
+            ..INITIAL_SIZE
+        };
+        let lines: Vec<_> = (0..16).map(|row| format!("L{row:02} 界")).collect();
+        let mut terminal = terminal_with_scrollback(4096)?;
+        terminal.resize(size.cols, size.rows, size.cell_width, size.cell_height)?;
+        terminal.vt_write(lines.join("\r\n").as_bytes());
+        let (mut client, mut peer) = attached_client()?;
+        let pty = Pty::without_child_for_test()?;
+        let mut size = size;
+        let writes = RefCell::new(VecDeque::new());
+        let mut presentation = Presentation::new()?;
+        presentation.revision = 1;
+        let mut selection = SelectionState::default();
+
+        macro_rules! send {
+            ($action:expr) => {
+                assert!(handle_client_message(
+                    &mut client,
+                    ClientMessage::Selection($action),
+                    &mut terminal,
+                    Some(&pty),
+                    &mut size,
+                    &writes,
+                    &mut presentation,
+                    &mut selection,
+                )?);
+            };
+        }
+        let live_offset = terminal.scrollbar()?.offset;
+        send!(SelectionAction::AutoscrollUp {
+            position: position(size, 0, 0),
+        });
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::InvalidInput,
+                ..
+            })
+        ));
+        assert_eq!(terminal.scrollbar()?.offset, live_offset);
+        assert_eq!(presentation.revision, 1);
+        send!(SelectionAction::Begin {
+            frame_revision: 1,
+            position: position(size, 0, 2),
+            time_ns: 1,
+            modifiers: Modifiers::empty(),
+        });
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Accepted
+        );
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(_)
+        ));
+        send!(SelectionAction::Update {
+            position: position(size, 0, 0),
+            modifiers: Modifiers::empty(),
+        });
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Accepted
+        );
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(_)
+        ));
+
+        let stable_offset = terminal.scrollbar()?.offset;
+        let stable_revision = presentation.revision;
+        send!(SelectionAction::AutoscrollUp {
+            position: position(size, 0, 1),
+        });
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::InvalidInput,
+                ..
+            })
+        ));
+        assert_eq!(terminal.scrollbar()?.offset, stable_offset);
+        assert_eq!(presentation.revision, stable_revision);
+
+        terminal.set_mode(Mode::SYNC_OUTPUT, true)?;
+        send!(SelectionAction::AutoscrollUp {
+            position: position(size, 0, 0),
+        });
+        assert_eq!(terminal.scrollbar()?.offset, stable_offset);
+        assert_eq!(presentation.revision, stable_revision);
+        let deferred = presentation
+            .take_deferred_vertical()
+            .ok_or("selection tick was not deferred")?;
+        terminal.set_mode(Mode::SYNC_OUTPUT, false)?;
+        assert!(handle_client_message(
+            &mut client,
+            deferred,
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+                requested_rows: -1,
+                applied_rows: -1,
+                ..
+            })
+        ));
+
+        let mut moved = 0;
+        loop {
+            send!(SelectionAction::AutoscrollUp {
+                position: position(size, 0, 0),
+            });
+            let ServerMessage::ScrollOutcome(session::ScrollOutcome::Viewport {
+                applied_rows,
+                frame,
+                next,
+                ..
+            }) = flush_message(&mut client, &mut peer)?
+            else {
+                return Err("selection scroll did not return an authoritative frame".into());
+            };
+            assert_eq!(frame.revision, presentation.revision);
+            assert_eq!(selection.route, Some(PointerRoute::Host));
+            assert!(frame.rows[0].cells.iter().any(|cell| cell.style.selected));
+            if applied_rows == 0 {
+                assert!(matches!(
+                    next,
+                    PreviewOutcome::Viewport {
+                        edge_reached: true,
+                        ..
+                    }
+                ));
+                break;
+            }
+            assert_eq!(applied_rows, -1);
+            moved += 1;
+            assert!(moved < 16);
+        }
+        assert!(moved >= 8, "selection did not cross two viewports");
+        assert_eq!(terminal.scrollbar()?.offset, 0);
+        send!(SelectionAction::Finish {
+            position: position(size, 0, 0),
+            modifiers: Modifiers::empty(),
+        });
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::SelectionFinished { .. }
+        ));
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Frame(_)
+        ));
+        assert_eq!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::CopiedText {
+                location: session::ClipboardLocation::Selection,
+                text: lines[..14].join("\n"),
+            }
+        );
+        assert!(writes.borrow().is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn authoritative_left_pointer_route_is_pinned_and_shift_selects() -> Result {
         let (mut client, mut peer) = attached_client()?;
         let pty = Pty::without_child_for_test()?;
@@ -1388,6 +1691,26 @@ mod tests {
             modifiers: Modifiers::empty(),
         });
         assert_eq!(selection.route, Some(PointerRoute::Terminal));
+        assert!(handle_client_message(
+            &mut client,
+            ClientMessage::Selection(SelectionAction::AutoscrollUp {
+                position: position(size, 0, 0),
+            }),
+            &mut terminal,
+            Some(&pty),
+            &mut size,
+            &writes,
+            &mut presentation,
+            &mut selection,
+        )?);
+        assert!(matches!(
+            flush_message(&mut client, &mut peer)?,
+            ServerMessage::Failure(Failure {
+                code: FailureCode::InvalidInput,
+                ..
+            })
+        ));
+        assert_eq!(presentation.revision, stable_revision + 1);
         assert_eq!(
             writes.take().into_iter().collect::<Vec<_>>(),
             b"\x1b[<0;1;1M"
@@ -1659,7 +1982,9 @@ mod tests {
                     SelectionAction::Begin { position, .. }
                     | SelectionAction::Update { position, .. }
                     | SelectionAction::Finish { position, .. } => position,
-                    SelectionAction::Cancel | SelectionAction::Copy => unreachable!(),
+                    SelectionAction::AutoscrollUp { .. }
+                    | SelectionAction::Cancel
+                    | SelectionAction::Copy => unreachable!(),
                 };
                 let point = viewport_point(position, size).expect("test position is in bounds");
                 let grid_ref = terminal.grid_ref(Point::Viewport(point))?;
@@ -1721,7 +2046,9 @@ mod tests {
                     SelectionAction::Begin { position, .. }
                     | SelectionAction::Update { position, .. }
                     | SelectionAction::Finish { position, .. } => position,
-                    SelectionAction::Cancel | SelectionAction::Copy => {
+                    SelectionAction::AutoscrollUp { .. }
+                    | SelectionAction::Cancel
+                    | SelectionAction::Copy => {
                         unreachable!("test applies pointer gestures only")
                     }
                 };

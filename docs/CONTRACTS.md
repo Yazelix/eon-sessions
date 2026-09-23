@@ -46,8 +46,18 @@ to live output with no PTY input, even beyond the relative 1,024-row limit.
 Orbit uses the existing libghostty Bottom operation and complete-frame publisher;
 ORBF v2 is unchanged. The request fails without mutation when terminal-owned
 routing or the alternate screen is active, waits for synchronized output, and
-preflights bounded frame admission. Accepted ORBS v11 consumers remain pinned;
-Venus, Eon, and independent Eonova adoption require separate exact proofs.
+preflights bounded frame admission. Venus and Eon subsequently pinned this
+revision; independent Eonova adoption and native macOS proof are separate.
+
+Candidate `orb-selection-upward-autoscroll-zlt` extends ORB-C8 and ORB-C9 under
+exact-version ORBS v13. During one active primary-screen host gesture, each
+`AutoscrollUp` action resolves a top-row surface position, moves the authoritative
+viewport by at most one older retained row, extends libghostty's tracked
+selection, and returns the applied distance with a complete frame. It uses the
+existing bounded scroll outcome and synchronized-output deferral. Ordinary
+signed scroll and return-to-live still clear selection. This source candidate
+has no immutable producer proof or downstream consumer yet; Venus and Eon pin
+accepted ORBS v12 at `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`.
 
 Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
 ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
@@ -275,11 +285,12 @@ bytes.
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented, or requests an absolute return to
-  live output; PTY output may advance Orbit before the request is handled.
+  live output, or ticks an active host selection at the top row; PTY output may
+  advance Orbit before the request is handled.
 - **Result:**
   - Each Session configures libghostty with a 16 MiB primary-history byte budget;
     retained rows are content-dependent and the active viewport may exceed it.
@@ -302,6 +313,10 @@ bytes.
   - An explicit return-to-live action moves any retained primary viewport to
     zero in one authoritative complete frame without sending PTY input. It
     clears host selection and does not require a client-side row counter.
+  - During an active primary-screen host selection, one ORBS v13 upward tick
+    advances at most one row toward older retained history and returns its
+    applied distance, complete frame, and next bounded preview without clearing
+    the tracked gesture. Zero applied rows reports the oldest edge.
   - A successful semantic key that emits PTY bytes returns primary history to
     the live area; detach does not transfer, reconstruct, or reset viewport
     ownership.
@@ -315,20 +330,24 @@ bytes.
   - Return-to-live rejects terminal-owned or alternate-screen routing; under
     synchronized output it waits for the existing release/watchdog boundary,
     and full client output pressure fails before viewport mutation.
+  - An upward selection tick rejects absent or terminal-routed gestures,
+    positions outside the top row, and alternate-screen state without PTY input
+    or viewport mutation. Synchronized output holds at most one unresolved tick;
+    bounded output pressure fails before movement.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
-- **Consumes:** Canonical ORBF v2 in ORBS v12. External consumers remain on
-  their accepted ORBS v11 pins until separate adoption.
+- **Consumes:** Canonical ORBF v2 in candidate ORBS v13. Venus and Eon pin the
+  accepted ORBS v12 producer `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`.
   Under the prior ORBS v10 proof, Venus
   `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
   `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
   `64b225eb249490c9075894814942652a8b9d6192`.
-- **Boundary:** Arbitrary line-count guarantees, pixels, gesture phase, velocity,
-  kinetic effects, graphics, and restart persistence are excluded; physical
-  wheels retain their existing typed terminal-routed or one-row behavior.
-  Venus, Eon, and Eonova have not adopted ORBS v12; native Apple Silicon proof
-  of the new action is outside this Linux producer proof.
+- **Boundary:** Arbitrary line-count guarantees, gesture cadence, downward
+  selection autoscroll, velocity, kinetic effects, graphics, and restart
+  persistence are excluded; physical wheels retain their existing typed
+  terminal-routed or one-row behavior. Venus, Eon, and Eonova have not adopted
+  ORBS v13; native Apple Silicon proof of the new action is separate.
 - **Proof:** `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`
   - **Environment:** x86_64 Linux, headless producer checks
   - **Evidence:**
@@ -348,14 +367,19 @@ bytes.
     - Prior ORBS v10 installed proof only: Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
       `/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0` and passed the
       same split real-PTY regression against its installed Orbit binary.
+- **Open proof:** `conformance_c9_upward_selection_scroll_keeps_one_gesture_and_exact_copy`
+  exercises the ORBS v13 owner transition through more than two viewports,
+  synchronized deferral, oldest-edge stop, and exact Unicode release copy on
+  x86_64 Linux. Immutable producer and native consumer proofs remain open.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
-- **Consumer:** One healthy exact-version ORBS v11 attachment.
+- **Status:** Partially proved
+- **Consumer:** One healthy exact-version ORBS v13 attachment for upward ticks.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
-  left-pointer sequence using bounded surface coordinates and current modifiers;
-  Begin names a frame the client presented and a monotonic press timestamp.
+  left-pointer sequence; a held host gesture may tick upward with a top-row
+  surface position. Pointer phases carry current modifiers; Begin names a frame
+  the client presented and a monotonic press timestamp.
 - **Result:**
   - Orbit chooses host selection when authoritative terminal mouse tracking is
     absent or Shift is present, and keeps that route through Finish or Cancel.
@@ -385,6 +409,9 @@ bytes.
     no valid tracked gesture anchor, including on a different active screen,
     clears the active host selection and resets gesture state; read-only preview
     does not.
+  - An explicit upward tick while the host gesture is held extends that same
+    libghostty-tracked selection into the newly visible top row, including
+    across multiple viewports, and release freezes the resulting exact text.
   - An ordered client cancel resets an abandoned gesture and clears its partial
     selected presentation without producing copied text.
   - A newer valid press replaces prior selected presentation and frozen text;
@@ -402,17 +429,19 @@ bytes.
     PTY processing or cleanup.
   - A partially written frame remains ordered and completes before a newer
     selection frame.
+  - An upward tick with no valid host gesture or top-row position fails without
+    movement or PTY input; an invalidated tracked anchor cancels the gesture.
 - **Owner:** Orbit's semantic interaction owner with authoritative mouse modes,
-  libghostty current-viewport gesture selection, and canonical ORBS v11. Venus
+  libghostty current-viewport gesture selection, and canonical ORBS v13. Venus
   owns native event delivery and clipboard effects.
-- **Consumes:** Canonical ORBS v11 and ORB-C7 bounded-pressure behavior; accepted
+- **Consumes:** Candidate ORBS v13 and ORB-C7 bounded-pressure behavior; accepted
   ORBS v9 remains the prior routing and host-selection proof. Venus
   `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` and Eon
   `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` consume this behavior through
   exact ORBS v10.
-- **Boundary:** Custom word separators or click
-  thresholds, block selection, autoscroll, semantic command-output selection,
-  search, graphics, and restart persistence are excluded.
+- **Boundary:** Custom word separators or click thresholds, block selection,
+  downward autoscroll, cadence, semantic command-output selection, search,
+  graphics, and restart persistence are excluded.
 - **Proof:** `91999d79546422b49bdbc124166a65859d0bd872`
   - **Environment:** x86_64 Linux; downstream installed Sway 1.12 native Wayland
   - **Evidence:**
@@ -430,6 +459,9 @@ bytes.
       continue. Appends, DEC 2026 batches, and active-screen redraws retain
       anchored history. This closes the downstream-adoption gap without
       extending the selection scope above or proving other clipboard effects.
+- **Open proof:** `conformance_c9_upward_selection_scroll_keeps_one_gesture_and_exact_copy`
+  proves one tracked gesture, bounded upward ticks, and exact frozen copy on
+  x86_64 Linux. Venus pointer cadence and installed Eon acceptance remain open.
 
 ## ORB-C10 — Eon terminal identity
 
