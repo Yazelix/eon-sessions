@@ -7,9 +7,9 @@ renders its frames; [Eon](https://github.com/Yazelix/eon) composes both projects
 
 ## Demo
 
-[![Eon showing two Orbit Sessions in a native Wayland window](https://raw.githubusercontent.com/Yazelix/eon/a8e5874a31a3b7b27eaa754e8ad9a6d44cbb07c8/assets/demo/eon-demo.png)](https://github.com/Yazelix/eon/blob/a8e5874a31a3b7b27eaa754e8ad9a6d44cbb07c8/assets/demo/eon-demo.mp4)
+[![Animated Eon demo showing two Orbit Sessions in a native Wayland window](https://raw.githubusercontent.com/Yazelix/eon/ffa06c6a414921a1a0570c3ea3c1e49b1a3210da/assets/demo/eon-demo.gif)](https://github.com/Yazelix/eon/blob/ffa06c6a414921a1a0570c3ea3c1e49b1a3210da/assets/demo/eon-demo.mp4)
 
-[Watch the scripted recording](https://github.com/Yazelix/eon/blob/a8e5874a31a3b7b27eaa754e8ad9a6d44cbb07c8/assets/demo/eon-demo.mp4) of the composed Linux alpha.
+[Watch the MP4](https://github.com/Yazelix/eon/blob/ffa06c6a414921a1a0570c3ea3c1e49b1a3210da/assets/demo/eon-demo.mp4) of the composed Linux alpha.
 
 ## Run locally
 
