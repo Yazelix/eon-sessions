@@ -338,8 +338,11 @@ bytes.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
-- **Consumes:** Canonical ORBF v2 in accepted ORBS v13. Venus and Eon pin the
-  accepted ORBS v12 producer `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`.
+- **Consumes:** Canonical ORBF v2 in accepted ORBS v13. Venus
+  `773c6bab7d3e21e0b0d7d942c9bba72260a08b42` and Eon
+  `00a180c5940f0af84fc84cd0e4134a01824a61a7` select exact Orbit
+  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`; installed Eon proof is
+  `1501cc91c7c18bb095731481acdb9098e7a8d530`.
   Under the prior ORBS v10 proof, Venus
   `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
   `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
@@ -347,8 +350,8 @@ bytes.
 - **Boundary:** Arbitrary line-count guarantees, gesture cadence, downward
   selection autoscroll, velocity, kinetic effects, graphics, and restart
   persistence are excluded; physical wheels retain their existing typed
-  terminal-routed or one-row behavior. Venus, Eon, and Eonova have not adopted
-  ORBS v13; native Apple Silicon proof of the new action is separate.
+  terminal-routed or one-row behavior. This does not accept Eonova or native
+  Apple Silicon use of ORBS v13.
 - **Proof:** `b6cecf8f2ee35570b41cfdc578b095889d917fe2`
   - **Environment:** x86_64 Linux, headless producer checks
   - **Evidence:**
@@ -467,8 +470,8 @@ bytes.
       passes cell/word/line drag and repeat-click selection, both clipboard
       destinations, and explicit frozen copy while output and terminal replies
       continue. Appends, DEC 2026 batches, and active-screen redraws retain
-      anchored history. That proof closed the ORBS v10 downstream-adoption gap;
-      ORBS v13 native adoption and other clipboard effects remain separate.
+      anchored history. That proof closed the ORBS v10 downstream-adoption gap.
+      Other clipboard effects remain separate.
 
 ## ORB-C10 — Eon terminal identity
 
