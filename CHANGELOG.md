@@ -6,6 +6,14 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Accepted Orbit `6bc269c40b18f08b95778939518f77556ba91c67` changes
+  `ORB-C9` under unchanged ORBF v2 / ORBS v13: double-click selects a native
+  word, triple-click selects a space/tab-delimited span including punctuation,
+  and fourth-or-later clicks select logical lines. Dragging and upward ticks
+  extend at the same granularity while live output continues. Spans retain
+  libghostty's native wide-character selection limitation. Venus/Eon delivery
+  remains a separate accepted-source adoption.
+
 - Accepted Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2` extends
   `ORB-C8` and `ORB-C9` under exact-version ORBS v13: a held host selection can
   tick upward through retained history one row at a time, preserving the same

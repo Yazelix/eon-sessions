@@ -57,8 +57,19 @@ viewport by at most one older retained row, extends libghostty's tracked
 selection, and returns the applied distance with a complete frame. It uses the
 existing bounded scroll outcome and synchronized-output deferral. Ordinary
 signed scroll and return-to-live still clear selection. The x86_64 Linux
-headless producer proof covers the new action; Venus and Eon still pin accepted
-ORBS v12 at `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`.
+headless producer proof covers the new action; Venus and Eon subsequently
+adopted this exact ORBS v13 source.
+
+Accepted producer `6bc269c40b18f08b95778939518f77556ba91c67`
+(`orb-click-selection-ladder-325`) changes ORB-C9 under unchanged ORBF v2 and
+ORBS v13: double-click retains native word selection, triple-click selects a
+space/tab-delimited span including punctuation, and fourth-or-later repeat
+clicks select logical lines. Matching drags and upward ticks retain the native
+tracked anchor, repeat validation, and lifecycle owner. The exact protocol tree
+is unchanged. Venus and Eon retain Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2`
+and its earlier granularity until separate accepted-source adoption and native
+pointer/clipboard proof. This Linux producer proof does not extend native
+macOS qualification.
 
 Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
 ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
@@ -352,7 +363,7 @@ bytes.
   persistence are excluded; physical wheels retain their existing typed
   terminal-routed or one-row behavior. This does not accept Eonova or native
   Apple Silicon use of ORBS v13.
-- **Proof:** `b6cecf8f2ee35570b41cfdc578b095889d917fe2`
+- **Proof:** `6bc269c40b18f08b95778939518f77556ba91c67`
   - **Environment:** x86_64 Linux, headless producer checks
   - **Evidence:**
     - [`conformance_c8_scroll_position_follows_published_terminal_state`](../src/runtime.rs)
@@ -366,8 +377,11 @@ bytes.
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
     - `cargo fmt --check`, `cargo check --workspace --locked`,
-      `cargo test --workspace --locked` (80 passed, 2 ignored), and
+      `cargo test --workspace --locked` (81 passed, 2 ignored), and
       `cargo clippy --workspace --locked --all-targets -- -D warnings` passed.
+    - The upward-tick regression covers cell, span, and line granularity with
+      unchanged deferral, bounds, ordered outcomes, and exact Unicode copy.
+    - Prior ORBS v13 producer proof: `b6cecf8f2ee35570b41cfdc578b095889d917fe2`.
     - Prior ORBS v12 producer proof: `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`.
     - Prior ORBS v11 producer proof: `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`.
     - Prior ORBS v10 installed proof only: Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
@@ -376,7 +390,7 @@ bytes.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy exact-version ORBS v13 attachment for upward ticks.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence; a held host gesture may tick upward with a top-row
@@ -442,23 +456,26 @@ bytes.
   libghostty current-viewport gesture selection, and canonical ORBS v13. Venus
   owns native event delivery and clipboard effects.
 - **Consumes:** Accepted ORBS v13 and ORB-C7 bounded-pressure behavior; accepted
-  ORBS v9 remains the prior routing and host-selection proof. Venus
+  ORBS v9 remains the prior routing and host-selection proof. Historical Venus
   `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` and Eon
-  `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` consume this behavior through
-  exact ORBS v10.
+  `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` consumed prior gestures through
+  exact ORBS v10. Current Venus/Eon Orbit pins retain the prior ORBS v13 source
+  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`; native 2/3/4-click adoption is
+  separate.
 - **Boundary:** Configurable word separators or click thresholds, block selection,
   downward autoscroll, cadence, semantic command-output selection, search,
   graphics, and restart persistence are excluded.
   Spans retain native word-selection limits: a wide-character trailing spacer
   can stop the selected span (`a;界,é` selects `a;界`). This inherited
   libghostty limitation is outside the click-ladder correction.
-- **Proof:** Prior accepted behavior at
-  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`; the 2/3/4-click ladder is pending
-  producer acceptance in `orb-click-selection-ladder-325`. Downstream native
-  Venus/Eon adoption remains separate.
+- **Proof:** `6bc269c40b18f08b95778939518f77556ba91c67`
   - **Environment:** x86_64 Linux headless ORBS v13 producer; historical
     downstream installed Sway 1.12 native Wayland proof covers ORBS v10 only
   - **Evidence:**
+    - [`authoritative_selection_click_ladder_preserves_wrapped_text_and_copy`](../src/interaction.rs)
+      checks exact highlighted cells, frozen text for both copy effects,
+      soft wraps, compatible live output, fourth/fifth clicks and late resets
+      through canonical encoded results and frames.
     - [`conformance_c9_upward_selection_scroll_keeps_one_gesture_and_exact_copy`](../src/interaction.rs)
       covers more than two viewports, synchronized deferral, oldest-edge stop,
       and exact Unicode release copy.
@@ -466,8 +483,10 @@ bytes.
       and [`malformed_typed_payloads_are_rejected`](../crates/protocol/src/session/tests.rs)
       cover the exact ORBS v13 action and invalid positions.
     - `cargo fmt --check`, `cargo check --workspace --locked`,
-      `cargo test --workspace --locked` (80 passed, 2 ignored), and
+      `cargo test --workspace --locked` (81 passed, 2 ignored), and
       `cargo clippy --workspace --locked --all-targets -- -D warnings` passed.
+      `cargo build --locked` passes. The exact protocol subtree is unchanged.
+    - Prior ORBS v13 producer proof: `b6cecf8f2ee35570b41cfdc578b095889d917fe2`.
     - Prior ORBS v10 producer proof: `91999d79546422b49bdbc124166a65859d0bd872`.
     - [`authoritative_selection_accepts_presented_input_and_freezes_copy`](../src/interaction.rs)
     - [`active_selection_tracks_scrolling_pty_output`](../src/interaction.rs)
