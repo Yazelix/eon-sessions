@@ -103,6 +103,13 @@ Mars, Mars Next, or another project by default.
   reset, one-cell repeat distance, and 500-millisecond Linux repeat interval.
   Orbit supplies bounded surface position and monotonic press time, derives the
   grid reference from authoritative geometry, and reuses those APIs unchanged.
+  `orb-click-selection-ladder-325` uses the native count (which saturates at
+  three) and public event behavior/boundary setters to choose a space/tab-bounded
+  word gesture on the third press, then a native line gesture on later repeats.
+  Native validation still resets late, distant, backwards, or cancelled
+  sequences. Matching span drag and upward-tick events keep the same tracked
+  anchor; ordinary events retain native default word boundaries. No second
+  click counter, text scanner, or dependency is introduced.
 - WezTerm
   [`f93d90350075d3e42566e0557ca36e82ffdcbec1`](https://github.com/wez/wezterm/blob/f93d90350075d3e42566e0557ca36e82ffdcbec1/docs/config/mouse.md),
   Kitty

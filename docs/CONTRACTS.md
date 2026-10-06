@@ -376,7 +376,7 @@ bytes.
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version ORBS v13 attachment for upward ticks.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence; a held host gesture may tick upward with a top-row
@@ -385,15 +385,20 @@ bytes.
 - **Result:**
   - Orbit chooses host selection when authoritative terminal mouse tracking is
     absent or Shift is present, and keeps that route through Finish or Cancel.
-  - Orbit alone resolves pointer positions, click repetition, cell, word, and
-    logical-line boundaries, selected presentation, and copied text through
-    libghostty's default gesture behavior.
+  - Orbit alone resolves pointer positions, click repetition, cell, word,
+    space-delimited span, and logical-line boundaries, selected presentation,
+    and copied text through libghostty's tracked gesture APIs.
   - A Begin from an already-presented, non-future revision resolves once against
     current authoritative terminal state, so intervening PTY output cannot
     starve selection admission.
-  - One press-drag selects cells, two select words, and three select logical
-    lines; the repeat distance is one cell width and the repeat interval is 500
-    milliseconds.
+  - One press-drag selects cells, two select words using unchanged default word
+    boundaries, three select space-delimited spans including punctuation, and
+    four or more select logical lines. Drags extend at the corresponding
+    granularity; spans and logical lines cross soft wraps. ASCII space/tab,
+    unwritten cells, and hard line breaks delimit spans; other Unicode
+    whitespace remains text. Clicking written space/tab selects its contiguous
+    delimiter run, subject to the existing copy trimming. The repeat distance
+    is one cell width and the repeat interval is 500 milliseconds.
   - Release freezes one bounded plain-text value that later output, resize,
     reflow, or screen transition cannot reinterpret or erase, and returns it
     for the semantic selection clipboard. Explicit Copy returns the same frozen
@@ -441,10 +446,16 @@ bytes.
   `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` and Eon
   `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` consume this behavior through
   exact ORBS v10.
-- **Boundary:** Custom word separators or click thresholds, block selection,
+- **Boundary:** Configurable word separators or click thresholds, block selection,
   downward autoscroll, cadence, semantic command-output selection, search,
   graphics, and restart persistence are excluded.
-- **Proof:** `b6cecf8f2ee35570b41cfdc578b095889d917fe2`
+  Spans retain native word-selection limits: a wide-character trailing spacer
+  can stop the selected span (`a;界,é` selects `a;界`). This inherited
+  libghostty limitation is outside the click-ladder correction.
+- **Proof:** Prior accepted behavior at
+  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`; the 2/3/4-click ladder is pending
+  producer acceptance in `orb-click-selection-ladder-325`. Downstream native
+  Venus/Eon adoption remains separate.
   - **Environment:** x86_64 Linux headless ORBS v13 producer; historical
     downstream installed Sway 1.12 native Wayland proof covers ORBS v10 only
   - **Evidence:**

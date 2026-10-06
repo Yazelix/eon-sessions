@@ -49,10 +49,10 @@ The copyright holder offers the project-owned source history under
 
 | Surface | Lines |
 | --- | ---: |
-| Product Rust source and tests | 15,011 |
+| Product Rust source and tests | 15,227 |
 | Governance Rust tool and tests | 767 |
 | Eon terminfo source | 2 |
 | Manual performance harness | 647 |
 | Shell test fixtures | 104 |
-| **Total owned Rust** | **15,778** |
-| **Total owned implementation source** | **16,531** |
+| **Total owned Rust** | **15,994** |
+| **Total owned implementation source** | **16,747** |

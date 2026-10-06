@@ -45,8 +45,13 @@ revision so the client can wait for that frame.
   Shift is absent. Otherwise it chooses host selection. The choice lasts through
   release or cancel.
 - Terminal phases use Orbit's terminal-aware mouse encoder. Host phases use
-  libghostty's cell, word, and logical-line selection. A Begin at an already
-  presented revision resolves against current state even if PTY output arrived.
+  libghostty's tracked selection: single-click drag selects cells, double-click
+  selects words, triple-click selects space-delimited spans including
+  punctuation, and fourth-or-later clicks select logical lines. Dragging extends
+  at that granularity; spans and lines cross soft wraps. The span uses ASCII
+  space/tab boundaries and retains native Unicode selection limits. A Begin at
+  an already presented revision resolves against current state even if PTY
+  output arrived.
 - Frames show selected cells. Release freezes bounded plain text for the
   selection clipboard; explicit copy targets the ordinary clipboard. Output,
   resize, reflow, and screen changes do not alter the frozen value. A new
